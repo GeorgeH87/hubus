@@ -41,6 +41,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Slave header uses the `TARGET_LEN` bit positions for `MORE` (1 bit, more fragments follow) and `GEN` (2-bit mandatory generation counter, incremented on every buffer write). Duplicates are detected master-side by equal `GEN` plus identical payload; fragments need no sequence number.
 - Duplicate MCIDs are a configuration fault detected master-side only: commissioning scan (`REQUEST_INFO` to all MCIDs) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value. Slave-side collision detection was rejected because it would hide the fault and add slave logic.
 - CRC8 = CRC-8/AUTOSAR (poly `0x2F`, init `0xFF`, xorout `0xFF`). Hamming distance 4 up to 14 covered bytes; maximum payload stays 31 bytes, with a recommendation to fragment into ≤ 12-byte payloads where strongest integrity is needed.
+- 3.3 V bus: all slaves supplied with 3.3 V, `DATA` pull-up to 3.3 V, no level shifters.
 - MCID width stays 6 bits (`1..63`), also for v1 (D1). Electrical limits of a single open-drain line keep the practical node count well below 63; 8 bits would cost one header byte and 4 arbitration slots per frame.
 
 ## 3. Open Decisions

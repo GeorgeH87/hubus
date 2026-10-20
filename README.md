@@ -27,6 +27,7 @@ This repository starts with protocol-first documentation so the concept can be r
 - Neutral/high data line means logical `0`.
 - Higher MCID has higher arbitration priority.
 - `CLK` idles low.
+- 3.3 V bus: all slaves run at 3.3 V; no level shifters.
 - Frames are delimited by START/STOP line conditions; START immediately followed by STOP is a communication stack RESET (see `docs/PROTOCOL.md`).
 - Slaves implement no timeouts; all timeouts are master-side.
 - Commands are fire-and-forget (no acknowledgements); the master verifies states by reading them back.

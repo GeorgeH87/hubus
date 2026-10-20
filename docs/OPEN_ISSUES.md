@@ -8,24 +8,20 @@ Status values: `open`, `proposal`, `resolved`.
 
 ## 1. Specification
 
+No open specification issues. Remaining items are hardware measurements (section 2) and implementation work (sections 3–5).
+
 ## 2. Hardware and Timing
 
-### H1: Voltage Levels
+### H2: Master Clock Implementation
 
-- **Status:** open
-- **Problem:** Raspberry Pi GPIO is 3.3 V. An ATtiny85 at 5 V needs about 3.0 V (0.6 × VCC) for a valid high, which is marginal with a 3.3 V pull-up; a 5 V pull-up would damage the Pi.
-- **Direction:** Specify 3.3 V operation for slaves (ATtiny85 is rated for it at reduced clock), or require a level-shifting concept.
-
-### H2: Master Clock Jitter
-
-- **Status:** open
-- **Problem:** A Linux user-space bit-banged clock has significant jitter and occasional long pauses. Slaves are tolerant (no timeouts), but `T_CLK_LOW` and `T_COND` minimums must still be met.
-- **Direction:** Define timing as minimums only (no maximums), so jitter only slows the bus. Evaluate pigpio/DMA or a kernel driver for the master.
+- **Status:** open (spec part resolved: all timing values are minimums, so jitter only slows the bus)
+- **Problem:** A Linux user-space bit-banged clock has significant jitter and occasional long pauses. `T_CLK_LOW`, `T_COND`, and `T_TURNAROUND` minimums must still be met reliably.
+- **Direction:** Evaluate user-space GPIO, pigpio/DMA, or a kernel driver during the `v0-master` milestone.
 
 ### H3: Concrete Timing Values
 
 - **Status:** open
-- **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_SAMPLE`, `T_GUARD`, and master timeouts have no values.
+- **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, `T_SAMPLE`, `T_GUARD`, the line-fault threshold, and the pull-up value have no concrete values.
 - **Direction:** Derive `T_CLK_LOW` from measured slave ISR latency; freeze after first hardware experiments.
 
 ## 3. Slave Library (`lib/hubus-slave`)
@@ -153,6 +149,11 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-21)
 - **Resolution:** CRC-8/AUTOSAR: poly `0x2F`, init `0xFF`, xorout `0xFF`, not reflected, check value `0xDF`. Chosen by exhaustive evaluation of all 8-bit polynomials for HUBUS frame lengths (Hamming distance 4 up to 14 covered bytes, odd-weight errors always detected) and because the non-zero init prevents all-zero/all-one frames from being valid. Maximum payload stays 31 bytes; fragments ≤ 12 bytes recommended for strongest integrity. See `MESSAGE_FORMAT.md` §7.
+
+### R16: Voltage Levels (was H1)
+
+- **Status:** resolved (2026-10-21)
+- **Resolution:** HUBUS v0 is a 3.3 V bus: all slaves supplied with 3.3 V, `DATA` pull-up to 3.3 V, no level shifters. See `HARDWARE_REQUIREMENTS.md` §4.
 
 ### R6: Fairness (D3, largely)
 

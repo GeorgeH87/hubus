@@ -21,8 +21,24 @@ Recommended baseline pull-up range for prototype validation: `2.2k` to `10k`, se
 
 ## 4. Voltage Compatibility
 
-- Electrical level compatibility between Raspberry Pi GPIO and ATtiny I/O must be guaranteed.
-- If mixed-voltage operation is used, level constraints must be validated before bus bring-up.
+HUBUS v0 is a **3.3 V bus**:
+
+- All slaves (ATtiny MCUs) are supplied with 3.3 V.
+- The `DATA` pull-up connects to 3.3 V.
+- `CLK` is driven by the Raspberry Pi GPIO at 3.3 V logic level.
+- No level shifters are used; the bus contains only the Raspberry Pi and the slave MCUs as active components.
+
+Rationale:
+
+- Raspberry Pi GPIOs are 3.3 V only and not 5 V tolerant. A 5 V pull-up would damage the master.
+- An ATtiny supplied with 5 V needs about 0.6 × VCC (3.0 V) for a valid high input, which leaves no reliable margin with 3.3 V signals. Supplied with 3.3 V, the threshold is about 2.0 V.
+- The ATtiny85 runs from its internal 8 MHz oscillator within its specified operating range at 3.3 V.
+
+Consequences:
+
+- Every slave needs a 3.3 V supply (for example a local regulator if a higher voltage is distributed).
+- Loads such as relays may still be switched at 5 V or higher; only the MCU and the bus run at 3.3 V.
+- All nodes on one bus use the same 3.3 V logic level; mixed bus voltages are not allowed.
 
 ## 5. Timing Baseline
 
