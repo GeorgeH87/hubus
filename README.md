@@ -45,6 +45,7 @@ This repository starts with protocol-first documentation so the concept can be r
 - `docs/SLAVE_PROPERTIES.md`: mandatory slave capabilities and behavior.
 - `docs/ITERATIVE_CONCEPT.md`: roadmap, open points, and next iterations.
 - `docs/OPEN_ISSUES.md`: tracking list of known gaps, inconsistencies, and defects.
+- `TODO.md`: implementation roadmap.
 - `examples/TYPICAL_SESSION.md`: full flow example.
 - `examples/ERROR_SCENARIOS.md`: failure modes and recovery behavior.
 - `examples/WIRE_TIMELINE.md`: timing-oriented burst example.
