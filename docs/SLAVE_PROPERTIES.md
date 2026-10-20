@@ -64,7 +64,8 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Valid MCIDs are `1..63` in v0. MCID `0` is reserved and must not be assigned.
 - MCID must be immutable during normal runtime.
 - MCID uniqueness is required for deterministic arbitration.
-- Duplicate MCID is a configuration fault.
+- Duplicate MCID is a configuration fault. It is detected by the master (commissioning scan, CRC failure heuristic); the slave implements no detection logic.
+- The application bytes of `SLAVE_INFO` SHOULD contain a device-unique value (for example a serial number) to make duplicates reliably detectable.
 
 ## 4. Buffer and Payload Constraints
 

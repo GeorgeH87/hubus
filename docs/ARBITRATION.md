@@ -47,7 +47,7 @@ Notes:
 
 - The contender still active after bit `0` is the winner. Its MCID equals the bit sequence the master sampled in the arbitration slots.
 - If no arbitration slot was low, there was no contender in the polled group.
-- Two slaves with identical MCIDs cannot be distinguished on the wire. Duplicate MCIDs are a configuration fault (see open issue S3).
+- Two slaves with identical MCIDs cannot be distinguished during arbitration. Duplicate MCIDs are a configuration fault, detected by the master only through repeated CRC failures on responses (`PROTOCOL.md` section 3.5).
 
 ## 6. Master Behavior
 

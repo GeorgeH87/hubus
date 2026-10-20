@@ -29,13 +29,21 @@ Master sends `POLL_PENDING` and sees no arbitration activity.
 
 ### Condition
 
-Two slaves share same MCID and remain identical through arbitration.
+Two slaves share the same MCID (configuration fault).
+
+### What Happens on the Bus
+
+- Arbitration: both send identical bits and never lose against each other; the master sees one winner and no handoff. Not detectable.
+- `REQUEST_DATA` while only one of them has data: works normally. Not detectable.
+- `REQUEST_DATA` while both have data: both frames overlap on the wired-AND line; the payloads differ, so the CRC8 is practically always invalid. Every retry fails the same way.
+- `REQUEST_INFO`: identical responses (same device, same firmware) overlap into a valid frame; different responses fail CRC.
+- `SEND_COMMAND`: both slaves execute it.
 
 ### Expected Behavior
 
-- Master detects unresolved arbitration ambiguity.
-- Master raises configuration fault.
-- Deployment must correct MCID assignment before normal operation.
+- Master raises "suspected duplicate MCID" when the same MCID fails CRC repeatedly while other MCIDs respond cleanly (runtime heuristic, `docs/PROTOCOL.md` section 3.5).
+- The commissioning scan (`REQUEST_INFO` to every MCID) reports CRC failures for that MCID. With a device-unique value in `SLAVE_INFO`, detection at the scan is reliable.
+- Deployment must correct the MCID assignment. Slaves implement no detection logic.
 
 ## 4. Missing Slave Response
 

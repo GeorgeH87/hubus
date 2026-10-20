@@ -8,12 +8,6 @@ Status values: `open`, `proposal`, `resolved`.
 
 ## 1. Specification
 
-### S3: Duplicate MCID Is Not Detectable
-
-- **Status:** open
-- **Problem:** Two slaves with the same MCID produce identical bit patterns on a wired-AND line. The master cannot detect "unresolved arbitration" as described in `ARBITRATION.md` §5 and `ERROR_SCENARIOS.md` §3. At most, it shows up later as a CRC failure when both respond.
-- **Direction:** Treat duplicate MCID as a commissioning fault detected by the master (for example repeated CRC failures from one MCID). A master-side bus scan (`REQUEST_INFO` to each MCID `1..63`) discovers present slaves; duplicates typically show up as CRC failures there. Candidate for an accepted rare case; rewrite §5 and error scenario 3 accordingly.
-
 ### S15: CRC8 Parameters (D2)
 
 - **Status:** open
@@ -154,6 +148,11 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-21)
 - **Resolution:** The slave header carries `MORE` (bit 13) and a mandatory 2-bit `GEN` counter (bits 12–11) at the `TARGET_LEN` position. `GEN` increments on every buffer write; the master detects duplicates (equal `GEN` and identical payload) and overwrites (`GEN` gaps). Fragments pass sequentially through the single buffer, so no sequence number is needed. See `MESSAGE_FORMAT.md` §2, §4.3, §6.1.
+
+### R14: Duplicate MCID Detection (was S3)
+
+- **Status:** resolved (2026-10-21)
+- **Resolution:** Duplicate MCIDs are a configuration fault detected by the master only: commissioning scan (`REQUEST_INFO` to every MCID) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value for reliable detection. Remaining blind spots are documented as accepted limitations. See `PROTOCOL.md` §3.5, `ERROR_SCENARIOS.md` §3.
 
 ### R6: Fairness (D3, largely)
 

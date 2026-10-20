@@ -268,7 +268,7 @@ The master SHOULD generate RESET before it stops, leaving all slaves in a define
 
 ### Master Error Recovery
 
-Whenever the master detects a fault (response timeout, CRC failure, unexpected line state, arbitration ambiguity), it uses the same sequence as steps 1–3 of the startup sequence and then continues with normal operation.
+Whenever the master detects a fault (missing response, CRC failure, source MCID mismatch, unexpected line state), it uses the same sequence as steps 1–3 of the startup sequence and then continues with normal operation.
 
 Since every START already resynchronizes slave reception, an explicit RESET is mainly needed at startup and after errors where a slave may be in a transmit or arbitration state.
 
@@ -291,6 +291,28 @@ Rules:
 
 - **STOP corrupted or missed:** the slave keeps its data and announces it again, so the master receives the same data twice. The `GEN` counter in the slave header lets the master detect the duplicate (`MESSAGE_FORMAT.md` section 4.3).
 - **Application writes the buffer during transmission:** the transmitted frame may mix old and new content, and the following STOP clears the new content. The library SHOULD prevent this cheaply (for example by deferring application writes while a response is in progress, or by not clearing if the buffer was written during transmission). Otherwise it is an accepted rare case.
+
+## 3.5 Commissioning Scan and Duplicate MCID Detection
+
+Duplicate MCIDs are a configuration fault. They are detected by the master only; slaves implement no detection logic.
+
+### Commissioning Scan
+
+The master sends `REQUEST_INFO` to every MCID `1..63`:
+
+- valid `SLAVE_INFO`: slave present (protocol version and capabilities known),
+- no response: MCID unused,
+- repeated CRC failures: suspected duplicate MCID or line problem.
+
+Two slaves with the same MCID overlap their responses on the wired-AND line. If their `SLAVE_INFO` content differs, the CRC fails. Slaves SHOULD therefore include a device-unique value (for example a serial number set at programming time) in the application bytes of `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1); then the scan detects duplicates reliably.
+
+### Runtime Heuristic
+
+If the same MCID fails CRC repeatedly while other MCIDs respond cleanly, the master reports "suspected duplicate MCID". Repeated failures for many MCIDs point to a line problem instead.
+
+### Accepted Limitations
+
+Without a device-unique value in `SLAVE_INFO`, a duplicate MCID can remain unnoticed as long as only one of the affected slaves has buffered data, or their responses are identical. Commands addressed to that MCID reach both slaves.
 
 ## 4. Protocol State Names
 

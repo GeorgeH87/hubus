@@ -39,6 +39,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Frame format: 16-bit header, identical layout in both directions: `TYPE`(2) · `TARGET_LEN`/reserved(3) · `MCID`(6) · `LEN`(5), followed by payload and CRC8. No SOF field. CRC8 covers header bytes and payload in transmission order.
 - 2-bit type codes per direction: master `00` POLL_PENDING, `01` REQUEST_INFO, `10` REQUEST_DATA, `11` SEND_COMMAND; slave `10` SLAVE_DATA, `11` SLAVE_INFO (`00`/`01` reserved).
 - Slave header uses the `TARGET_LEN` bit positions for `MORE` (1 bit, more fragments follow) and `GEN` (2-bit mandatory generation counter, incremented on every buffer write). Duplicates are detected master-side by equal `GEN` plus identical payload; fragments need no sequence number.
+- Duplicate MCIDs are a configuration fault detected master-side only: commissioning scan (`REQUEST_INFO` to all MCIDs) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value. Slave-side collision detection was rejected because it would hide the fault and add slave logic.
 - MCID width stays 6 bits (`1..63`), also for v1 (D1). Electrical limits of a single open-drain line keep the practical node count well below 63; 8 bits would cost one header byte and 4 arbitration slots per frame.
 
 ## 3. Open Decisions

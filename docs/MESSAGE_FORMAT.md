@@ -131,7 +131,7 @@ Static metadata, typically a constant in flash.
 |---|---|
 | 0 | HUBUS protocol version |
 | 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; other bits reserved (0) |
-| 2.. | Application-defined (for example device type, firmware version) |
+| 2.. | Application-defined (for example device type, firmware version). SHOULD include a device-unique value (for example a serial number) so the master's commissioning scan reliably detects duplicate MCIDs (`PROTOCOL.md` section 3.5). |
 
 ### 4.2 Slave Buffer and `SLAVE_DATA`
 
