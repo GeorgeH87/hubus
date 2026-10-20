@@ -19,7 +19,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Slaves have no time base and implement no timeouts; all timeouts, retries, and recovery are master-side.
 - `CLK` idles low; `DATA` changes only while `CLK` is low and is sampled on the rising edge.
 - Frames are delimited by START (`DATA` falls while `CLK` high) and STOP (`DATA` rises while `CLK` high).
-- RESET = START immediately followed by STOP. It resets the slave communication stack but preserves buffered data, status, generation counters, and the pending flag.
+- RESET = START immediately followed by STOP. It resets the slave communication stack but preserves buffered data, the `GEN` counter, and the pending flag.
 - Master sends RESET at startup (mandatory) and before shutdown (optional), and after detected faults.
 - MCID `0` is reserved; valid slave MCIDs are `1..63` in v0. This guarantees every contender drives at least one arbitration bit low.
 - Every arbitration bit is followed by a handoff slot, driven by slaves that lost at exactly that bit.
@@ -38,6 +38,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - `SEND_COMMAND` opcodes: `0x00` = `STATUS_CAPTURE`, `0x01..0x0F` reserved for protocol use, `0x10..0xFF` application-defined.
 - Frame format: 16-bit header, identical layout in both directions: `TYPE`(2) · `TARGET_LEN`/reserved(3) · `MCID`(6) · `LEN`(5), followed by payload and CRC8. No SOF field. CRC8 covers header bytes and payload in transmission order.
 - 2-bit type codes per direction: master `00` POLL_PENDING, `01` REQUEST_INFO, `10` REQUEST_DATA, `11` SEND_COMMAND; slave `10` SLAVE_DATA, `11` SLAVE_INFO (`00`/`01` reserved).
+- Slave header uses the `TARGET_LEN` bit positions for `MORE` (1 bit, more fragments follow) and `GEN` (2-bit mandatory generation counter, incremented on every buffer write). Duplicates are detected master-side by equal `GEN` plus identical payload; fragments need no sequence number.
 - MCID width stays 6 bits (`1..63`), also for v1 (D1). Electrical limits of a single open-drain line keep the practical node count well below 63; 8 bits would cost one header byte and 4 arbitration slots per frame.
 
 ## 3. Open Decisions

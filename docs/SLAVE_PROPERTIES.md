@@ -51,7 +51,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 |---|---|
 | START | Release `DATA`, discard partial frame/arbitration/transmit state, start receiving at bit 0. |
 | STOP | Release `DATA`, go to `IDLE_LISTEN`. If a complete `SLAVE_DATA` response was transmitted in this transaction, clear the buffer and the pending flag (`PROTOCOL.md` section 3.4). |
-| RESET | Release `DATA`, reset communication stack, go to `IDLE_LISTEN`. Buffers, generation counters, and pending flag are preserved (see `PROTOCOL.md` section 3.3). |
+| RESET | Release `DATA`, reset communication stack, go to `IDLE_LISTEN`. Buffer, `GEN` counter, and pending flag are preserved (see `PROTOCOL.md` section 3.3). |
 
 ### Idle Event Signal Rules
 
@@ -73,7 +73,8 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Enforce maximum payload length from `docs/MESSAGE_FORMAT.md`.
 - Writing the outgoing buffer (event data or `STATUS_CAPTURE`) sets the pending flag.
 - New content may overwrite unread content; the buffer is not a queue.
-- An optional generation counter MAY be used to make overwritten content observable to the master.
+- Every buffer write increments the 2-bit `GEN` counter, which is transmitted in the `SLAVE_DATA` header (`MESSAGE_FORMAT.md` section 4.3).
+- The application passes the `MORE` flag with each buffer write (fragmented transfers) and writes the next fragment only when the buffer is empty (`MESSAGE_FORMAT.md` section 6.1).
 - Static device info for `REQUEST_INFO` (`MESSAGE_FORMAT.md` section 4.1) can be a constant in flash and needs no RAM.
 
 ## 4.1 Responses

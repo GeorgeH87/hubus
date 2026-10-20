@@ -14,18 +14,6 @@ Status values: `open`, `proposal`, `resolved`.
 - **Problem:** Two slaves with the same MCID produce identical bit patterns on a wired-AND line. The master cannot detect "unresolved arbitration" as described in `ARBITRATION.md` §5 and `ERROR_SCENARIOS.md` §3. At most, it shows up later as a CRC failure when both respond.
 - **Direction:** Treat duplicate MCID as a commissioning fault detected by the master (for example repeated CRC failures from one MCID). A master-side bus scan (`REQUEST_INFO` to each MCID `1..63`) discovers present slaves; duplicates typically show up as CRC failures there. Candidate for an accepted rare case; rewrite §5 and error scenario 3 accordingly.
 
-### S12: Multi-Frame Transfers
-
-- **Status:** open
-- **Problem:** Large datasets are split into several `SLAVE_DATA` frames, but there is no sequence number or last-frame flag. Lost or duplicated fragments cannot be detected.
-- **Direction:** Keep it application-level as intended, but define a minimal convention. Candidate: a `MORE` flag in the reserved slave header bits (no payload cost), or first payload byte = fragment index with a "last" bit as an optional profile.
-
-### S13: Generation Counter Placement
-
-- **Status:** open
-- **Problem:** The spec places the optional generation counter as the first payload byte of the slave buffer; the library keeps it separately (for two buffers) and never transmits it.
-- **Direction:** Either keep it as first payload byte, or move a short (2-bit) counter into the reserved slave header bits (no payload cost; sufficient to detect duplicates after a lost STOP). Implement in the library as a compile-time option.
-
 ### S15: CRC8 Parameters (D2)
 
 - **Status:** open
@@ -78,7 +66,8 @@ The library will be reworked after the specification issues above are resolved. 
 | L18 | `hubus_frame.h`, `hubus_state.h` | Remove `SLAVE_ACK`/`SLAVE_ERROR`/`SLAVE_STATUS` types and related events; add `SLAVE_INFO`. Callback events (`HUBUS_EVENT_REQUEST_DATA` for all request types) no longer match the spec. |
 | L19 | `hubus_state.c` | Implement buffer clearing per `PROTOCOL.md` §3.4 (clear on STOP after complete response, keep on RESET); today the buffer is cleared in `TRANSFER` without sending anything. Guard against application writes during transmission. |
 | L20 | `hubus_crc.*`, `hubus_state.c` | CRC8 must be computed incrementally while receiving/transmitting (today computed in bulk at frame end); implement turnaround slot and response start per `PROTOCOL.md` §1.3. |
-| L21 | `hubus_frame.*`, `hubus_state.c`, `hubus_bitbuffer.*` | Implement the 16-bit header (no SOF, 2-bit TYPE, reserved bits in slave frames) and CRC8 over header + payload bytes; current code assumes SOF and the old 21-bit layout. |
+| L21 | `hubus_frame.*`, `hubus_state.c`, `hubus_bitbuffer.*` | Implement the 16-bit header (no SOF, 2-bit TYPE, `MORE`/`GEN` in slave frames) and CRC8 over header + payload bytes; current code assumes SOF and the old 21-bit layout. |
+| L22 | `hubus_buffer.*`, `hubus_slave.h` | Replace the optional 8-bit generation counter with the mandatory 2-bit `GEN` (transmitted in the header); add a `MORE` parameter to the buffer write API. |
 
 ## 4. Examples
 
@@ -160,6 +149,11 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-20)
 - **Resolution:** 16-bit header with identical layout in both directions: `TYPE`(2) · `TARGET_LEN`/reserved(3) · `MCID`(6) · `LEN`(5). No SOF. 2-bit type codes per direction; slave codes `10`/`11` start with `1`. CRC8 over header bytes and payload in transmission order, byte-aligned. MCID width stays 6 bits. See `MESSAGE_FORMAT.md` §2–§4, §6, §7.
+
+### R13: Multi-Frame Transfers and Generation Counter (was S12, S13)
+
+- **Status:** resolved (2026-10-21)
+- **Resolution:** The slave header carries `MORE` (bit 13) and a mandatory 2-bit `GEN` counter (bits 12–11) at the `TARGET_LEN` position. `GEN` increments on every buffer write; the master detects duplicates (equal `GEN` and identical payload) and overwrites (`GEN` gaps). Fragments pass sequentially through the single buffer, so no sequence number is needed. See `MESSAGE_FORMAT.md` §2, §4.3, §6.1.
 
 ### R6: Fairness (D3, largely)
 

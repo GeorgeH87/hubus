@@ -72,7 +72,7 @@ The master received a valid `SLAVE_DATA` frame and sent STOP, but the slave did 
 
 - Accepted rare case (see `docs/PROTOCOL.md` section 3.4).
 - The slave keeps its data and announces it again; the master receives it a second time.
-- The optional generation counter lets the master detect the duplicate.
+- The `GEN` counter in the slave header is unchanged and the payload is identical, so the master detects and discards the duplicate.
 
 ## 6. Clock Loss Mid-Transfer
 

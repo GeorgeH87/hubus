@@ -14,7 +14,7 @@ A frame consists of a 16-bit header, an optional payload, and a CRC8. The header
 ```
 Bit:     15 14 | 13 12 11   | 10  9  8  7  6  5 |  4  3  2  1  0
 Master:  TYPE  | TARGET_LEN |       MCID        |      LEN
-Slave:   TYPE  | RESERVED   |       MCID        |      LEN
+Slave:   TYPE  |MORE| GEN  |       MCID        |      LEN
          ------- Byte 0 --------------|-------- Byte 1 ----------
 
 Frame:   [Byte 0] [Byte 1] [PAYLOAD: LEN bytes] [CRC8]
@@ -23,7 +23,7 @@ Frame:   [Byte 0] [Byte 1] [PAYLOAD: LEN bytes] [CRC8]
 | Field | Bits | Master → slave | Slave → master |
 |---|---:|---|---|
 | TYPE | 2 | Master message type (section 3) | Slave message type (section 4) |
-| TARGET_LEN / RESERVED | 3 | Number of significant target prefix bits (`0..6`) | Reserved, must be `000`; receivers ignore it |
+| TARGET_LEN / MORE + GEN | 3 | Number of significant target prefix bits (`0..6`) | Bit 13: `MORE` (more fragments follow, section 6.1); bits 12–11: `GEN` (2-bit generation counter, section 4.3) |
 | MCID | 6 | Target prefix (MSB-aligned) | Source MCID |
 | LEN | 5 | Payload length in bytes (`0..31`) | Payload length in bytes (`0..31`) |
 | PAYLOAD | `LEN` × 8 | Message data | Message data |
@@ -36,7 +36,7 @@ Properties:
 - Frame length is `3 + LEN` bytes: minimum 24 bits, maximum 34 bytes.
 - The frame direction is always known from the transaction sequence (`PROTOCOL.md` section 1.3), so 2-bit type codes suffice per direction.
 - There is no start-of-frame field. Every master frame begins after a START line condition, which defines the frame boundary. Protocol versioning is handled by `SLAVE_INFO` (section 4.1).
-- The reserved bits in the slave header are candidates for a multi-frame flag (open issue S12) and a short generation counter (open issue S13).
+- In slave frames, the three bits at the `TARGET_LEN` position carry `MORE` and `GEN`, so multi-frame signaling and duplicate detection cost no payload. In `SLAVE_INFO` they are always `000`.
 
 ## 3. Master Message Types
 
@@ -143,7 +143,27 @@ Each slave has exactly one buffer for outgoing data.
 - `REQUEST_DATA` returns the buffer content as `SLAVE_DATA`. If the buffer is empty, the slave stays silent; no negative acknowledgement is sent.
 - Buffer and pending flag are cleared on the STOP following a complete `SLAVE_DATA` response. If the master ends the transaction with RESET instead (missing, incomplete, or invalid response), both are preserved for a retry (`PROTOCOL.md` section 3.4).
 
-An optional one-byte generation counter MAY be placed at the start of the buffer payload. If used, the counter increments whenever the buffer is overwritten, which helps the master detect that a newer value replaced an older unread one.
+When writing the buffer, the application also states whether more fragments follow (`MORE` bit, section 6.1).
+
+### 4.3 Generation Counter (`GEN`)
+
+`GEN` is a mandatory 2-bit counter in the slave header of every `SLAVE_DATA` frame.
+
+- The slave library increments `GEN` (modulo 4) on every buffer write: event data or `STATUS_CAPTURE`.
+- `GEN` is preserved across RESET.
+- `SLAVE_INFO` frames carry `GEN = 00`.
+
+Master evaluation (per MCID, master-side only):
+
+| New `GEN` vs. last received | Meaning |
+|---|---|
+| last + 1 | Normal: next buffer content. |
+| equal, payload identical | Duplicate (for example after a lost STOP); discard. |
+| equal, payload different | New content; the counter wrapped after four writes. |
+| any other step | At least one buffer content was overwritten unread (information, not an error). |
+| first frame from this MCID since master start | Taken as baseline. |
+
+The payload comparison prevents new content from being discarded as a duplicate after a counter wrap. The only remaining ambiguity (wrap **and** identical payload) is harmless, since the data is the same.
 
 ## 5. Addressing Rules
 
@@ -171,8 +191,22 @@ START, STOP, and RESET are line conditions, not frame content. RESET in particul
 ## 6.1 Payload Extension Strategy
 
 - v0 keeps each frame small (`LEN <= 31`) to remain lightweight.
-- Larger logical datasets (for example weather records) are transferred as multiple ordered `SLAVE_DATA` frames.
-- Reassembly policy is handled at application/library level, not by adding heavy transport state to tiny slaves.
+- Larger logical datasets (for example weather records) are transferred as a sequence of `SLAVE_DATA` fragments through the single slave buffer.
+- Reassembly policy is handled at application level on the master, not by adding transport state to tiny slaves.
+
+Fragment sequence:
+
+1. The slave application writes fragment 1 with `MORE = 1`.
+2. The master reads it; the STOP clears the buffer.
+3. The slave application sees the empty buffer and writes the next fragment (setting the pending flag again).
+4. Repeat until a fragment with `MORE = 0` (the last one).
+
+Rules:
+
+- The slave application writes the next fragment only when the buffer is empty.
+- After a valid `SLAVE_DATA` with `MORE = 1`, the master MAY immediately send `REQUEST_DATA` to the same slave. If the next fragment is not ready yet, the slave stays silent; the master continues, and the slave announces itself via the pending flag once the fragment is written.
+- No sequence number is needed: the single buffer enforces order, a duplicate (lost STOP) shows up as equal `GEN`, and an overwritten fragment shows up as a `GEN` gap. Handling a gap (for example restarting the transfer) is up to the master application.
+- `MORE` is set by the application; the library only transmits it.
 
 ## 7. Integrity Check
 
@@ -190,4 +224,4 @@ A compliant slave implementation must:
 - Ignore non-addressed frames as soon as prefix mismatch is known.
 - Respect LEN bounds and keep receiving until the end of the frame (header, `LEN` payload bytes, CRC8), even for payload it does not use.
 - Validate CRC8 before acting on commands.
-- Set the reserved header bits to `000` when transmitting.
+- Transmit `MORE` and `GEN` in `SLAVE_DATA` headers; transmit `000` in their place in `SLAVE_INFO`.

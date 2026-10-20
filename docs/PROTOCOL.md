@@ -289,7 +289,7 @@ Rules:
 
 ### Accepted Rare Cases
 
-- **STOP corrupted or missed:** the slave keeps its data and announces it again, so the master receives the same data twice. The optional generation counter lets the master detect the duplicate.
+- **STOP corrupted or missed:** the slave keeps its data and announces it again, so the master receives the same data twice. The `GEN` counter in the slave header lets the master detect the duplicate (`MESSAGE_FORMAT.md` section 4.3).
 - **Application writes the buffer during transmission:** the transmitted frame may mix old and new content, and the following STOP clears the new content. The library SHOULD prevent this cheaply (for example by deferring application writes while a response is in progress, or by not clearing if the buffer was written during transmission). Otherwise it is an accepted rare case.
 
 ## 4. Protocol State Names
