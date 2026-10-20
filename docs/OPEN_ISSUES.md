@@ -8,12 +8,6 @@ Status values: `open`, `proposal`, `resolved`.
 
 ## 1. Specification
 
-### S15: CRC8 Parameters (D2)
-
-- **Status:** open
-- **Problem:** Polynomial, init, and final XOR are not frozen. The library currently uses `0xD5 / 0x00 / 0x00`.
-- **Direction:** Freeze after first cross-platform tests, as planned.
-
 ## 2. Hardware and Timing
 
 ### H1: Voltage Levels
@@ -62,6 +56,7 @@ The library will be reworked after the specification issues above are resolved. 
 | L20 | `hubus_crc.*`, `hubus_state.c` | CRC8 must be computed incrementally while receiving/transmitting (today computed in bulk at frame end); implement turnaround slot and response start per `PROTOCOL.md` §1.3. |
 | L21 | `hubus_frame.*`, `hubus_state.c`, `hubus_bitbuffer.*` | Implement the 16-bit header (no SOF, 2-bit TYPE, `MORE`/`GEN` in slave frames) and CRC8 over header + payload bytes; current code assumes SOF and the old 21-bit layout. |
 | L22 | `hubus_buffer.*`, `hubus_slave.h` | Replace the optional 8-bit generation counter with the mandatory 2-bit `GEN` (transmitted in the header); add a `MORE` parameter to the buffer write API. |
+| L23 | `hubus_slave_config.h`, `hubus_crc.c` | Switch CRC parameters from `0xD5 / 0x00 / 0x00` to CRC-8/AUTOSAR (`0x2F / 0xFF / 0xFF`); regenerate the lookup table; add a check-value test (`0xDF`). |
 
 ## 4. Examples
 
@@ -153,6 +148,11 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-21)
 - **Resolution:** Duplicate MCIDs are a configuration fault detected by the master only: commissioning scan (`REQUEST_INFO` to every MCID) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value for reliable detection. Remaining blind spots are documented as accepted limitations. See `PROTOCOL.md` §3.5, `ERROR_SCENARIOS.md` §3.
+
+### R15: CRC8 Parameters (was S15, D2)
+
+- **Status:** resolved (2026-10-21)
+- **Resolution:** CRC-8/AUTOSAR: poly `0x2F`, init `0xFF`, xorout `0xFF`, not reflected, check value `0xDF`. Chosen by exhaustive evaluation of all 8-bit polynomials for HUBUS frame lengths (Hamming distance 4 up to 14 covered bytes, odd-weight errors always detected) and because the non-zero init prevents all-zero/all-one frames from being valid. Maximum payload stays 31 bytes; fragments ≤ 12 bytes recommended for strongest integrity. See `MESSAGE_FORMAT.md` §7.
 
 ### R6: Fairness (D3, largely)
 

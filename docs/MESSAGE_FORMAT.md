@@ -207,12 +207,28 @@ Rules:
 - After a valid `SLAVE_DATA` with `MORE = 1`, the master MAY immediately send `REQUEST_DATA` to the same slave. If the next fragment is not ready yet, the slave stays silent; the master continues, and the slave announces itself via the pending flag once the fragment is written.
 - No sequence number is needed: the single buffer enforces order, a duplicate (lost STOP) shows up as equal `GEN`, and an overwritten fragment shows up as a `GEN` gap. Handling a gap (for example restarting the transfer) is up to the master application.
 - `MORE` is set by the application; the library only transmits it.
+- Applications that need the strongest integrity guarantee SHOULD use fragments of at most 12 payload bytes, which keeps every frame within the CRC8 Hamming-distance-4 range (section 7).
 
 ## 7. Integrity Check
 
 - `CRC8` is mandatory in v0.
 - Coverage: byte 0, byte 1, and all payload bytes, processed in transmission order. Since every covered field is byte-aligned, the CRC is computed over whole bytes, incrementally as each byte completes.
-- Polynomial, initial value, and final XOR are tracked in `docs/ITERATIVE_CONCEPT.md` (D2) until frozen.
+- Parameters (CRC-8/AUTOSAR):
+
+  | Parameter | Value |
+  |---|---|
+  | Polynomial | `0x2F` (x⁸ + x⁵ + x³ + x² + x + 1) |
+  | Initial value | `0xFF` |
+  | Final XOR | `0xFF` |
+  | Input/output reflected | no (MSB first) |
+  | Check value for ASCII `"123456789"` | `0xDF` |
+
+- Both master and slave implementations must reproduce the check value `0xDF`.
+- Error detection for HUBUS frame lengths (verified by exhaustive computation):
+  - Covered length up to 14 bytes (header + payload ≤ 12 bytes): all 1-, 2-, and 3-bit errors are detected (Hamming distance 4).
+  - Any length: all errors with an odd number of flipped bits and all burst errors up to 8 bits are detected.
+  - Longer frames: some 2-bit error patterns are undetectable (limit of any 8-bit CRC at these lengths). A clock slip (lost or extra clock edge) is detected with a probability of about 255/256.
+- The non-zero initial value and final XOR ensure that neither an all-released frame (all `0`, for example a stuck master driver) nor an all-low frame (all `1`, stuck line) is ever a valid frame.
 - A frame with invalid CRC8 is always discarded, even if this reduces effective throughput.
 
 ## 8. Minimal Decoder Requirements
