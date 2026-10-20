@@ -9,30 +9,47 @@
 
 ## 2. Frame Structure (v0)
 
-A compact fixed-header frame is used.
+A frame consists of a 16-bit header, an optional payload, and a CRC8. The header layout is identical in both directions.
 
-| Field | Size (bits) | Description |
-|---|---:|---|
-| SOF | 4 | Start marker |
-| TYPE | 3 | Message class |
-| TARGET_LEN | 3 | Number of significant target prefix bits (master-to-slave only) |
-| MCID | 6 | Target prefix or source MCID (v0 default width) |
-| LEN | 5 | Payload length in bytes (0..31) |
-| PAYLOAD | variable | Message data |
-| CRC8 | 8 | Integrity check over TYPE..PAYLOAD |
+```
+Bit:     15 14 | 13 12 11   | 10  9  8  7  6  5 |  4  3  2  1  0
+Master:  TYPE  | TARGET_LEN |       MCID        |      LEN
+Slave:   TYPE  | RESERVED   |       MCID        |      LEN
+         ------- Byte 0 --------------|-------- Byte 1 ----------
 
-This base frame intentionally favors low overhead and simple parsing on ATtiny85.
+Frame:   [Byte 0] [Byte 1] [PAYLOAD: LEN bytes] [CRC8]
+```
 
-Every master frame begins after a START line condition (see `PROTOCOL.md` section 1.2). START, not SOF, defines the frame boundary; the receiver starts at bit 0 after each START. The SOF field therefore no longer carries delimiting meaning. Whether SOF is removed or repurposed (for example as a version marker) is decided together with the header alignment rework (open decision D4 in `ITERATIVE_CONCEPT.md`).
+| Field | Bits | Master → slave | Slave → master |
+|---|---:|---|---|
+| TYPE | 2 | Master message type (section 3) | Slave message type (section 4) |
+| TARGET_LEN / RESERVED | 3 | Number of significant target prefix bits (`0..6`) | Reserved, must be `000`; receivers ignore it |
+| MCID | 6 | Target prefix (MSB-aligned) | Source MCID |
+| LEN | 5 | Payload length in bytes (`0..31`) | Payload length in bytes (`0..31`) |
+| PAYLOAD | `LEN` × 8 | Message data | Message data |
+| CRC8 | 8 | Over byte 0, byte 1, and payload | Over byte 0, byte 1, and payload |
+
+Properties:
+
+- The header is exactly two bytes, so payload and CRC8 are byte-aligned without padding.
+- One parser and one CRC routine serve both directions.
+- Frame length is `3 + LEN` bytes: minimum 24 bits, maximum 34 bytes.
+- The frame direction is always known from the transaction sequence (`PROTOCOL.md` section 1.3), so 2-bit type codes suffice per direction.
+- There is no start-of-frame field. Every master frame begins after a START line condition, which defines the frame boundary. Protocol versioning is handled by `SLAVE_INFO` (section 4.1).
+- The reserved bits in the slave header are candidates for a multi-frame flag (open issue S12) and a short generation counter (open issue S13).
 
 ## 3. Master Message Types
 
 | Type | Name | Addressing | Slave reaction |
 |---|---|---|---|
-| `000` | `POLL_PENDING` | exact or group | Arbitration with handoff slots; only addressed pending slaves contend (`ARBITRATION.md`). No frame response. |
-| `001` | `REQUEST_INFO` | exact only | `SLAVE_INFO` with static device metadata (section 4.1). |
-| `010` | `REQUEST_DATA` | exact only | `SLAVE_DATA` with the content of the slave buffer; silent if the buffer is empty. |
-| `011` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
+| `00` | `POLL_PENDING` | exact or group | Arbitration with handoff slots; only addressed pending slaves contend (`ARBITRATION.md`). No frame response. |
+| `01` | `REQUEST_INFO` | exact only | `SLAVE_INFO` with static device metadata (section 4.1). |
+| `10` | `REQUEST_DATA` | exact only | `SLAVE_DATA` with the content of the slave buffer; silent if the buffer is empty. |
+| `11` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
+
+`POLL_PENDING`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
+
+All master type codes are in use. Future protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
 
 `SEND_COMMAND` is always fire-and-forget. If the master needs to confirm that a state was established, it reads the state back explicitly (status-capture followed by `REQUEST_DATA`).
 
@@ -97,12 +114,12 @@ Valid range in v0: `0..6`.
 
 | Type | Name | Sent in response to |
 |---|---|---|
-| `100` | reserved | – (formerly `SLAVE_ACK`; commands are never acknowledged) |
-| `101` | `SLAVE_DATA` | `REQUEST_DATA` |
-| `110` | `SLAVE_INFO` | `REQUEST_INFO` |
-| `111` | reserved | – (formerly `SLAVE_ERROR`; see below) |
+| `00` | reserved | – |
+| `01` | reserved | – |
+| `10` | `SLAVE_DATA` | `REQUEST_DATA` |
+| `11` | `SLAVE_INFO` | `REQUEST_INFO` |
 
-Both slave type codes start with `1`. The master uses this to detect a missing response from the first bit after the turnaround slot (`PROTOCOL.md` section 1.3). Any future header layout must keep this property.
+Slave type codes must start with `1`; codes `00` and `01` are never used by slaves. The master uses this to detect a missing response from the first bit after the turnaround slot (`PROTOCOL.md` section 1.3).
 
 Slaves send no acknowledgements and no error frames. Rationale: commands are fire-and-forget, so there is no request an acknowledgement or error could answer. A slave that needs to report an error (for example an application fault) writes it into its buffer and uses the regular return path; the error format is application-defined.
 
@@ -144,7 +161,9 @@ START, STOP, and RESET are line conditions, not frame content. RESET in particul
 
 ## 6. Encoding Rules
 
-- Bit order in frame fields: MSB first.
+- Bytes are transmitted in order: byte 0, byte 1, payload, CRC8.
+- Within each byte, bits are transmitted MSB first. The first bit after START is bit 15 of the header (MSB of byte 0).
+- Multi-bit fields are therefore also transmitted MSB first.
 - Arbitration MCID order: MSB first.
 - `LEN=0` is valid.
 - Maximum payload in v0 is 31 bytes.
@@ -158,7 +177,8 @@ START, STOP, and RESET are line conditions, not frame content. RESET in particul
 ## 7. Integrity Check
 
 - `CRC8` is mandatory in v0.
-- Polynomial selection and initial value are tracked in `docs/ITERATIVE_CONCEPT.md` until frozen.
+- Coverage: byte 0, byte 1, and all payload bytes, processed in transmission order. Since every covered field is byte-aligned, the CRC is computed over whole bytes, incrementally as each byte completes.
+- Polynomial, initial value, and final XOR are tracked in `docs/ITERATIVE_CONCEPT.md` (D2) until frozen.
 - A frame with invalid CRC8 is always discarded, even if this reduces effective throughput.
 
 ## 8. Minimal Decoder Requirements
@@ -166,8 +186,8 @@ START, STOP, and RESET are line conditions, not frame content. RESET in particul
 A compliant slave implementation must:
 
 - Restart reception at bit 0 on every START; return to idle on STOP; reset the communication stack on RESET.
-- Validate TYPE (and SOF while the field exists).
-- Read `TARGET_LEN` before evaluating `MCID` match.
+- Read the 2-bit TYPE, then `TARGET_LEN`, before evaluating `MCID` match.
 - Ignore non-addressed frames as soon as prefix mismatch is known.
-- Respect LEN bounds.
+- Respect LEN bounds and keep receiving until the end of the frame (header, `LEN` payload bytes, CRC8), even for payload it does not use.
 - Validate CRC8 before acting on commands.
+- Set the reserved header bits to `000` when transmitting.

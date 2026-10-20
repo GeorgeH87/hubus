@@ -106,7 +106,7 @@ A slave that is not addressed ignores everything until the next START, STOP, or 
 
 ### Response Detection and Length
 
-- Both slave frame type codes (`101` `SLAVE_DATA`, `110` `SLAVE_INFO`) start with `1`. The first bit after `T` is therefore low for every real response.
+- Both slave frame type codes (`10` `SLAVE_DATA`, `11` `SLAVE_INFO`) start with `1`. The first bit after `T` is therefore low for every real response.
 - If the first bit after `T` is high, there is no response (empty buffer, unknown MCID, invalid request frame). The master ends the transaction immediately.
 - Otherwise the master reads the slave header, takes the payload length from `LEN`, and clocks exactly the remaining header, payload, and CRC8 bits. It then ends the transaction with STOP (valid) or RESET (invalid), see section 3.4.
 - The master compares the source MCID in the response with the addressed MCID. A mismatch is treated like a CRC failure.

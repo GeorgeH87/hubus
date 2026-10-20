@@ -14,34 +14,17 @@ Status values: `open`, `proposal`, `resolved`.
 - **Problem:** Two slaves with the same MCID produce identical bit patterns on a wired-AND line. The master cannot detect "unresolved arbitration" as described in `ARBITRATION.md` §5 and `ERROR_SCENARIOS.md` §3. At most, it shows up later as a CRC failure when both respond.
 - **Direction:** Treat duplicate MCID as a commissioning fault detected by the master (for example repeated CRC failures from one MCID). A master-side bus scan (`REQUEST_INFO` to each MCID `1..63`) discovers present slaves; duplicates typically show up as CRC failures there. Candidate for an accepted rare case; rewrite §5 and error scenario 3 accordingly.
 
-### S11: Bit Layout and CRC Coverage (relates to D4)
-
-- **Status:** open
-- **Problem:**
-  - The 21-bit header (with SOF) leaves payload and CRC unaligned to byte boundaries.
-  - The packing of bit fields into bytes for CRC8 computation is undefined.
-  - Slave frames have no `TARGET_LEN`, so the header length differs by direction.
-  - The SOF field has lost its delimiting role (see D4).
-- **Direction:** Pad the header to 24 bits (or 16 bits without SOF) so CRC8 runs over whole bytes. Define one header layout for both directions (reserved bits instead of `TARGET_LEN` in slave frames).
-- **Constraint:** Slave frames must start with a `1` bit (today: slave type codes `101`/`110`), because the master detects a missing response from the first bit after the turnaround slot.
-
 ### S12: Multi-Frame Transfers
 
 - **Status:** open
 - **Problem:** Large datasets are split into several `SLAVE_DATA` frames, but there is no sequence number or last-frame flag. Lost or duplicated fragments cannot be detected.
-- **Direction:** Keep it application-level as intended, but define a minimal convention (for example first payload byte = fragment index with a "last" bit) as an optional profile.
+- **Direction:** Keep it application-level as intended, but define a minimal convention. Candidate: a `MORE` flag in the reserved slave header bits (no payload cost), or first payload byte = fragment index with a "last" bit as an optional profile.
 
 ### S13: Generation Counter Placement
 
 - **Status:** open
 - **Problem:** The spec places the optional generation counter as the first payload byte of the slave buffer; the library keeps it separately (for two buffers) and never transmits it.
-- **Direction:** Confirm the spec rule and implement it in the library as a compile-time option for the single buffer.
-
-### S14: MCID Width (relates to D1)
-
-- **Status:** open
-- **Problem:** Switching to 8-bit MCIDs requires `TARGET_LEN` to grow from 3 to 4 bits, which changes the header layout.
-- **Direction:** Decide D1 together with S11 so the header is reworked only once.
+- **Direction:** Either keep it as first payload byte, or move a short (2-bit) counter into the reserved slave header bits (no payload cost; sufficient to detect duplicates after a lost STOP). Implement in the library as a compile-time option.
 
 ### S15: CRC8 Parameters (D2)
 
@@ -95,6 +78,7 @@ The library will be reworked after the specification issues above are resolved. 
 | L18 | `hubus_frame.h`, `hubus_state.h` | Remove `SLAVE_ACK`/`SLAVE_ERROR`/`SLAVE_STATUS` types and related events; add `SLAVE_INFO`. Callback events (`HUBUS_EVENT_REQUEST_DATA` for all request types) no longer match the spec. |
 | L19 | `hubus_state.c` | Implement buffer clearing per `PROTOCOL.md` §3.4 (clear on STOP after complete response, keep on RESET); today the buffer is cleared in `TRANSFER` without sending anything. Guard against application writes during transmission. |
 | L20 | `hubus_crc.*`, `hubus_state.c` | CRC8 must be computed incrementally while receiving/transmitting (today computed in bulk at frame end); implement turnaround slot and response start per `PROTOCOL.md` §1.3. |
+| L21 | `hubus_frame.*`, `hubus_state.c`, `hubus_bitbuffer.*` | Implement the 16-bit header (no SOF, 2-bit TYPE, reserved bits in slave frames) and CRC8 over header + payload bytes; current code assumes SOF and the old 21-bit layout. |
 
 ## 4. Examples
 
@@ -151,9 +135,9 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-20)
 - **Resolution:**
-  - Commands are fire-and-forget; no `SLAVE_ACK` and no `SLAVE_ERROR` (types `100`, `111` reserved). The master verifies states by reading them back.
+  - Commands are fire-and-forget; no `SLAVE_ACK` and no `SLAVE_ERROR`. The master verifies states by reading them back.
   - One outgoing buffer per slave: `REQUEST_DATA` → `SLAVE_DATA`. `STATUS_CAPTURE` writes into the same buffer.
-  - `REQUEST_INFO` → `SLAVE_INFO` (type `110`) with static metadata.
+  - `REQUEST_INFO` → `SLAVE_INFO` with static metadata.
   - Opcodes: `0x00` `STATUS_CAPTURE`, `0x01..0x0F` reserved, `0x10..0xFF` application.
   - See `MESSAGE_FORMAT.md` §3, §3.0, §4.
 
@@ -171,6 +155,11 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-20)
 - **Resolution:** The slave releases `DATA` after the first complete master clock pulse (after the falling edge, so the release is not mistaken for a STOP). The master clocks until `DATA` is released, bounded by its line-fault threshold. See `PROTOCOL.md` §3.1.
+
+### R12: Header Layout, SOF, and MCID Width (was S11, S14; D1, D4)
+
+- **Status:** resolved (2026-10-20)
+- **Resolution:** 16-bit header with identical layout in both directions: `TYPE`(2) · `TARGET_LEN`/reserved(3) · `MCID`(6) · `LEN`(5). No SOF. 2-bit type codes per direction; slave codes `10`/`11` start with `1`. CRC8 over header bytes and payload in transmission order, byte-aligned. MCID width stays 6 bits. See `MESSAGE_FORMAT.md` §2–§4, §6, §7.
 
 ### R6: Fairness (D3, largely)
 

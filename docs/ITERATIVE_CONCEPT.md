@@ -26,9 +26,9 @@ Core project goal: define a reusable communication library and protocol. Concret
 - The master derives prefix masks from low handoff slots and processes them with a last-in-first-out pending mask stack. A burst serves all slaves pending at its start in descending MCID order, with one arbitration per slave.
 - `POLL_PENDING` uses unified target-mask addressing.
 - Group/broadcast addressing is one-way (master to n slaves). Response frames only follow exact addressing; slaves report results of group commands via the pending flag and burst.
-- Commands are fire-and-forget: no `SLAVE_ACK`, no `SLAVE_ERROR` (types `100` and `111` reserved). The master verifies states by reading them back.
+- Commands are fire-and-forget: no `SLAVE_ACK`, no `SLAVE_ERROR`. The master verifies states by reading them back.
 - One outgoing buffer per slave, read via `REQUEST_DATA` / `SLAVE_DATA`. `STATUS_CAPTURE` writes into the same buffer.
-- `REQUEST_INFO` returns static metadata as `SLAVE_INFO` (type `110`): protocol version, capability flags, application data.
+- `REQUEST_INFO` returns static metadata as `SLAVE_INFO`: protocol version, capability flags, application data.
 - Implicit read confirmation: the slave clears buffer and pending flag on the STOP following its complete `SLAVE_DATA` response. On a missing, incomplete, or invalid response the master ends with RESET, which preserves both for a retry.
 - `DATA` is open-drain for all nodes including the master; `CLK` is push-pull from the master.
 - One turnaround slot separates master transmission from slave transmission (response or arbitration). Slaves compute CRC8 incrementally so the turnaround slot suffices.
@@ -36,12 +36,11 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Missing response detection: slave type codes start with `1`, so a released first bit after the turnaround slot means "no response". No response timeout needed.
 - Idle event handshake: slave releases `DATA` after the first complete master clock pulse; master clocks until `DATA` is released.
 - `SEND_COMMAND` opcodes: `0x00` = `STATUS_CAPTURE`, `0x01..0x0F` reserved for protocol use, `0x10..0xFF` application-defined.
+- Frame format: 16-bit header, identical layout in both directions: `TYPE`(2) · `TARGET_LEN`/reserved(3) · `MCID`(6) · `LEN`(5), followed by payload and CRC8. No SOF field. CRC8 covers header bytes and payload in transmission order.
+- 2-bit type codes per direction: master `00` POLL_PENDING, `01` REQUEST_INFO, `10` REQUEST_DATA, `11` SEND_COMMAND; slave `10` SLAVE_DATA, `11` SLAVE_INFO (`00`/`01` reserved).
+- MCID width stays 6 bits (`1..63`), also for v1 (D1). Electrical limits of a single open-drain line keep the practical node count well below 63; 8 bits would cost one header byte and 4 arbitration slots per frame.
 
 ## 3. Open Decisions
-
-### D1: Final MCID Width
-
-Current default is 6 bits (`1..63`, `0` reserved). Confirm whether v1 should keep 6 bits or switch to 8 bits for larger systems.
 
 ### D2: CRC8 Parameters
 
@@ -53,11 +52,10 @@ Largely resolved by the burst mechanism: every slave pending at burst start is s
 
 Further fairness extensions (priority aging, deferral windows) are not planned unless tests show a need. Any such policy would be master-side.
 
-### D4: Header Layout and SOF
+### Resolved
 
-With START defining frame boundaries, SOF no longer delimits frames. Decide whether to remove SOF or repurpose it (for example as a version marker), and whether to pad the header to a byte boundary so payload and CRC8 become byte-aligned.
-
-Note: only 6 of 8 `TYPE` values are now in use (four master types, two slave types). Since frame direction is known from context, a 2-bit `TYPE` would suffice; consider this in the header rework.
+- D1 (MCID width): 6 bits kept, see section 2.
+- D4 (header layout and SOF): 16-bit header without SOF, see section 2 and `MESSAGE_FORMAT.md` section 2.
 
 ## 4. Milestones
 
