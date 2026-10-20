@@ -53,6 +53,8 @@ The library will be reworked after the specification issues above are resolved. 
 | L21 | `hubus_frame.*`, `hubus_state.c`, `hubus_bitbuffer.*` | Implement the 16-bit header (no SOF, 2-bit TYPE, `MORE`/`GEN` in slave frames) and CRC8 over header + payload bytes; current code assumes SOF and the old 21-bit layout. |
 | L22 | `hubus_buffer.*`, `hubus_slave.h` | Replace the optional 8-bit generation counter with the mandatory 2-bit `GEN` (transmitted in the header); add a `MORE` parameter to the buffer write API. |
 | L23 | `hubus_slave_config.h`, `hubus_crc.c` | Switch CRC parameters from `0xD5 / 0x00 / 0x00` to CRC-8/AUTOSAR (`0x2F / 0xFF / 0xFF`); regenerate the lookup table; add a check-value test (`0xDF`). |
+| L24 | whole library | Split into a hardware-independent core and HALs for classic tinyAVR and tinyAVR 0/1/2-series; select HAL from the device macro. Today GPIO/PCINT code is ATtiny85-specific (`GIMSK`/`PCMSK`/`PCINT0_vect`), and the README wrongly claims ATtiny1616 support by renaming ports. |
+| L25 | `hubus_slave_config.h`, `hubus_slave.c` | Make receive and transmit buffer sizes compile-time options; report the accepted command payload in `SLAVE_INFO` byte 2; ignore oversized commands while staying synchronized. |
 
 ## 4. Examples
 
@@ -70,8 +72,9 @@ The library will be reworked after the specification issues above are resolved. 
 | P1 | No master (Raspberry Pi) implementation, although `v0-master` precedes `v0-slave` in the milestones. |
 | P2 | No build system (Makefile / avr-gcc), no `.gitignore`. |
 | P3 | No host-side unit tests (frame codec, CRC, arbitration simulation on a virtual wired-AND bus). |
-| P4 | No CI. |
+| P4 | No CI. Should build the slave library for a device matrix (for example ATtiny25, 85, 84, 88, 841, 1614, 3216) and fail if the ATtiny85 build exceeds its flash/RAM budget. |
 | P5 | No license. |
+| P6 | Toolchain: the Ubuntu `gcc-avr` package is old; tinyAVR 0/1/2-series support likely needs a newer avr-gcc or Microchip device packs. Verify when setting up the environment. |
 
 ## 6. Resolved
 

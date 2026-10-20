@@ -65,6 +65,8 @@ The first payload byte of `SEND_COMMAND` is the opcode. A `SEND_COMMAND` with `L
 
 Remaining payload bytes after the opcode are opcode-specific.
 
+A slave ignores a `SEND_COMMAND` whose payload exceeds its configured maximum (announced in `SLAVE_INFO` byte 2). It still receives the complete frame so it stays synchronized. The master must not send larger commands than a slave accepts.
+
 ## 3.1 Unified Target Mask Addressing
 
 All master-to-slave commands (`POLL_PENDING`, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For `POLL_PENDING`, the mask selects which pending slaves contend in the arbitration; the master uses this to poll the prefix groups derived from handoff slots.
@@ -131,7 +133,8 @@ Static metadata, typically a constant in flash.
 |---|---|
 | 0 | HUBUS protocol version |
 | 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; other bits reserved (0) |
-| 2.. | Application-defined (for example device type, firmware version). SHOULD include a device-unique value (for example a serial number) so the master's commissioning scan reliably detects duplicate MCIDs (`PROTOCOL.md` section 3.5). |
+| 2 | Maximum command payload the slave accepts, in bytes (`1..31`; ATtiny85 reference build: 31) |
+| 3.. | Application-defined (for example device type, firmware version). SHOULD include a device-unique value (for example a serial number) so the master's commissioning scan reliably detects duplicate MCIDs (`PROTOCOL.md` section 3.5). |
 
 ### 4.2 Slave Buffer and `SLAVE_DATA`
 

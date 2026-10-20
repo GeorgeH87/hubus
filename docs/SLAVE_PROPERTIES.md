@@ -70,8 +70,9 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 ## 4. Buffer and Payload Constraints
 
 - Design for low RAM footprint.
-- Support at least one complete incoming frame and exactly one outgoing buffer (`MESSAGE_FORMAT.md` section 4.2).
-- Enforce maximum payload length from `docs/MESSAGE_FORMAT.md`.
+- Exactly one outgoing buffer (`MESSAGE_FORMAT.md` section 4.2) and a receive buffer for command payloads.
+- Both buffer sizes are compile-time options (maximum 31 bytes each). The ATtiny85 reference build uses the full 31 bytes; smaller devices may use shorter buffers (`HARDWARE_REQUIREMENTS.md` section 4.1).
+- The accepted command payload size is announced in `SLAVE_INFO` byte 2. Longer commands are received to the end (to stay synchronized) and then ignored.
 - Writing the outgoing buffer (event data or `STATUS_CAPTURE`) sets the pending flag.
 - New content may overwrite unread content; the buffer is not a queue.
 - Every buffer write increments the 2-bit `GEN` counter, which is transmitted in the `SLAVE_DATA` header (`MESSAGE_FORMAT.md` section 4.3).
@@ -97,11 +98,13 @@ A slave must:
 
 If the master clock stops mid-transfer, the slave stays in its current state. The master resolves this with its startup/recovery sequence (`PROTOCOL.md` section 3.3). All timeout and fault handling is master-side.
 
-## 6. ATtiny85 Practical Notes
+## 6. Implementation Notes (All Devices)
 
 - Avoid dynamic allocation.
 - Keep ISR work minimal and deterministic.
-- `CLK` and `DATA` share one pin change interrupt vector on ATtiny85. The ISR compares the pin state with the previous one: a `CLK` edge is a bit event; a `DATA` change while `CLK` is high is a START/STOP; a `DATA` change while `CLK` is low (including the slave's own writes) is ignored.
+- Protocol logic lives in a hardware-independent core shared by all devices (and by host-side tests). Each device family has a small HAL for pin access and interrupt setup (`HARDWARE_REQUIREMENTS.md` section 4.1).
+- Both `CLK` and `DATA` raise pin change/edge interrupts. The handler evaluates the pin state: a `CLK` edge is a bit event; a `DATA` change while `CLK` is high is a START/STOP; a `DATA` change while `CLK` is low (including the slave's own writes) is ignored.
+- On the ATtiny85 both pins share one pin change vector; the handler compares the pin state with the previous one to see which line changed. Other devices may use one vector per port or per pin; the HAL hides this.
 - Precompute MCID bit masks for arbitration speed.
 
 ## 7. Example Slave Categories

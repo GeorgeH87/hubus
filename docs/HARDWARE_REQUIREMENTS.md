@@ -40,6 +40,23 @@ Consequences:
 - Loads such as relays may still be switched at 5 V or higher; only the MCU and the bus run at 3.3 V.
 - All nodes on one bus use the same 3.3 V logic level; mixed bus voltages are not allowed.
 
+## 4.1 Supported Slave Devices
+
+The slave library is portable across ATtiny devices. All protocol logic lives in a hardware-independent core; a small hardware abstraction layer (HAL) per device family maps pin access and interrupts.
+
+| Family | Examples | HAL |
+|---|---|---|
+| Classic tinyAVR | ATtiny25/45/85, 24/44/84, 261/461/861, 48/88, 441/841, 2313/4313, 1634 | `DDRx`/`PORTx`/`PINx`, pin change interrupts (`PCMSKx` and related registers, names differ per device) |
+| tinyAVR 0/1/2-series | ATtiny202/402/412, 804/814/1614/1616, 3216/3217, 424/824/1624 | `PORTx`/`VPORTx`, per-pin interrupt sense configuration (`PINnCTRL`) |
+
+Requirements:
+
+- **Reference target:** the ATtiny85 is always fully supported, including the maximum payload of 31 bytes in both directions. Every library change must keep the ATtiny85 build within its flash and RAM budget.
+- **Minimum device:** 2 KB flash and 128 B RAM. Devices below that (for example ATtiny13A) and the reduced-core devices ATtiny4/5/9/10 are not supported.
+- **Configurable buffers:** buffer sizes are compile-time options so smaller devices can use shorter buffers. A slave announces the maximum command payload it accepts in `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1).
+- **Pins:** `CLK` and `DATA` must each be on a pin that supports pin change or edge interrupts (`SLAVE_PROPERTIES.md` section 6). On classic devices, placing both pins on the same port keeps them on one interrupt vector.
+- **Device selection:** the HAL is selected automatically from the compiler's device macro (`-mmcu=...`); the application only configures pins and buffer sizes.
+
 ## 5. Timing Baseline
 
 Master defines these constants:
@@ -55,6 +72,8 @@ Master defines these constants:
 A response timeout is not needed: the master detects a missing response from the first bit after the turnaround slot (`PROTOCOL.md` section 1.3).
 
 All timing values are minimums. A slower or jittery master clock only slows the bus down; it never violates the protocol.
+
+Slaves differ in ISR latency (device family, CPU clock; some devices run at 1 MHz by default). The master configures all timing minimums for the slowest slave on the bus.
 
 Slaves have no timing constants of their own; all timeouts are master-side.
 
