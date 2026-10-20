@@ -1,6 +1,6 @@
 # Typical Session Example
 
-This example shows one poll cycle with three slaves.
+This example shows one burst with three slaves.
 
 ## Setup
 
@@ -10,24 +10,31 @@ This example shows one poll cycle with three slaves.
 
 Slave A and Slave B have pending data. Slave C has no data.
 
+Precondition: the master has completed its startup sequence (clock until `DATA` released, RESET). Every master frame below begins with a START condition and ends with a STOP condition.
+
 ## Sequence
 
-1. Slave B gets a local event while bus is idle and pulls `DATA` low.
+1. Slave B gets a local event while the bus is idle and pulls `DATA` low.
 2. Master detects low `DATA` in idle and sends confirmation ticks on `CLK`.
-3. Slave B releases `DATA` after confirmation, then waits for protocol intent.
-4. Master sends `POLL_PENDING`.
-5. A and B enter arbitration. C stays passive.
-6. Arbitration bit 1 (MSB):
-- A sends `0` (release).
-- B sends `1` (pull low).
-- Line is low -> A detects dominant `1` while sending `0` and drops out.
-7. B remains sole contender and wins arbitration.
-8. Slave A emits the handoff slot marker before fully releasing the bus, indicating that another pending slave still exists.
-9. Master keeps the burst open and continues polling after the current transfer.
-10. Master sends `REQUEST_DATA` to MCID 42.
-11. Slave B replies with `SLAVE_DATA` frame and valid CRC8.
-12. Master acknowledges and keeps polling until no further handoff marker appears.
+3. Slave B releases `DATA` after confirmation. The master starts a burst with an empty pending mask stack.
+4. Master sends `POLL_PENDING` with `TARGET_LEN=0` (all slaves).
+5. A and B enter arbitration. C is not pending and stays passive.
+6. Arbitration bit 5 (MSB):
+   - A sends `0` (release), B sends `1` (pull low).
+   - Line is low, so A has lost at bit 5.
+7. Handoff slot 5: A pulls `DATA` low. The master pushes the mask `0` / `TARGET_LEN=1` onto its stack.
+8. Bits 4..0: B is the only contender; all remaining handoff slots stay released. The master reads the winner `101010` = 42.
+9. Master sends `REQUEST_DATA` to MCID 42 (`TARGET_LEN=6`).
+10. Slave B replies with a `SLAVE_DATA` frame and valid CRC8.
+11. Master pops mask `0` / `TARGET_LEN=1` and sends `POLL_PENDING` for that group.
+12. Only A is pending in group `0xxxxx` and wins. No handoff slot is low.
+13. Master sends `REQUEST_DATA` to MCID 25; Slave A replies with `SLAVE_DATA`.
+14. The stack is empty. The burst is complete and the bus returns to idle.
 
-## Why B Wins
+## Why B Wins First
 
 Higher MCID has higher priority, and bit `1` is dominant because it pulls the line low.
+
+## Why A Is Not Forgotten
+
+A lost at bit 5 and announced this in handoff slot 5. The master therefore knows that a pending slave exists in group `0xxxxx` and polls it before ending the burst.

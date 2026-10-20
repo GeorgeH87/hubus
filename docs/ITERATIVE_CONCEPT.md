@@ -14,12 +14,34 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Higher MCID has higher arbitration priority.
 - Arbitration compares MCID from MSB to LSB.
 - v0 frame includes CRC8.
+- Design principle: lightweight slaves, complexity on the master.
+- Design principle: rare, self-recovering corner cases are accepted and documented instead of prevented at any cost.
+- Slaves have no time base and implement no timeouts; all timeouts, retries, and recovery are master-side.
+- `CLK` idles low; `DATA` changes only while `CLK` is low and is sampled on the rising edge.
+- Frames are delimited by START (`DATA` falls while `CLK` high) and STOP (`DATA` rises while `CLK` high).
+- RESET = START immediately followed by STOP. It resets the slave communication stack but preserves buffered data, status, generation counters, and the pending flag.
+- Master sends RESET at startup (mandatory) and before shutdown (optional), and after detected faults.
+- MCID `0` is reserved; valid slave MCIDs are `1..63` in v0. This guarantees every contender drives at least one arbitration bit low.
+- Every arbitration bit is followed by a handoff slot, driven by slaves that lost at exactly that bit.
+- The master derives prefix masks from low handoff slots and processes them with a last-in-first-out pending mask stack. A burst serves all slaves pending at its start in descending MCID order, with one arbitration per slave.
+- `POLL_PENDING` uses unified target-mask addressing.
+- Group/broadcast addressing is one-way (master to n slaves). Response frames only follow exact addressing; slaves report results of group commands via the pending flag and burst.
+- Commands are fire-and-forget: no `SLAVE_ACK`, no `SLAVE_ERROR` (types `100` and `111` reserved). The master verifies states by reading them back.
+- One outgoing buffer per slave, read via `REQUEST_DATA` / `SLAVE_DATA`. `STATUS_CAPTURE` writes into the same buffer.
+- `REQUEST_INFO` returns static metadata as `SLAVE_INFO` (type `110`): protocol version, capability flags, application data.
+- Implicit read confirmation: the slave clears buffer and pending flag on the STOP following its complete `SLAVE_DATA` response. On a missing, incomplete, or invalid response the master ends with RESET, which preserves both for a retry.
+- `DATA` is open-drain for all nodes including the master; `CLK` is push-pull from the master.
+- One turnaround slot separates master transmission from slave transmission (response or arbitration). Slaves compute CRC8 incrementally so the turnaround slot suffices.
+- The arbitration winner is served in a separate `REQUEST_DATA` transaction; slaves only transmit frames after exactly addressed `REQUEST_INFO`/`REQUEST_DATA`.
+- Missing response detection: slave type codes start with `1`, so a released first bit after the turnaround slot means "no response". No response timeout needed.
+- Idle event handshake: slave releases `DATA` after the first complete master clock pulse; master clocks until `DATA` is released.
+- `SEND_COMMAND` opcodes: `0x00` = `STATUS_CAPTURE`, `0x01..0x0F` reserved for protocol use, `0x10..0xFF` application-defined.
 
 ## 3. Open Decisions
 
 ### D1: Final MCID Width
 
-Current default is 6 bits (0..63). Confirm whether v1 should keep 6 bits or switch to 8 bits for larger systems.
+Current default is 6 bits (`1..63`, `0` reserved). Confirm whether v1 should keep 6 bits or switch to 8 bits for larger systems.
 
 ### D2: CRC8 Parameters
 
@@ -27,13 +49,15 @@ Freeze polynomial, init value, and final XOR after first cross-platform tests.
 
 ### D3: Fairness Strategy
 
-Strict priority can starve low MCID nodes under sustained load. In v0 this is accepted behavior.
+Largely resolved by the burst mechanism: every slave pending at burst start is served within that burst, so a busy high-priority slave cannot starve lower-priority ones. Starvation across bursts is still possible only if bursts are aborted before completion.
 
-Future fairness extensions, if ever needed, may include:
+Further fairness extensions (priority aging, deferral windows) are not planned unless tests show a need. Any such policy would be master-side.
 
-- Priority aging.
-- Deferral window for recent winners.
-- Master-level scheduling policy.
+### D4: Header Layout and SOF
+
+With START defining frame boundaries, SOF no longer delimits frames. Decide whether to remove SOF or repurpose it (for example as a version marker), and whether to pad the header to a byte boundary so payload and CRC8 become byte-aligned.
+
+Note: only 6 of 8 `TYPE` values are now in use (four master types, two slave types). Since frame direction is known from context, a 2-bit `TYPE` would suffice; consider this in the header rework.
 
 ## 4. Milestones
 

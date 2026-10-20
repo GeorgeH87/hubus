@@ -10,6 +10,7 @@ This directory contains the normative documentation for HUBUS.
 - `HARDWARE_REQUIREMENTS.md`: electrical and timing assumptions.
 - `SLAVE_PROPERTIES.md`: minimal slave capabilities and example device categories.
 - `ITERATIVE_CONCEPT.md`: open decisions, roadmap, and deferred topics.
+- `OPEN_ISSUES.md`: tracking list of known gaps, inconsistencies, and defects.
 
 ## Examples
 
