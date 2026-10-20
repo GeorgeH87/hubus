@@ -57,6 +57,17 @@ Requirements:
 - **Pins:** `CLK` and `DATA` must each be on a pin that supports pin change or edge interrupts (`SLAVE_PROPERTIES.md` section 6). On classic devices, placing both pins on the same port keeps them on one interrupt vector.
 - **Device selection:** the HAL is selected automatically from the compiler's device macro (`-mmcu=...`); the application only configures pins and buffer sizes.
 
+## 4.2 Supported Master Devices
+
+The master is implemented in C and shares the hardware-independent protocol core with the slave library.
+
+- **Supported models:** Raspberry Pi 3 and newer, including Pi 3B/3B+/3A+, Zero 2 W, Pi 4, Pi 400, Pi 5, and the corresponding Compute Modules.
+- **GPIO access:** Linux GPIO character device via `libgpiod`. It works on all supported models, including the Pi 5 whose GPIOs are on the RP1 chip. Direct register access (`/dev/gpiomem`) and `pigpio` are not used: both are model-specific, and `pigpio` does not support the Pi 5.
+- **GPIO chip selection:** by chip label, not by number, because chip numbering differs between models and kernel versions.
+- **`DATA` line:** requested as open-drain output; the kernel emulates open-drain by switching between input (released) and output low. The master never drives `DATA` high.
+- **Timing:** user-space bit-banging. Jitter is tolerated by the protocol (all timing values are minimums). Real-time scheduling priority for the clock thread is recommended.
+- **Structure:** the master logic runs on a small HAL (set `CLK`, pull/release `DATA`, read `DATA`, wait). The same master logic runs against a simulated bus in host-side tests.
+
 ## 5. Timing Baseline
 
 Master defines these constants:

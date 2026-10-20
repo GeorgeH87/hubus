@@ -9,6 +9,7 @@ This repository starts with protocol-first documentation so the concept can be r
 - Run on small 8-bit controllers: the slave library supports classic tinyAVR and tinyAVR 0/1/2-series devices. The ATtiny85 is the reference target and is always fully supported.
 - Keep the library footprint minimal for ATtiny85-class RAM/flash limits.
 - Use only the Raspberry Pi and ATtiny controllers as active components on the bus.
+- Master runs on Raspberry Pi 3 and newer (including Pi 5), written in C and sharing the protocol core with the slaves.
 - Use a master-generated clock.
 - Allow slaves to signal pending communication on a shared data line.
 - Use deterministic arbitration based on MCID.

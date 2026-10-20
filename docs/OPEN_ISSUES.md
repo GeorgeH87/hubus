@@ -16,7 +16,7 @@ No open specification issues. Remaining items are hardware measurements (section
 
 - **Status:** open (spec part resolved: all timing values are minimums, so jitter only slows the bus)
 - **Problem:** A Linux user-space bit-banged clock has significant jitter and occasional long pauses. `T_CLK_LOW`, `T_COND`, and `T_TURNAROUND` minimums must still be met reliably.
-- **Direction:** Evaluate user-space GPIO, pigpio/DMA, or a kernel driver during the `v0-master` milestone.
+- **Direction:** `libgpiod` in user space is the baseline (`HARDWARE_REQUIREMENTS.md` §4.2). Measure achievable clock rate and jitter on Pi 3, Pi 4, and Pi 5; use real-time priority if needed. Note: `libgpiod` v1 and v2 have different APIs; check which version the target OS ships and keep the HAL thin enough to support both if necessary.
 
 ### H3: Concrete Timing Values
 
@@ -69,7 +69,7 @@ The library will be reworked after the specification issues above are resolved. 
 
 | ID | Problem |
 |---|---|
-| P1 | No master (Raspberry Pi) implementation, although `v0-master` precedes `v0-slave` in the milestones. |
+| P1 | No master implementation. Target: C, Raspberry Pi 3 and newer, `libgpiod`, shared protocol core (`HARDWARE_REQUIREMENTS.md` §4.2). |
 | P2 | No build system (Makefile / avr-gcc), no `.gitignore`. |
 | P3 | No host-side unit tests (frame codec, CRC, arbitration simulation on a virtual wired-AND bus). |
 | P4 | No CI. Should build the slave library for a device matrix (for example ATtiny25, 85, 84, 88, 841, 1614, 3216) and fail if the ATtiny85 build exceeds its flash/RAM budget. |
