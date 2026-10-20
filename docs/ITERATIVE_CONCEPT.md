@@ -43,6 +43,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - CRC8 = CRC-8/AUTOSAR (poly `0x2F`, init `0xFF`, xorout `0xFF`). Hamming distance 4 up to 14 covered bytes; maximum payload stays 31 bytes, with a recommendation to fragment into ≤ 12-byte payloads where strongest integrity is needed.
 - 3.3 V bus: all slaves supplied with 3.3 V, `DATA` pull-up to 3.3 V, no level shifters.
 - Slave library supports classic tinyAVR and tinyAVR 0/1/2-series via a portable core plus one HAL per family. ATtiny85 is the reference target and always fully supported (31-byte buffers). Minimum device: 2 KB flash, 128 B RAM; buffer sizes are compile-time options, and `SLAVE_INFO` byte 2 announces the accepted command payload size. The master configures timing for the slowest slave.
+- START/STOP detection stays interrupt-based on both `CLK` and `DATA` (a `DATA` change while `CLK` is high is a condition). Rejected alternative: detecting conditions by comparing `DATA` at the rising and falling `CLK` edges. It would need only one interrupt pin, but with slaves of different ISR latency a fast transmitter changes `DATA` after the falling edge before a slow slave samples it, which the slow slave would misread as START/STOP (for example dropping out of arbitration).
 - MCID width stays 6 bits (`1..63`), also for v1 (D1). Electrical limits of a single open-drain line keep the practical node count well below 63; 8 bits would cost one header byte and 4 arbitration slots per frame.
 
 ## 3. Open Decisions
