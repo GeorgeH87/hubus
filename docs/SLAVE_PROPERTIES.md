@@ -11,9 +11,10 @@ A compliant HUBUS slave must provide:
 - Detection of START, STOP, and RESET line conditions (`DATA` change while `CLK` is high).
 - Idle event announce behavior by pulling `DATA` low until the first complete master clock pulse.
 - Arbitration participation logic, including driving the handoff slot directly after losing.
-- Target-mask match logic (`MCID` prefix + `TARGET_LEN`) for all master commands, including `POLL_PENDING`.
+- Target-mask match logic (`MCID` prefix + `TARGET_LEN`) for all master commands.
 - Early target filtering based on `TARGET_LEN` before full command processing.
-- Never send a response frame to a group or broadcast frame (`TARGET_LEN < 6`); ignore `REQUEST_INFO`/`REQUEST_DATA` unless exactly addressed. Results of group commands are reported via the pending flag.
+- Send a response frame only if addressed exactly (`TARGET_LEN = 6`) or after winning the arbitration of a group `REQUEST_INFO`/`REQUEST_DATA`. Never answer a group `SEND_COMMAND`; results of group commands are reported via the pending flag.
+- Ignore frames with the reserved master type `00`.
 - Frame RX/TX handling with incremental CRC8 computation (byte by byte while receiving and transmitting).
 - Transaction sequencing per `PROTOCOL.md` section 1.3 (turnaround slot, arbitration slots, response).
 
@@ -23,10 +24,10 @@ A compliant HUBUS slave must provide:
 - `IDLE_EVENT_SIGNAL`: Hold `DATA` low to announce a pending event.
 - `RX_FRAME`: Receive the master frame after START; stop evaluating once the address does not match.
 - `TURNAROUND`: Release `DATA` for one slot; evaluate CRC, address, and buffer state.
-- `ARBITRATION_ACTIVE`: Contend with MCID bits (only if pending and addressed by the `POLL_PENDING` mask).
+- `ARBITRATION_ACTIVE`: Contend with the open MCID bits (only if addressed by the group mask and able to answer: any slave for `REQUEST_INFO`, a pending slave for `REQUEST_DATA`). The first arbitration slot is slot `2·TARGET_LEN` of the 12-slot pattern.
 - `ARBITRATION_HANDOFF`: Lost at the current bit; drive `DATA` low for the following handoff slot.
 - `ARBITRATION_DROPPED`: Passive until the transaction ends.
-- `SELECTED_TRANSFER`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request.
+- `SELECTED_TRANSFER`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request, or directly after the last arbitration slot as the winner of a group request.
 - `IGNORE`: Not addressed, invalid frame, or nothing to send; passive until the next START, STOP, or RESET.
 
 ### Arbitration Rules
@@ -34,7 +35,7 @@ A compliant HUBUS slave must provide:
 - For each bit position: drive `DATA` low in the arbitration slot if the own MCID bit is `1`; otherwise release and sample.
 - Released but sampled low: lost at this bit. Drive `DATA` low in the immediately following handoff slot, then stay passive.
 - Not lost: leave the handoff slot released and continue.
-- After the last handoff slot every slave is passive, including the winner. The winner is served in a separate `REQUEST_DATA` transaction.
+- After the last handoff slot the losers are passive. A slave that is still active (the winner) starts its response frame in the next slot, in the same transaction. Arbitration covers only the bits below the request prefix: `2·(6−TARGET_LEN)` slots; with `TARGET_LEN = 6` there are none and the slave answers directly after the turnaround slot.
 - The slave neither knows nor tracks other slaves; deriving masks and scheduling is entirely master-side.
 
 ### Response Rules
@@ -81,7 +82,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 
 ## 4.1 Responses
 
-- A slave only sends frames in response to exactly addressed `REQUEST_INFO` (`SLAVE_INFO`) and `REQUEST_DATA` (`SLAVE_DATA`, only if the buffer is not empty).
+- A slave only sends frames in response to `REQUEST_INFO` (`SLAVE_INFO`) and `REQUEST_DATA` (`SLAVE_DATA`, only if the buffer is not empty), either exactly addressed or after winning the arbitration of a group request.
 - Commands are executed without acknowledgement. No error frames exist; application errors are reported through the buffer.
 - Unknown reserved opcodes (`0x01..0x0F`) are ignored.
 - After transmitting a complete `SLAVE_DATA` response, the slave remembers this (one flag) until the transaction ends: STOP clears buffer and pending flag, RESET keeps both.

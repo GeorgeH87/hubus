@@ -81,19 +81,21 @@ The master additionally keeps `CLK` low for at least `T_TURNAROUND` before the r
 | Transaction | Sequence |
 |---|---|
 | `SEND_COMMAND` | START · master frame · STOP |
-| `REQUEST_INFO` / `REQUEST_DATA` | START · master frame · `T` · slave frame or silence · STOP or RESET |
-| `POLL_PENDING` | START · master frame · `T` · 12 arbitration slots (6 × bit + handoff) · STOP |
+| `REQUEST_INFO` / `REQUEST_DATA`, exact (`TARGET_LEN=6`) | START · master frame · `T` · slave frame or silence · STOP or RESET |
+| `REQUEST_INFO` / `REQUEST_DATA`, group (`TARGET_LEN<6`) | START · master frame · `T` · `2·(6−TARGET_LEN)` arbitration slots · slave frame of the winner or silence · STOP or RESET |
 | RESET | START · STOP |
 | Idle event handshake | slave pulls `DATA` low · master clocks until `DATA` is released · (next START) |
 
-A winner of `POLL_PENDING` arbitration is served in a separate `REQUEST_DATA` transaction. The arbitration phase always ends with all slaves passive; slaves send frames only in response to exactly addressed `REQUEST_INFO` and `REQUEST_DATA`.
+Every request that expects a response is a single transaction, whatever its addressing. With exact addressing exactly one slave can answer and no arbitration is needed. With group addressing the matching slaves arbitrate first and the **winner answers in the same transaction**. The losers stay passive until the next START, STOP, or RESET. Group `SEND_COMMAND` stays one-way.
 
 ```
-SEND_COMMAND:     START | master frame ........................ | STOP
-REQUEST_DATA:     START | master frame ... | T | slave frame ... | STOP/RESET
-POLL_PENDING:     START | master frame ... | T | b5 h5 b4 h4 ... b0 h0 | STOP
-                                                 (b = arbitration bit, h = handoff slot)
+SEND_COMMAND:         START | master frame ........................ | STOP
+request, exact:       START | master frame ... | T | slave frame ... | STOP/RESET
+request, group:       START | master frame ... | T | bk hk ... b0 h0 | slave frame (winner) ... | STOP/RESET
+                                                    (b = arbitration bit, h = handoff slot)
 ```
+
+The arbitration covers only the MCID bits that the target mask leaves open: bits `5−TARGET_LEN` down to `0`, one arbitration bit and one handoff slot each, `2·(6−TARGET_LEN)` slots in total. The shared prefix bits would be identical for all contenders and are not sent (`ARBITRATION.md`).
 
 ### Who Drives `DATA`
 
@@ -104,16 +106,17 @@ POLL_PENDING:     START | master frame ... | T | b5 h5 b4 h4 ... b0 h0 | STOP
 | Turnaround `T` | nobody | – |
 | Arbitration bit | contenders whose MCID bit is `1` | master and contenders |
 | Handoff slot | contenders that lost at exactly this bit | master |
-| Slave frame | the exactly addressed slave | master |
+| Slave frame | the exactly addressed slave, or the arbitration winner | master |
 
 A slave that is not addressed ignores everything until the next START, STOP, or RESET.
 
 ### Response Detection and Length
 
 - Both slave frame type codes (`10` `SLAVE_DATA`, `11` `SLAVE_INFO`) start with `1`. The first bit after `T` is therefore low for every real response.
-- If the first bit after `T` is high, there is no response (empty buffer, unknown MCID, invalid request frame). The master ends the transaction immediately.
+- With group addressing the same holds for the first bit after the last arbitration slot: every contender that wins sends a frame, so a high first bit means that nobody contended. Arbitration slots alone cannot show a contender, because the open MCID bits of the only contender may all be `0`.
+- If the first bit is high, there is no response (empty buffer, unknown MCID, no pending or matching slave, invalid request frame). The master ends the transaction immediately.
 - Otherwise the master reads the slave header, takes the payload length from `LEN`, and clocks exactly the remaining header, payload, and CRC8 bits. It then ends the transaction with STOP (valid) or RESET (invalid), see section 3.4.
-- The master compares the source MCID in the response with the addressed MCID. A mismatch is treated like a CRC failure.
+- The master compares the source MCID in the response with the addressed MCID, or with the winner MCID (prefix plus the sampled arbitration bits) for a group request. A mismatch is treated like a CRC failure.
 
 ### Slave Processing Budget
 
@@ -151,7 +154,6 @@ So that one turnaround slot is sufficient, no slave step may require bulk proces
 
 2. **Master Intent**
 - Master sends a compact control message indicating next action:
-  - poll pending slaves (`POLL_PENDING`)
   - read static device metadata (`REQUEST_INFO`)
   - read the slave buffer (`REQUEST_DATA`)
   - send a command (`SEND_COMMAND`, including `STATUS_CAPTURE`)
@@ -167,24 +169,23 @@ All addressed master commands use unified target-mask addressing.
 - `TARGET_LEN=6` is exact single-slave addressing in v0.
 - Slaves may reject the frame early when `TARGET_LEN` and the incoming prefix bits prove a mismatch.
 
-Group and broadcast addressing is one-way (master to n slaves): slaves never answer such a frame with a response frame. Anything a slave wants to report afterwards goes through the regular return path (pending flag, idle event handshake, burst). Requests that expect a response require exact addressing. See `MESSAGE_FORMAT.md` section 3.1, "Direction Rule".
+`SEND_COMMAND` to a group is one-way (master to n slaves): no slave answers it. Anything a slave wants to report afterwards goes through the regular return path (pending flag, idle event handshake, burst). `REQUEST_INFO` and `REQUEST_DATA` with a group mask are answered by exactly one slave, the arbitration winner. See `MESSAGE_FORMAT.md` section 3.1, "Direction Rule".
 
-`POLL_PENDING` also uses target-mask addressing: only pending slaves matching the prefix contend in the following arbitration. `TARGET_LEN=0` polls all slaves.
+For a group request only slaves that can answer contend: every matching slave for `REQUEST_INFO`, only matching slaves with pending data for `REQUEST_DATA`. `TARGET_LEN=0` addresses all slaves.
 
 `STATUS_CAPTURE` uses this same mechanism. Every matching slave that supports it writes its current status into its buffer (overwriting unread content) and sets its pending flag.
 
 3. **Slave Intent Signaling**
-- Slaves with pending data expose intent by contending in the arbitration that follows `POLL_PENDING`.
+- Slaves with pending data expose intent by contending in the arbitration that follows a group `REQUEST_DATA`.
 
 4. **Arbitration with Handoff Slots**
-- Addressed pending slaves send their MCID bit-by-bit, MSB first.
+- Contending slaves send the open bits of their MCID bit-by-bit, MSB first.
 - `1` is represented by pulling `DATA` low. Higher MCID has higher priority.
 - Each arbitration bit is followed by a handoff slot. A slave that lost at exactly that bit pulls `DATA` low in the handoff slot, then stays passive.
 - From the handoff slots, the master derives prefix masks for the remaining pending slaves (see `ARBITRATION.md`).
 
 5. **Selection and Transfer**
-- Master requests data from the winning MCID with exact addressing (`TARGET_LEN=6`).
-- Selected slave responds.
+- The winner sends its `SLAVE_DATA` frame directly after the arbitration, in the same transaction.
 - The master continues with the next prefix mask from its pending mask stack (section 3.2) until the stack is empty.
 
 6. **Return to Idle**
@@ -199,7 +200,7 @@ The idle handshake is level-based and master-clock-confirmed:
 2. Master observes low `DATA` while idle and enters event-confirm mode.
 3. Master emits clock ticks on `CLK` as confirmation while monitoring `DATA`, until `DATA` is released.
 4. Slave releases `DATA` after the first falling `CLK` edge, i.e. after one complete clock pulse (releasing while `CLK` is high would look like a STOP). If several slaves signal at the same time, all release after that pulse.
-5. Master starts a burst (`POLL_PENDING`, section 3.2), beginning with a START condition.
+5. Master starts a burst (group `REQUEST_DATA`, section 3.2), beginning with a START condition.
 
 ### When a Slave Announces Itself
 
@@ -218,7 +219,7 @@ If `DATA` remains low past a configured number of clock ticks, the master treats
 
 ## 3.2 Burst: Handoff Slots and Pending Mask Stack
 
-A burst collects data from all slaves that are pending when it starts, in descending MCID order, with exactly one arbitration per pending slave.
+A burst collects data from all slaves that are pending when it starts, in descending MCID order, with exactly one transaction per pending slave: a group `REQUEST_DATA` whose arbitration winner sends its data directly.
 
 ### Principle
 
@@ -226,21 +227,21 @@ A slave that loses arbitration at bit `k` shares bits above `k` with the winner 
 
 `prefix = winner bits above k, followed by 0`, with `TARGET_LEN = (number of bits above k) + 1`.
 
-The handoff slot after bit `k` tells the master whether such a slave exists. The master stores the resulting prefix mask and polls that group later.
+The handoff slot after bit `k` tells the master whether such a slave exists. The master stores the resulting prefix mask and requests that group later.
 
 ### Master Algorithm
 
-1. Start with an empty pending mask stack and send `POLL_PENDING` with `TARGET_LEN=0`.
-2. Evaluate the arbitration:
-   - No arbitration bit low: no contender, the polled group has no pending slave.
-   - Otherwise: the sampled bits form the winner MCID. For every handoff slot in which `DATA` was low, push the corresponding prefix mask.
-3. Serve the winner (exact addressing).
-4. Pop the top mask from the stack and send `POLL_PENDING` with that prefix; continue with step 2.
+1. Start with an empty pending mask stack and send `REQUEST_DATA` with `TARGET_LEN=0`.
+2. Evaluate the transaction:
+   - First bit after the arbitration slots high: no contender, the group has no pending slave.
+   - Otherwise: the winner MCID is the group prefix followed by the sampled arbitration bits. For every handoff slot in which `DATA` was low, push the corresponding prefix mask.
+3. The winner's `SLAVE_DATA` frame follows in the same transaction. If it is valid, the master ends the transaction with STOP. If not, it ends with RESET and retries the winner with an exactly addressed `REQUEST_DATA` (section 3.4); the masks are already on the stack.
+4. Pop the top mask from the stack and send `REQUEST_DATA` with that prefix; continue with step 2.
 5. When the stack is empty, the burst is complete.
 
 Masks pushed later have longer prefixes and cover higher MCIDs, so last-in-first-out order yields strictly descending MCID order. The stack holds at most one mask per prefix length (at most 6 entries in v0).
 
-Optimization: a mask with `TARGET_LEN=6` identifies one MCID exactly; the master may skip the poll and request data directly.
+A mask with `TARGET_LEN=6` identifies one MCID exactly; the request has no arbitration slots and is the same transaction as a retry.
 
 All transactions of a burst are generated back-to-back with `CLK` held high after each STOP (section 1.2), so pending slaves do not announce themselves in between. The master lowers `CLK` after the final STOP; slaves that are still pending then signal again (section 3.1).
 
@@ -253,7 +254,7 @@ All transactions of a burst are generated back-to-back with `CLK` held high afte
 
 ### Accepted Rare Cases
 
-- A handoff slot falsely read as low (noise) creates a mask that yields no contender. The poll is simply wasted.
+- A handoff slot falsely read as low (noise) creates a mask that yields no contender. The request is simply wasted.
 - A missed handoff slot leaves a slave out of the current burst. Its pending flag remains set, so it announces itself again via the idle event handshake.
 
 ## 3.3 Communication Stack Reset
@@ -302,7 +303,7 @@ Rules:
 
 - The slave clears only if it transmitted its complete response in the current transaction. A STOP after an aborted or partial response clears nothing.
 - `SLAVE_INFO` is static; nothing is cleared after `REQUEST_INFO`.
-- After a RESET the master may retry `REQUEST_DATA` directly, within its retry budget. When the budget is exhausted it skips the slave for the current burst; the data stays buffered and the slave announces itself again later.
+- After a RESET the master may retry with an exactly addressed `REQUEST_DATA`, within its retry budget. When the budget is exhausted it skips the slave for the current burst; the data stays buffered and the slave announces itself again later.
 
 ### Accepted Rare Cases
 
@@ -315,13 +316,15 @@ Duplicate MCIDs are a configuration fault. They are detected by the master only;
 
 ### Commissioning Scan
 
-The master sends `REQUEST_INFO` to every MCID `1..63`:
+The master enumerates the slaves with group `REQUEST_INFO`, using the same mask stack algorithm as the burst (section 3.2) with `REQUEST_INFO` instead of `REQUEST_DATA`. Every slave matching the mask contends, so the winner's `SLAVE_INFO` arrives in the same transaction and the scan needs about one transaction per slave. Empty MCID groups are never visited.
 
 - valid `SLAVE_INFO`: slave present (protocol version and capabilities known),
-- no response: MCID unused,
-- repeated CRC failures: suspected duplicate MCID or line problem.
+- no contender: no slave in that group,
+- repeated CRC failures for a winner: suspected duplicate MCID or line problem. The master repeats the request for that MCID with exact addressing (`TARGET_LEN=6`) within its retry budget.
 
-Two slaves with the same MCID overlap their responses on the wired-AND line. If their `SLAVE_INFO` content differs, the CRC fails. Slaves SHOULD therefore include a device-unique value (for example a serial number set at programming time) in the application bytes of `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1); then the scan detects duplicates reliably.
+Two slaves with the same MCID win the arbitration together and both send their `SLAVE_INFO`. The responses overlap on the wired-AND line. If their content differs, the CRC fails, so the scan flags the duplicate right away. Slaves SHOULD therefore include a device-unique value (for example a serial number set at programming time) in the application bytes of `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1); then the scan detects duplicates reliably.
+
+A master MAY instead send an exactly addressed `REQUEST_INFO` to every MCID `1..63` (full scan).
 
 ### Runtime Heuristic
 

@@ -59,7 +59,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] HAL interface: set `CLK`, pull/release/read `DATA`, wait.
 - [x] `libgpiod` HAL: chip selection by label, `DATA` as open-drain line; check `libgpiod` v1 vs v2 on the target OS [H2]. Implemented for the v2 API and compile-tested on Ubuntu 26.04 (libgpiod 2.2.1); not run on a Raspberry Pi yet, v1 support is still open.
 - [x] Line conditions: START, STOP, RESET; startup sequence; error recovery.
-- [x] Transactions: `POLL_PENDING` with arbitration and handoff slots, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`.
+- [x] Transactions: `REQUEST_INFO`/`REQUEST_DATA` (exact, or group with arbitration and handoff slots), `SEND_COMMAND`.
 - [x] Burst scheduling with pending mask stack and retry budget.
 - [x] Idle event handshake detection.
 - [x] `GEN` duplicate/gap handling, fragment reassembly hooks for applications.

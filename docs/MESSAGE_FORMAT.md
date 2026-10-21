@@ -42,14 +42,14 @@ Properties:
 
 | Type | Name | Addressing | Slave reaction |
 |---|---|---|---|
-| `00` | `POLL_PENDING` | exact or group | Arbitration with handoff slots; only addressed pending slaves contend (`ARBITRATION.md`). No frame response. |
-| `01` | `REQUEST_INFO` | exact only | `SLAVE_INFO` with static device metadata (section 4.1). |
-| `10` | `REQUEST_DATA` | exact only | `SLAVE_DATA` with the content of the slave buffer; silent if the buffer is empty. |
+| `00` | reserved | – | Slaves ignore the frame. |
+| `01` | `REQUEST_INFO` | exact or group | Exact: the addressed slave sends `SLAVE_INFO` (static device metadata, section 4.1). Group: the matching slaves arbitrate (`ARBITRATION.md`) and the winner sends its `SLAVE_INFO` in the same transaction. |
+| `10` | `REQUEST_DATA` | exact or group | Exact: the addressed slave sends `SLAVE_DATA` with the content of its buffer; silent if the buffer is empty. Group: the matching slaves **with pending data** arbitrate and the winner sends its `SLAVE_DATA` in the same transaction. |
 | `11` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
 
-`POLL_PENDING`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
+`REQUEST_INFO` and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
 
-All master type codes are in use. Future protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
+Type `00` is free for a future function. Other protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
 
 `SEND_COMMAND` is always fire-and-forget. If the master needs to confirm that a state was established, it reads the state back explicitly (status-capture followed by `REQUEST_DATA`).
 
@@ -69,7 +69,7 @@ A slave ignores a `SEND_COMMAND` whose payload exceeds its configured maximum (a
 
 ## 3.1 Unified Target Mask Addressing
 
-All master-to-slave commands (`POLL_PENDING`, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For `POLL_PENDING`, the mask selects which pending slaves contend in the arbitration; the master uses this to poll the prefix groups derived from handoff slots.
+All master-to-slave commands (`REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For a group `REQUEST_INFO`/`REQUEST_DATA`, the mask selects which slaves contend in the arbitration; the master uses this to request the prefix groups derived from handoff slots.
 
 The frame carries:
 
@@ -96,15 +96,14 @@ For `STATUS_CAPTURE`, this same unified mask addressing is used.
 
 ### Direction Rule
 
-Group and broadcast addressing (`TARGET_LEN < 6`) is strictly one-way: master to n slaves.
+Whenever a response is expected, at most one slave answers:
 
-- No slave ever sends a response frame to a group or broadcast frame.
-- `SEND_COMMAND` to a group is executed by every matching slave without response (as for exact addressing).
-- `REQUEST_INFO` and `REQUEST_DATA` expect a response and are therefore only valid with `TARGET_LEN = 6`. Slaves ignore them otherwise.
+- `SEND_COMMAND` never produces a response. Sent to a group, it is executed by every matching slave (as for exact addressing).
+- `REQUEST_INFO` and `REQUEST_DATA` with `TARGET_LEN = 6` are answered by the addressed slave alone.
+- `REQUEST_INFO` and `REQUEST_DATA` with `TARGET_LEN < 6` are answered by the arbitration winner alone. The arbitration is part of the same transaction (`ARBITRATION.md`, `PROTOCOL.md` section 1.3). Slaves that cannot answer do not contend: for `REQUEST_DATA` those are slaves without pending data.
 - If a group command produces something to report (for example a `STATUS_CAPTURE` result), the slave sets its pending flag and uses the regular return path: idle event handshake and burst (`PROTOCOL.md` section 3.2).
-- `POLL_PENDING` follows the same rule: it is answered by arbitration with handoff slots, never by a frame.
 
-Response frames are only sent for `REQUEST_INFO` and `REQUEST_DATA` by a slave addressed exactly (`TARGET_LEN = 6`), so at most one slave transmits a frame at any time.
+A slave therefore sends a response frame only if it was addressed exactly or won the arbitration, so at most one slave transmits a frame at any time (except for a duplicate MCID, which is a configuration fault, `PROTOCOL.md` section 3.5).
 
 Valid range in v0: `0..6`.
 
@@ -121,7 +120,7 @@ Valid range in v0: `0..6`.
 | `10` | `SLAVE_DATA` | `REQUEST_DATA` |
 | `11` | `SLAVE_INFO` | `REQUEST_INFO` |
 
-Slave type codes must start with `1`; codes `00` and `01` are never used by slaves. The master uses this to detect a missing response from the first bit after the turnaround slot (`PROTOCOL.md` section 1.3).
+Slave type codes must start with `1`; codes `00` and `01` are never used by slaves. The master uses this to detect a missing response from the first bit after the turnaround slot, or after the last arbitration slot of a group request (`PROTOCOL.md` section 1.3).
 
 Slaves send no acknowledgements and no error frames. Rationale: commands are fire-and-forget, so there is no request an acknowledgement or error could answer. A slave that needs to report an error (for example an application fault) writes it into its buffer and uses the regular return path; the error format is application-defined.
 

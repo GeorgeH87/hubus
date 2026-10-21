@@ -4,10 +4,11 @@
 
 - **MCID**: Master Communication ID. The unique identifier used for arbitration and addressing. Valid range `1..63` in v0; `0` is reserved.
 - **Priority**: The rule that higher MCID values win arbitration in v0. Within a burst it determines only the order of service.
-- **Burst**: A sequence of polls and requests that serves every slave pending at its start, in descending MCID order.
-- **Handoff Slot**: The slot following each arbitration bit. A slave that lost at exactly that bit pulls `DATA` low in it, telling the master that a pending slave exists in the corresponding prefix group.
-- **Pending Mask**: A prefix mask (`MCID` prefix + `TARGET_LEN`) derived by the master from a low handoff slot. It identifies a group containing at least one pending slave.
-- **Pending Mask Stack**: Master-internal last-in-first-out list of pending masks still to be polled in the current burst. Never transmitted.
+- **Burst**: A sequence of group `REQUEST_DATA` transactions that serves every slave pending at its start, in descending MCID order. Each transaction's arbitration winner sends its data directly.
+- **Group Request**: `REQUEST_INFO` or `REQUEST_DATA` with `TARGET_LEN < 6`. The matching slaves arbitrate and the winner answers in the same transaction.
+- **Handoff Slot**: The slot following each arbitration bit. A slave that lost at exactly that bit pulls `DATA` low in it, telling the master that a further matching slave exists in the corresponding prefix group.
+- **Pending Mask**: A prefix mask (`MCID` prefix + `TARGET_LEN`) derived by the master from a low handoff slot. It identifies a group containing at least one slave that can answer.
+- **Pending Mask Stack**: Master-internal last-in-first-out list of masks still to be requested in the current burst or scan. Never transmitted.
 - **Slave Buffer**: The single outgoing buffer of a slave. Holds event data or a captured status until the master retrieves it with `REQUEST_DATA`. Writing it sets the pending flag.
 - **STATUS_CAPTURE**: Protocol opcode `0x00` of `SEND_COMMAND`. Asks one or more slaves to write their current status into the slave buffer.
 - **Slave Info**: Static device metadata (protocol version, capabilities, application data) returned on `REQUEST_INFO`.

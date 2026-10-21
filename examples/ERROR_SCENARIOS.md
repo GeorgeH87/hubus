@@ -1,15 +1,15 @@
 # Error Scenarios and Recovery
 
-## 1. No Slave Responds to Poll
+## 1. No Slave Responds to a Group Request
 
 ### Condition
 
-Master sends `POLL_PENDING` and sees no arbitration activity.
+Master sends a group `REQUEST_DATA` and the first bit after the arbitration slots stays high: no slave contended.
 
 ### Expected Behavior
 
-- Master marks cycle as "no pending data".
-- Master continues with next scheduled poll.
+- Master marks the group as "no pending data" and ends the transaction.
+- Master continues with the next mask or the next scheduled burst.
 
 ## 2. Data Line Stuck Low
 
@@ -33,16 +33,16 @@ Two slaves share the same MCID (configuration fault).
 
 ### What Happens on the Bus
 
-- Arbitration: both send identical bits and never lose against each other; the master sees one winner and no handoff. Not detectable.
+- Arbitration (group request): both send identical bits and never lose against each other; the master sees one winner and no handoff. Both then send their response frame.
 - `REQUEST_DATA` while only one of them has data: works normally. Not detectable.
 - `REQUEST_DATA` while both have data: both frames overlap on the wired-AND line; the payloads differ, so the CRC8 is practically always invalid. Every retry fails the same way.
-- `REQUEST_INFO`: identical responses (same device, same firmware) overlap into a valid frame; different responses fail CRC.
+- `REQUEST_INFO`, group or exact: identical responses (same device, same firmware) overlap into a valid frame; different responses fail CRC.
 - `SEND_COMMAND`: both slaves execute it.
 
 ### Expected Behavior
 
 - Master raises "suspected duplicate MCID" when the same MCID fails CRC repeatedly while other MCIDs respond cleanly (runtime heuristic, `docs/PROTOCOL.md` section 3.5).
-- The commissioning scan (`REQUEST_INFO` to every MCID) reports CRC failures for that MCID. With a device-unique value in `SLAVE_INFO`, detection at the scan is reliable.
+- The commissioning scan (group `REQUEST_INFO`) reports CRC failures for that MCID. With a device-unique value in `SLAVE_INFO`, detection at the scan is reliable.
 - Deployment must correct the MCID assignment. Slaves implement no detection logic.
 
 ## 4. Missing Slave Response
@@ -91,7 +91,7 @@ Master clock halts while slave is in transfer state (for example master process 
 ### Expected Behavior
 
 - Slave has no timeout and stays in its current state, possibly holding `DATA` low.
-- On restart, the master runs its startup sequence: clock until `DATA` is released, generate RESET, then run a full `POLL_PENDING` burst.
+- On restart, the master runs its startup sequence: clock until `DATA` is released, generate RESET, then run a full burst (group `REQUEST_DATA`).
 - Buffered slave data survives the RESET and is collected in that burst.
 
 ## 7. Slave Loses Bit Synchronization

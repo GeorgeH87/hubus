@@ -57,16 +57,19 @@ Rewritten against the specification (R18); the old implementation has been remov
 
 - **Status:** resolved (2026-10-20)
 - **Resolution:** `POLL_PENDING` uses unified target-mask addressing; only addressed pending slaves contend. See `MESSAGE_FORMAT.md` §3.1.
+- **Superseded by R19:** `POLL_PENDING` no longer exists; a group `REQUEST_DATA` does the same.
 
 ### R5: Arbitration Trigger in Wire Timeline (part of S6)
 
 - **Status:** resolved (2026-10-20)
 - **Resolution:** Only `POLL_PENDING` triggers arbitration. `WIRE_TIMELINE.md` rewritten accordingly.
+- **Superseded by R19:** a group `REQUEST_INFO`/`REQUEST_DATA` triggers arbitration.
 
 ### R7: Group Responses (was S6)
 
 - **Status:** resolved (2026-10-20)
 - **Resolution:** Group/broadcast addressing is strictly one-way (master to n slaves). No response frames to group frames; `REQUEST_INFO`/`REQUEST_DATA` require exact addressing. Slaves report results via the pending flag and the regular burst. See `MESSAGE_FORMAT.md` §3.1 "Direction Rule".
+- **Partly superseded by R19:** `SEND_COMMAND` to a group stays one-way, but a group `REQUEST_INFO`/`REQUEST_DATA` is answered by the arbitration winner.
 
 ### R8: Command Opcodes, Request Semantics, Acknowledgements (was S8)
 
@@ -106,7 +109,7 @@ Rewritten against the specification (R18); the old implementation has been remov
 ### R14: Duplicate MCID Detection (was S3)
 
 - **Status:** resolved (2026-10-21)
-- **Resolution:** Duplicate MCIDs are a configuration fault detected by the master only: commissioning scan (`REQUEST_INFO` to every MCID) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value for reliable detection. Remaining blind spots are documented as accepted limitations. See `PROTOCOL.md` §3.5, `ERROR_SCENARIOS.md` §3.
+- **Resolution:** Duplicate MCIDs are a configuration fault detected by the master only: commissioning scan (group `REQUEST_INFO`, see R19) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value for reliable detection. Remaining blind spots are documented as accepted limitations. See `PROTOCOL.md` §3.5, `ERROR_SCENARIOS.md` §3.
 
 ### R15: CRC8 Parameters (was S15, D2)
 
@@ -122,6 +125,18 @@ Rewritten against the specification (R18); the old implementation has been remov
 
 - **Status:** resolved (2026-10-21)
 - **Resolution:** Ubuntu 26.04 ships `gcc-avr` 14.2 and `avr-libc` 2.2.1, which support classic tinyAVR and tinyAVR 0/1/2-series without Microchip device packs. Verified by compiling for ATtiny25, 85, 84, 88, 841, 202, 1614, 1624, and 3216. Limitation: `simavr` 1.6 only simulates classic devices (for example ATtiny84/85), not the 0/1/2-series. See `docs/DEVELOPMENT.md`.
+
+### R19: Response in the Arbitration Transaction (replaces `POLL_PENDING`)
+
+- **Status:** resolved in the specification (2026-10-21); implementation follows
+- **Problem:** a burst needed two transactions per pending slave (`POLL_PENDING`, then `REQUEST_DATA` to the winner), although the winner is unambiguous after the arbitration. The commissioning scan sent `REQUEST_INFO` to all 63 MCIDs. The arbitration always used 12 slots, although the bits of the request prefix are identical for all contenders.
+- **Resolution:**
+  - `REQUEST_INFO` and `REQUEST_DATA` accept any `TARGET_LEN`. With `TARGET_LEN < 6` the matching slaves arbitrate (for `REQUEST_DATA` only those with pending data) and the **winner sends its response frame in the same transaction**. `POLL_PENDING` is removed; type `00` is reserved.
+  - The arbitration omits the prefix bits: `2·(6−TARGET_LEN)` slots instead of 12, none for exact addressing. Because the open bits of a single contender may all be `0`, a contender is detected by the first response bit, not by a low arbitration slot.
+  - Burst: one transaction per pending slave. Commissioning scan: the same mask stack algorithm with `REQUEST_INFO`, one transaction per slave; a duplicate MCID is flagged right away, because both slaves answer and the CRC fails.
+  - A failed response ends with RESET; the masks stay valid and the winner is retried with an exact request.
+- **Effect on the slave:** the participation condition (matching mask, plus pending for `REQUEST_DATA`), the start slot `2·TARGET_LEN`, and the transition from arbitration into transmission. `SEND_COMMAND` to a group is unchanged.
+- See `MESSAGE_FORMAT.md` §3, §3.1, `ARBITRATION.md`, `PROTOCOL.md` §1.3, §3.2, §3.5.
 
 ### R6: Fairness (D3, largely)
 

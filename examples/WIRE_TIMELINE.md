@@ -13,8 +13,8 @@ This example shows a status-capture command followed by a burst that collects th
 
 1. Master sends `SEND_COMMAND` with opcode `STATUS_CAPTURE` (`0x00`) and `TARGET_LEN=0` (broadcast). No slave responds.
 2. All four slaves write their current status into their slave buffer and set their pending flag.
-3. Master starts a burst: empty pending mask stack, `POLL_PENDING` with `TARGET_LEN=0`.
-4. Arbitration with handoff slots (12 slots):
+3. Master starts a burst: empty pending mask stack, `REQUEST_DATA` with `TARGET_LEN=0` (group request).
+4. Arbitration with handoff slots (12 slots, because the mask has no prefix bits):
 
    | Slot | `DATA` | Driven by | Master action |
    |---|---|---|---|
@@ -31,16 +31,16 @@ This example shows a status-capture command followed by a burst that collects th
    | Bit 0 | high | – | – |
    | Handoff 0 | high | – | winner = `101010` (42) |
 
-5. Master sends `REQUEST_DATA` to 42; 42 responds with `SLAVE_DATA`.
-6. Master pops `10100` / len 5 and polls group `10100x` (MCIDs 40 and 41). 40 wins without handoff. Master requests data from 40.
-7. Master pops `0` / len 1 and polls group `0xxxxx`. 25 and 15 contend; 15 loses at bit 4 and drives handoff slot 4. Master pushes `00` / len 2. Winner 25; master requests data from 25.
-8. Master pops `00` / len 2 and polls group `00xxxx`. 15 wins. Master requests data from 15.
+5. In the same transaction 42 (the winner) sends its `SLAVE_DATA` frame directly after handoff slot 0. The master ends with STOP; 42 clears its buffer.
+6. Master pops `10100` / len 5 and sends `REQUEST_DATA` for group `10100x` (MCIDs 40 and 41): 2 arbitration slots. 40 has only bit 0 left and it is `0`, so both slots stay high; the first response bit is low, so 40 is the contender and the winner `10100` + `0`. 40 sends its `SLAVE_DATA`.
+7. Master pops `0` / len 1 and sends `REQUEST_DATA` for group `0xxxxx`: 10 arbitration slots. 25 and 15 contend; 15 loses at bit 4 and drives handoff slot 4. Master pushes `00` / len 2. Winner `0` + `11001` = 25; 25 sends its `SLAVE_DATA`.
+8. Master pops `00` / len 2 and sends `REQUEST_DATA` for group `00xxxx`: 8 arbitration slots. 15 wins and sends its `SLAVE_DATA`.
 9. Stack empty: burst complete, bus returns to idle.
 
 ## Notes
 
-- Four pending slaves are collected with four polls, in order 42, 40, 25, 15.
-- Slaves without buffered data ignore `POLL_PENDING` and `REQUEST_DATA` silently.
+- Four pending slaves are collected with four transactions, in order 42, 40, 25, 15.
+- Slaves without buffered data do not contend in a `REQUEST_DATA` and stay silent.
 - Buffered status snapshots may be overwritten before retrieval.
-- Each `POLL_PENDING` transaction is: START · master frame · turnaround slot · 12 arbitration slots · STOP. Each `REQUEST_DATA` is a separate transaction: START · master frame · turnaround slot · `SLAVE_DATA` · STOP (`docs/PROTOCOL.md` section 1.3).
+- Each group `REQUEST_DATA` is one transaction: START · master frame · turnaround slot · `2·(6−TARGET_LEN)` arbitration slots · `SLAVE_DATA` of the winner · STOP (`docs/PROTOCOL.md` section 1.3). If the winner's frame is invalid, the master ends with RESET and retries that MCID with an exactly addressed `REQUEST_DATA`.
 - Within the burst the master keeps `CLK` high after each STOP and starts the next transaction directly (`docs/PROTOCOL.md` section 1.2). It lowers `CLK` only after the final STOP; slaves that are still pending then announce themselves again.
