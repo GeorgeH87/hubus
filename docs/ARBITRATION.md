@@ -15,7 +15,7 @@ This maps naturally to wired-AND behavior on the shared line because any active 
 
 ## 3. Preconditions
 
-- Master has issued `POLL_PENDING` with valid CRC. Only pending slaves matching its target mask (`TARGET_LEN` + `MCID` prefix) contend.
+- Master has issued `POLL_PENDING` with valid CRC. Only pending slaves matching its target mask (`TARGET_LEN` + `MCID` prefix) contend. In a discovery poll (`LEN = 1`, section 6.4) every slave matching the mask contends, pending or not.
 - Arbitration starts in the slot directly after the turnaround slot that follows the `POLL_PENDING` frame. After handoff slot `0` the master ends the transaction with STOP; all slaves, including the winner, are passive (`PROTOCOL.md` section 1.3).
 - All contenders use the same MCID bit width for comparison.
 
@@ -78,6 +78,21 @@ A popped mask with `TARGET_LEN=6` identifies exactly one MCID. The master may re
 
 - If a request to a winner times out or fails CRC validation, the master may retry up to a configured budget.
 - After the budget is exhausted, the master skips this slave for the current burst. The slave keeps its buffered data and pending flag and announces itself again via the idle event handshake.
+
+### 6.4 Discovery Poll
+
+The burst algorithm also enumerates the slaves on the bus. The master sends `POLL_PENDING` with `LEN = 1` (`MESSAGE_FORMAT.md` section 3.0a) instead of `LEN = 0`. Every slave matching the mask contends, so the arbitration and the handoff slots reveal the occupied part of the MCID space:
+
+1. Start with an empty mask stack and send the discovery poll with `TARGET_LEN=0`.
+2. The winner's MCID is the sampled bit sequence; record it as present. Push one prefix mask for every low handoff slot as in section 6.2.
+3. Pop the top mask, send the discovery poll with it, and go to step 2. When the stack is empty, every slave on the bus has been found.
+
+Differences to a pending burst:
+
+- The winner is not served with `REQUEST_DATA`. Its MCID is already known from the arbitration; the master reads `SLAVE_INFO` with `REQUEST_INFO` if it needs the device metadata.
+- Nothing is cleared. A discovery poll does not touch buffer, pending flag, or `GEN`, and the STOP that ends it clears nothing (no `SLAVE_DATA` was transmitted).
+- Cost: one poll per slave on the bus, instead of one `REQUEST_INFO` per MCID `1..63`. Empty prefix groups are never visited.
+- Duplicate MCIDs appear as a single slave (section 5). They are still detected by `REQUEST_INFO` to each found MCID (`PROTOCOL.md` section 3.5).
 
 ## 7. Example
 

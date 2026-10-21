@@ -23,7 +23,7 @@ A compliant HUBUS slave must provide:
 - `IDLE_EVENT_SIGNAL`: Hold `DATA` low to announce a pending event.
 - `RX_FRAME`: Receive the master frame after START; stop evaluating once the address does not match.
 - `TURNAROUND`: Release `DATA` for one slot; evaluate CRC, address, and buffer state.
-- `ARBITRATION_ACTIVE`: Contend with MCID bits (only if pending and addressed by the `POLL_PENDING` mask).
+- `ARBITRATION_ACTIVE`: Contend with MCID bits (only if addressed by the `POLL_PENDING` mask and either pending or the poll is a discovery poll, `LEN=1`). A discovery poll leaves buffer, pending flag, and `GEN` untouched.
 - `ARBITRATION_HANDOFF`: Lost at the current bit; drive `DATA` low for the following handoff slot.
 - `ARBITRATION_DROPPED`: Passive until the transaction ends.
 - `SELECTED_TRANSFER`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request.

@@ -169,7 +169,7 @@ All addressed master commands use unified target-mask addressing.
 
 Group and broadcast addressing is one-way (master to n slaves): slaves never answer such a frame with a response frame. Anything a slave wants to report afterwards goes through the regular return path (pending flag, idle event handshake, burst). Requests that expect a response require exact addressing. See `MESSAGE_FORMAT.md` section 3.1, "Direction Rule".
 
-`POLL_PENDING` also uses target-mask addressing: only pending slaves matching the prefix contend in the following arbitration. `TARGET_LEN=0` polls all slaves.
+`POLL_PENDING` also uses target-mask addressing: only pending slaves matching the prefix contend in the following arbitration. `TARGET_LEN=0` polls all slaves. A discovery poll (`LEN=1`, `MESSAGE_FORMAT.md` section 3.0a) lets every matching slave contend, pending or not (section 3.5).
 
 `STATUS_CAPTURE` uses this same mechanism. Every matching slave that supports it writes its current status into its buffer (overwriting unread content) and sets its pending flag.
 
@@ -315,11 +315,15 @@ Duplicate MCIDs are a configuration fault. They are detected by the master only;
 
 ### Commissioning Scan
 
-The master sends `REQUEST_INFO` to every MCID `1..63`:
+The scan has two steps.
 
-- valid `SLAVE_INFO`: slave present (protocol version and capabilities known),
-- no response: MCID unused,
-- repeated CRC failures: suspected duplicate MCID or line problem.
+1. **Discovery.** The master enumerates the slaves with discovery polls (`POLL_PENDING`, `LEN=1`) using the mask stack algorithm of `ARBITRATION.md` section 6.4. Every slave on the bus contends regardless of its pending flag, so the scan costs about one poll per slave and never visits empty MCID groups. The winner's MCID is read from the arbitration bits.
+2. **Verification.** The master sends `REQUEST_INFO` to every MCID found:
+   - valid `SLAVE_INFO`: slave present (protocol version and capabilities known),
+   - no response: the slave vanished or was lost in a missed handoff slot,
+   - repeated CRC failures: suspected duplicate MCID or line problem.
+
+Arbitration cannot tell two slaves with the same MCID apart (`ARBITRATION.md` section 5), so discovery shows them as one slave. Step 2 exposes them (see below). A master MAY instead send `REQUEST_INFO` to every MCID `1..63` (full scan); this also finds slaves that do not implement the discovery poll.
 
 Two slaves with the same MCID overlap their responses on the wired-AND line. If their `SLAVE_INFO` content differs, the CRC fails. Slaves SHOULD therefore include a device-unique value (for example a serial number set at programming time) in the application bytes of `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1); then the scan detects duplicates reliably.
 

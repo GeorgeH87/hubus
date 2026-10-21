@@ -42,7 +42,7 @@ Two slaves share the same MCID (configuration fault).
 ### Expected Behavior
 
 - Master raises "suspected duplicate MCID" when the same MCID fails CRC repeatedly while other MCIDs respond cleanly (runtime heuristic, `docs/PROTOCOL.md` section 3.5).
-- The commissioning scan (`REQUEST_INFO` to every MCID) reports CRC failures for that MCID. With a device-unique value in `SLAVE_INFO`, detection at the scan is reliable.
+- The commissioning scan (discovery poll, then `REQUEST_INFO` to every MCID found) reports CRC failures for that MCID. With a device-unique value in `SLAVE_INFO`, detection at the scan is reliable.
 - Deployment must correct the MCID assignment. Slaves implement no detection logic.
 
 ## 4. Missing Slave Response

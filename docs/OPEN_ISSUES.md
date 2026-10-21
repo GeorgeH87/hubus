@@ -106,7 +106,7 @@ Rewritten against the specification (R18); the old implementation has been remov
 ### R14: Duplicate MCID Detection (was S3)
 
 - **Status:** resolved (2026-10-21)
-- **Resolution:** Duplicate MCIDs are a configuration fault detected by the master only: commissioning scan (`REQUEST_INFO` to every MCID) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value for reliable detection. Remaining blind spots are documented as accepted limitations. See `PROTOCOL.md` §3.5, `ERROR_SCENARIOS.md` §3.
+- **Resolution:** Duplicate MCIDs are a configuration fault detected by the master only: commissioning scan (discovery poll, then `REQUEST_INFO` to every MCID found; see R19) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value for reliable detection. Remaining blind spots are documented as accepted limitations. See `PROTOCOL.md` §3.5, `ERROR_SCENARIOS.md` §3.
 
 ### R15: CRC8 Parameters (was S15, D2)
 
@@ -122,6 +122,13 @@ Rewritten against the specification (R18); the old implementation has been remov
 
 - **Status:** resolved (2026-10-21)
 - **Resolution:** Ubuntu 26.04 ships `gcc-avr` 14.2 and `avr-libc` 2.2.1, which support classic tinyAVR and tinyAVR 0/1/2-series without Microchip device packs. Verified by compiling for ATtiny25, 85, 84, 88, 841, 202, 1614, 1624, and 3216. Limitation: `simavr` 1.6 only simulates classic devices (for example ATtiny84/85), not the 0/1/2-series. See `docs/DEVELOPMENT.md`.
+
+### R19: Slave Discovery by Arbitration
+
+- **Status:** resolved in the specification (2026-10-21); implementation in `core/`, `master/`, `daemon/`, and the tests is open
+- **Problem:** the commissioning scan sent `REQUEST_INFO` to all 63 MCIDs, although the arbitration with handoff slots already shows the master where further slaves are located. It only skipped slaves without pending data.
+- **Resolution:** `POLL_PENDING` with `LEN = 1` is a discovery poll: every addressed slave contends, pending or not, and changes no state. The master runs the burst algorithm (mask stack) on it and finds all slaves in about one poll per slave. The slave change is the participation condition only. `REQUEST_INFO` to each MCID found verifies presence and still exposes duplicate MCIDs, which arbitration cannot distinguish. The full `REQUEST_INFO` scan stays allowed. See `MESSAGE_FORMAT.md` §3.0a, `ARBITRATION.md` §6.4, `PROTOCOL.md` §3.5.
+- **Rejected:** a new master type code (all four are in use) and a payload-free flag in `LEN` (would change the slave's length handling).
 
 ### R6: Fairness (D3, largely)
 

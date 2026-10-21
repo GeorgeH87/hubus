@@ -42,12 +42,12 @@ Properties:
 
 | Type | Name | Addressing | Slave reaction |
 |---|---|---|---|
-| `00` | `POLL_PENDING` | exact or group | Arbitration with handoff slots; only addressed pending slaves contend (`ARBITRATION.md`). No frame response. |
+| `00` | `POLL_PENDING` | exact or group | Arbitration with handoff slots; only addressed pending slaves contend (`ARBITRATION.md`). With `LEN = 1` (discovery poll, section 3.0a) every addressed slave contends, pending or not. No frame response. |
 | `01` | `REQUEST_INFO` | exact only | `SLAVE_INFO` with static device metadata (section 4.1). |
 | `10` | `REQUEST_DATA` | exact only | `SLAVE_DATA` with the content of the slave buffer; silent if the buffer is empty. |
 | `11` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
 
-`POLL_PENDING`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
+`REQUEST_INFO` and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. `POLL_PENDING` carries `LEN = 0` (pending poll) or `LEN = 1` (discovery poll, section 3.0a); other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
 
 All master type codes are in use. Future protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
 
@@ -67,9 +67,13 @@ Remaining payload bytes after the opcode are opcode-specific.
 
 A slave ignores a `SEND_COMMAND` whose payload exceeds its configured maximum (announced in `SLAVE_INFO` byte 2). It still receives the complete frame so it stays synchronized. The master must not send larger commands than a slave accepts.
 
+## 3.0a Discovery Poll
+
+A `POLL_PENDING` with `LEN = 1` is a *discovery poll*. It carries one payload byte, sent as `0x00` and ignored by slaves (reserved). Every slave matching the target mask contends in the arbitration, whether or not it has data pending. The poll reads or changes no slave state: buffer, pending flag, and `GEN` stay untouched. A discovery poll is answered by arbitration only, never by a frame. The master uses it to enumerate the slaves on the bus (`ARBITRATION.md` section 6.4, `PROTOCOL.md` section 3.5).
+
 ## 3.1 Unified Target Mask Addressing
 
-All master-to-slave commands (`POLL_PENDING`, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For `POLL_PENDING`, the mask selects which pending slaves contend in the arbitration; the master uses this to poll the prefix groups derived from handoff slots.
+All master-to-slave commands (`POLL_PENDING`, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For `POLL_PENDING`, the mask selects which slaves contend in the arbitration (pending slaves, or all slaves in a discovery poll); the master uses this to poll the prefix groups derived from handoff slots.
 
 The frame carries:
 
