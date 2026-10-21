@@ -113,7 +113,6 @@ typedef struct hubus_slave_core {
     uint8_t cmd[HUBUS_RX_BUF_SIZE];
 
     /* turnaround */
-    uint8_t action; /* HUBUS_M_* that is answered after the turnaround slot */
     uint8_t phase;
 
     /* arbitration */
@@ -122,14 +121,12 @@ typedef struct hubus_slave_core {
     uint8_t lost; /* bit at which this slave lost, 0xFF if not lost */
 
     /* transmit */
-    uint8_t tx_type;
     uint8_t tx_len;
     uint8_t tx_hdr[2];
     uint8_t tx_shift;
     uint8_t tx_crc;
     uint8_t tx_idx;   /* next byte to load (header, payload, CRC) */
     uint8_t tx_nbits; /* bits of the loaded byte still to send */
-    uint8_t tx_total; /* frame length in bytes */
     uint8_t tx_complete; /* complete SLAVE_DATA sent in this transaction */
 
     /* the single outgoing buffer */

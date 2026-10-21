@@ -43,13 +43,7 @@ if(HUBUS_AVR)
     set_target_properties(hubus_size_reference PROPERTIES SUFFIX ".elf")
 
     # Budget of the ATtiny85 reference build (library + reference firmware).
-    # Without REQUEST_STATE the reference build stays within 2 KB; with it, it needs about 140 bytes more.
-    if(HUBUS_ENABLE_STATE)
-        set(HUBUS_BUDGET_FLASH_DEFAULT 2200)
-    else()
-        set(HUBUS_BUDGET_FLASH_DEFAULT 2050)
-    endif()
-    set(HUBUS_BUDGET_FLASH "${HUBUS_BUDGET_FLASH_DEFAULT}" CACHE STRING "ATtiny85 flash budget in bytes")
+    set(HUBUS_BUDGET_FLASH 2050 CACHE STRING "ATtiny85 flash budget in bytes")
     set(HUBUS_BUDGET_RAM 112 CACHE STRING "ATtiny85 RAM budget in bytes (data + bss)")
     add_custom_target(hubus_size ALL
         COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:hubus_size_reference>

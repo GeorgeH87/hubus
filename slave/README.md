@@ -77,12 +77,12 @@ Reference firmware (`size_reference.c`: complete API, status capture, command ca
 
 | | bytes |
 |---|---:|
-| Flash | about 2120 (about 2020 without `REQUEST_STATE`) |
-| RAM (`.bss`) | 109 (106 without `REQUEST_STATE`; of which both 31-byte buffers: 62) |
+| Flash | about 2050 (about 1950 without `REQUEST_STATE`) |
+| RAM (`.bss`) | 106 (103 without `REQUEST_STATE`; of which both 31-byte buffers: 62) |
 
-The CMake build fails if the ATtiny85 reference build exceeds its budget (`HUBUS_BUDGET_FLASH`, `HUBUS_BUDGET_RAM` in `CMakeLists.txt`): 2200 / 112 with `REQUEST_STATE`, 2050 / 112 without.
+The CMake build fails if the ATtiny85 reference build exceeds its budget (`HUBUS_BUDGET_FLASH`, `HUBUS_BUDGET_RAM` in `CMakeLists.txt`): 2050 / 112.
 
-`REQUEST_STATE` support (`HUBUS_ENABLE_STATE`, see `hubus_slave_config.h`) costs about 100 bytes of flash and 3 bytes of RAM. It is on by default and off for the 2 KB devices (ATtiny24/25), where the library alone takes most of the flash and only about 30 bytes remain for the application. A slave built without it simply never answers `REQUEST_STATE`.
+`REQUEST_STATE` support (`HUBUS_ENABLE_STATE`, see `hubus_slave_config.h`) costs about 100 bytes of flash and 3 bytes of RAM. It is on by default and off for the 2 KB devices (ATtiny24/25), where the library alone takes most of the flash and only about 100 bytes remain for the application. A slave built without it simply never answers `REQUEST_STATE`.
 
 ## Behavior Notes
 
