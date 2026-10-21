@@ -24,7 +24,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - MCID `0` is reserved; valid slave MCIDs are `1..63` in v0.
 - Every arbitration bit is followed by a handoff slot, driven by slaves that lost at exactly that bit.
 - The master derives prefix masks from low handoff slots and processes them with a last-in-first-out pending mask stack. A burst serves all slaves pending at its start in descending MCID order, with one arbitration per slave.
-- `REQUEST_INFO` and `REQUEST_DATA` use unified target-mask addressing. A group request is answered by the arbitration winner in the same transaction (no `POLL_PENDING`); the arbitration covers only the MCID bits below the prefix. Group `SEND_COMMAND` stays one-way: slaves report results of group commands via the pending flag and burst.
+- `REQUEST_STATE`, `REQUEST_INFO` and `REQUEST_DATA` use unified target-mask addressing. A group request is answered by the arbitration winner in the same transaction (no `POLL_PENDING`); the arbitration covers only the MCID bits below the prefix. Group `SEND_COMMAND` stays one-way: slaves report results of group commands via the pending flag and burst.
 - Commands are fire-and-forget: no `SLAVE_ACK`, no `SLAVE_ERROR`. The master verifies states by reading them back.
 - One outgoing buffer per slave, read via `REQUEST_DATA` / `SLAVE_DATA`. `STATUS_CAPTURE` writes into the same buffer.
 - `REQUEST_INFO` returns static metadata as `SLAVE_INFO`: protocol version, capability flags, application data.
@@ -36,7 +36,8 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Idle event handshake: slave releases `DATA` after the first complete master clock pulse; master clocks until `DATA` is released.
 - `SEND_COMMAND` opcodes: `0x00` = `STATUS_CAPTURE`, `0x01..0x0F` reserved for protocol use, `0x10..0xFF` application-defined.
 - Frame format: 16-bit header, identical layout in both directions: `TYPE`(2) · `TARGET_LEN`/reserved(3) · `MCID`(6) · `LEN`(5), followed by payload and CRC8. No SOF field. CRC8 covers header bytes and payload in transmission order.
-- 2-bit type codes per direction: master `01` REQUEST_INFO, `10` REQUEST_DATA, `11` SEND_COMMAND (`00` reserved); slave `10` SLAVE_DATA, `11` SLAVE_INFO (`00`/`01` reserved).
+- 2-bit type codes per direction: master `00` REQUEST_STATE, `01` REQUEST_INFO, `10` REQUEST_DATA, `11` SEND_COMMAND; slave `10` SLAVE_DATA, `11` SLAVE_INFO (`00`/`01` reserved). A state frame uses the `SLAVE_DATA` type code.
+- Two kinds of data: the live state (`REQUEST_STATE`, any time, every slave with a state contends, nothing cleared) and the event buffer (`REQUEST_DATA`, only slaves with pending data contend, cleared after delivery). The state is read from the application at transmit time without a copy.
 - Slave header uses the `TARGET_LEN` bit positions for `MORE` (1 bit, more fragments follow) and `GEN` (2-bit mandatory generation counter, incremented on every buffer write). Duplicates are detected master-side by equal `GEN` plus identical payload; fragments need no sequence number.
 - Duplicate MCIDs are a configuration fault detected master-side only: commissioning scan (group `REQUEST_INFO`) and a runtime heuristic (repeated CRC failures for one MCID). `SLAVE_INFO` SHOULD contain a device-unique value. Slave-side collision detection was rejected because it would hide the fault and add slave logic.
 - CRC8 = CRC-8/AUTOSAR (poly `0x2F`, init `0xFF`, xorout `0xFF`). Hamming distance 4 up to 14 covered bytes; maximum payload stays 31 bytes, with a recommendation to fragment into ≤ 12-byte payloads where strongest integrity is needed.

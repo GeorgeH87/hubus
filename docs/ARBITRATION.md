@@ -15,7 +15,7 @@ This maps naturally to wired-AND behavior on the shared line because any active 
 
 ## 3. Preconditions
 
-- Master has issued `REQUEST_INFO` or `REQUEST_DATA` with valid CRC and `TARGET_LEN < 6`. Contenders are the slaves matching the target mask (`TARGET_LEN` + `MCID` prefix) that can answer: all of them for `REQUEST_INFO`, only those with pending data for `REQUEST_DATA`.
+- Master has issued `REQUEST_STATE`, `REQUEST_INFO` or `REQUEST_DATA` with valid CRC and `TARGET_LEN < 6`. Contenders are the slaves matching the target mask (`TARGET_LEN` + `MCID` prefix) that can answer: all of them for `REQUEST_INFO`, those with a state for `REQUEST_STATE`, only those with pending data for `REQUEST_DATA`. The others take no part and stay passive.
 - Arbitration starts in the slot directly after the turnaround slot that follows the request frame. The winner starts its response frame in the slot directly after handoff slot `0`; the losers stay passive until the next START, STOP, or RESET (`PROTOCOL.md` section 1.3).
 - With `TARGET_LEN = 6` there are no arbitration slots: the addressed slave answers directly after the turnaround slot.
 - All contenders use the same MCID bit width for comparison.
@@ -75,7 +75,7 @@ The stack holds at most one mask per prefix length, so at most 6 entries in v0.
 
 A popped mask with `TARGET_LEN=6` identifies exactly one MCID. The request has no arbitration slots and is a plain exactly addressed `REQUEST_DATA`.
 
-The same algorithm with `REQUEST_INFO` enumerates all slaves on the bus (commissioning scan, `PROTOCOL.md` section 3.5): every slave contends, and the winner's `SLAVE_INFO` arrives in the same transaction.
+The same algorithm with `REQUEST_INFO` enumerates all slaves on the bus (commissioning scan, `PROTOCOL.md` section 3.5): every slave contends, and the winner's `SLAVE_INFO` arrives in the same transaction. With `REQUEST_STATE` it reads the current state of every slave that has one.
 
 ### 6.3 Retry Policy
 

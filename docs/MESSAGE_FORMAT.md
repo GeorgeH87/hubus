@@ -42,16 +42,25 @@ Properties:
 
 | Type | Name | Addressing | Slave reaction |
 |---|---|---|---|
-| `00` | reserved | – | Slaves ignore the frame. |
+| `00` | `REQUEST_STATE` | exact or group | Read the **current state**, at any time, independent of events. Exact: the addressed slave sends its state as `SLAVE_DATA` (section 4.4); silent if it has no state. Group: every matching slave **that has a state** arbitrates and the winner sends its state in the same transaction. Nothing is cleared. |
 | `01` | `REQUEST_INFO` | exact or group | Exact: the addressed slave sends `SLAVE_INFO` (static device metadata, section 4.1). Group: the matching slaves arbitrate (`ARBITRATION.md`) and the winner sends its `SLAVE_INFO` in the same transaction. |
-| `10` | `REQUEST_DATA` | exact or group | Exact: the addressed slave sends `SLAVE_DATA` with the content of its buffer; silent if the buffer is empty. Group: the matching slaves **with pending data** arbitrate and the winner sends its `SLAVE_DATA` in the same transaction. |
+| `10` | `REQUEST_DATA` | exact or group | Read the **event buffer** (a state change or a message the slave wants to deliver). Exact: the addressed slave sends `SLAVE_DATA` with the content of its buffer; silent if the buffer is empty. Group: only matching slaves **with pending data** arbitrate; all others drop out at once. The winner sends its `SLAVE_DATA` in the same transaction. |
 | `11` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
 
-`REQUEST_INFO` and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
+`REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
 
-Type `00` is free for a future function. Other protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
+All master type codes are in use. Future protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
 
-`SEND_COMMAND` is always fire-and-forget. If the master needs to confirm that a state was established, it reads the state back explicitly (status-capture followed by `REQUEST_DATA`).
+`REQUEST_STATE` and `REQUEST_DATA` answer two different questions:
+
+| | `REQUEST_STATE` | `REQUEST_DATA` |
+|---|---|---|
+| Question | What is your state now? | Do you have something to deliver? |
+| Source | The live state the application exposes (for example the level of every input of a multi-button slave) | The event buffer, filled by the application on a state change or by `STATUS_CAPTURE` |
+| Who contends in a group request | every matching slave that has a state | only matching slaves with pending data |
+| Effect | none, repeatable at any time | the STOP after a complete response clears buffer and pending flag |
+
+`SEND_COMMAND` is always fire-and-forget. If the master needs to confirm that a state was established, it reads the state back with `REQUEST_STATE`.
 
 ## 3.0 Command Opcodes
 
@@ -99,8 +108,8 @@ For `STATUS_CAPTURE`, this same unified mask addressing is used.
 Whenever a response is expected, at most one slave answers:
 
 - `SEND_COMMAND` never produces a response. Sent to a group, it is executed by every matching slave (as for exact addressing).
-- `REQUEST_INFO` and `REQUEST_DATA` with `TARGET_LEN = 6` are answered by the addressed slave alone.
-- `REQUEST_INFO` and `REQUEST_DATA` with `TARGET_LEN < 6` are answered by the arbitration winner alone. The arbitration is part of the same transaction (`ARBITRATION.md`, `PROTOCOL.md` section 1.3). Slaves that cannot answer do not contend: for `REQUEST_DATA` those are slaves without pending data.
+- `REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` with `TARGET_LEN = 6` are answered by the addressed slave alone.
+- The same requests with `TARGET_LEN < 6` are answered by the arbitration winner alone. The arbitration is part of the same transaction (`ARBITRATION.md`, `PROTOCOL.md` section 1.3). Slaves that cannot answer do not contend: for `REQUEST_DATA` those are slaves without pending data, for `REQUEST_STATE` slaves without a state.
 - If a group command produces something to report (for example a `STATUS_CAPTURE` result), the slave sets its pending flag and uses the regular return path: idle event handshake and burst (`PROTOCOL.md` section 3.2).
 
 A slave therefore sends a response frame only if it was addressed exactly or won the arbitration, so at most one slave transmits a frame at any time (except for a duplicate MCID, which is a configuration fault, `PROTOCOL.md` section 3.5).
@@ -117,7 +126,7 @@ Valid range in v0: `0..6`.
 |---|---|---|
 | `00` | reserved | – |
 | `01` | reserved | – |
-| `10` | `SLAVE_DATA` | `REQUEST_DATA` |
+| `10` | `SLAVE_DATA` | `REQUEST_DATA` (event buffer), `REQUEST_STATE` (current state, section 4.4) |
 | `11` | `SLAVE_INFO` | `REQUEST_INFO` |
 
 Slave type codes must start with `1`; codes `00` and `01` are never used by slaves. The master uses this to detect a missing response from the first bit after the turnaround slot, or after the last arbitration slot of a group request (`PROTOCOL.md` section 1.3).
@@ -131,7 +140,7 @@ Static metadata, typically a constant in flash.
 | Byte | Content |
 |---|---|
 | 0 | HUBUS protocol version |
-| 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; other bits reserved (0) |
+| 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; other bits reserved (0) |
 | 2 | Maximum command payload the slave accepts, in bytes (`1..31`; ATtiny85 reference build: 31) |
 | 3.. | Application-defined (for example device type, firmware version). SHOULD include a device-unique value (for example a serial number) so the master's commissioning scan reliably detects duplicate MCIDs (`PROTOCOL.md` section 3.5). |
 
@@ -153,7 +162,7 @@ When writing the buffer, the application also states whether more fragments foll
 
 - The slave library increments `GEN` (modulo 4) on every buffer write: event data or `STATUS_CAPTURE`.
 - `GEN` is preserved across RESET.
-- `SLAVE_INFO` frames carry `GEN = 00`.
+- `SLAVE_INFO` frames and state frames (section 4.4) carry `GEN = 00`.
 
 Master evaluation (per MCID, master-side only):
 
@@ -166,6 +175,17 @@ Master evaluation (per MCID, master-side only):
 | first frame from this MCID since master start | Taken as baseline. |
 
 The payload comparison prevents new content from being discarded as a duplicate after a counter wrap. The only remaining ambiguity (wrap **and** identical payload) is harmless, since the data is the same.
+
+### 4.4 Slave State (`REQUEST_STATE`)
+
+A slave may expose a **state**: a block of 1 to 31 bytes that the application keeps up to date (for example one bit per button, or a measured value). The slave library reads the bytes directly from the application when it transmits; no copy is made and the buffer of section 4.2 is not touched.
+
+- `REQUEST_STATE` is answered with a frame of type `SLAVE_DATA` (`10`), `MORE = 0`, `GEN = 00`, and the state bytes as payload. The master knows from its request that this is a state frame, not event data.
+- It can be sent at any time and as often as needed. It neither clears nor sets the pending flag and does not change `GEN`.
+- A slave without a state ignores `REQUEST_STATE`. It announces the capability in `SLAVE_INFO` (byte 1, bit 1), so the master knows which slaves to ask.
+- The state is not latched. If the application changes a byte while it is being transmitted, the frame may mix old and new bytes of the application's state; the CRC is computed over what is sent, so the frame stays valid. An application that needs a consistent snapshot over several bytes keeps the state within one byte or updates it atomically.
+- State and events complement each other. A multi-button slave exposes the current level of all buttons as state and writes a button press as an event into the buffer: the master collects the event in a burst and may read the state at any time, for example to verify it or after a start.
+- A group `REQUEST_STATE` (for example `TARGET_LEN = 0`) enumerates the states of all slaves, one transaction per slave, with the same mask stack as a burst (`ARBITRATION.md` section 6.2).
 
 ## 5. Addressing Rules
 

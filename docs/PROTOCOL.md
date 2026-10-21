@@ -81,8 +81,8 @@ The master additionally keeps `CLK` low for at least `T_TURNAROUND` before the r
 | Transaction | Sequence |
 |---|---|
 | `SEND_COMMAND` | START · master frame · STOP |
-| `REQUEST_INFO` / `REQUEST_DATA`, exact (`TARGET_LEN=6`) | START · master frame · `T` · slave frame or silence · STOP or RESET |
-| `REQUEST_INFO` / `REQUEST_DATA`, group (`TARGET_LEN<6`) | START · master frame · `T` · `2·(6−TARGET_LEN)` arbitration slots · slave frame of the winner or silence · STOP or RESET |
+| `REQUEST_STATE` / `REQUEST_INFO` / `REQUEST_DATA`, exact (`TARGET_LEN=6`) | START · master frame · `T` · slave frame or silence · STOP or RESET |
+| `REQUEST_STATE` / `REQUEST_INFO` / `REQUEST_DATA`, group (`TARGET_LEN<6`) | START · master frame · `T` · `2·(6−TARGET_LEN)` arbitration slots · slave frame of the winner or silence · STOP or RESET |
 | RESET | START · STOP |
 | Idle event handshake | slave pulls `DATA` low · master clocks until `DATA` is released · (next START) |
 
@@ -154,13 +154,14 @@ So that one turnaround slot is sufficient, no slave step may require bulk proces
 
 2. **Master Intent**
 - Master sends a compact control message indicating next action:
+  - read the current state (`REQUEST_STATE`)
   - read static device metadata (`REQUEST_INFO`)
-  - read the slave buffer (`REQUEST_DATA`)
+  - read the event buffer (`REQUEST_DATA`)
   - send a command (`SEND_COMMAND`, including `STATUS_CAPTURE`)
 
 Each slave has exactly one outgoing buffer. A slave with an empty buffer ignores `REQUEST_DATA` completely and remains silent. New buffer content may overwrite unread old content.
 
-Commands are never acknowledged. If the master needs to confirm that a state was established, it reads the state back explicitly (`STATUS_CAPTURE` followed by `REQUEST_DATA`).
+Commands are never acknowledged. If the master needs to confirm that a state was established, it reads the state back explicitly with `REQUEST_STATE`.
 
 All addressed master commands use unified target-mask addressing.
 
@@ -171,7 +172,7 @@ All addressed master commands use unified target-mask addressing.
 
 `SEND_COMMAND` to a group is one-way (master to n slaves): no slave answers it. Anything a slave wants to report afterwards goes through the regular return path (pending flag, idle event handshake, burst). `REQUEST_INFO` and `REQUEST_DATA` with a group mask are answered by exactly one slave, the arbitration winner. See `MESSAGE_FORMAT.md` section 3.1, "Direction Rule".
 
-For a group request only slaves that can answer contend: every matching slave for `REQUEST_INFO`, only matching slaves with pending data for `REQUEST_DATA`. `TARGET_LEN=0` addresses all slaves.
+For a group request only slaves that can answer contend: every matching slave for `REQUEST_INFO`, every matching slave with a state for `REQUEST_STATE`, only matching slaves with pending data for `REQUEST_DATA`. The master therefore chooses with the request type whether it asks "all that exist", "all that have a state" or "only those that have something to deliver"; slaves that do not qualify drop out immediately and take no part in the arbitration. `TARGET_LEN=0` addresses all slaves.
 
 `STATUS_CAPTURE` uses this same mechanism. Every matching slave that supports it writes its current status into its buffer (overwriting unread content) and sets its pending flag.
 
@@ -303,6 +304,7 @@ Rules:
 
 - The slave clears only if it transmitted its complete response in the current transaction. A STOP after an aborted or partial response clears nothing.
 - `SLAVE_INFO` is static; nothing is cleared after `REQUEST_INFO`.
+- A state frame (`REQUEST_STATE`) is a live read; nothing is cleared after it either. Only a complete event frame (`REQUEST_DATA`) clears buffer and pending flag.
 - After a RESET the master may retry with an exactly addressed `REQUEST_DATA`, within its retry budget. When the budget is exhausted it skips the slave for the current burst; the data stays buffered and the slave announces itself again later.
 
 ### Accepted Rare Cases
@@ -360,9 +362,9 @@ Without a device-unique value in `SLAVE_INFO`, a duplicate MCID can remain unnot
 
 The protocol is generic, but the following examples define intended behavior classes:
 
-- Relay and LED slaves: receive application commands (`SEND_COMMAND`) to switch outputs on or off. To verify, the master sends `STATUS_CAPTURE` and reads the state with `REQUEST_DATA`.
-- Switch slaves: write state changes into the buffer and announce them via idle event signaling; the master collects them in a burst. The master may also read the state at any time via `STATUS_CAPTURE`.
-- Temperature sensor slaves: the master triggers `STATUS_CAPTURE` (single slave or group) and collects the values in a burst or via `REQUEST_DATA`.
+- Relay and LED slaves: receive application commands (`SEND_COMMAND`) to switch outputs on or off. To verify, the master reads the state with `REQUEST_STATE`.
+- Switch slaves: write state changes into the buffer and announce them via idle event signaling; the master collects them in a burst. The slave also exposes the current level of all its inputs as state, which the master may read at any time with `REQUEST_STATE`.
+- Temperature sensor slaves: expose the measured value as state (`REQUEST_STATE`, single slave or group). `STATUS_CAPTURE` still lets the master collect values through a burst.
 
 These are usage examples only. The protocol does not require these exact device types.
 

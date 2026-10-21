@@ -13,8 +13,8 @@ A compliant HUBUS slave must provide:
 - Arbitration participation logic, including driving the handoff slot directly after losing.
 - Target-mask match logic (`MCID` prefix + `TARGET_LEN`) for all master commands.
 - Early target filtering based on `TARGET_LEN` before full command processing.
-- Send a response frame only if addressed exactly (`TARGET_LEN = 6`) or after winning the arbitration of a group `REQUEST_INFO`/`REQUEST_DATA`. Never answer a group `SEND_COMMAND`; results of group commands are reported via the pending flag.
-- Ignore frames with the reserved master type `00`.
+- Send a response frame only if addressed exactly (`TARGET_LEN = 6`) or after winning the arbitration of a group `REQUEST_STATE`/`REQUEST_INFO`/`REQUEST_DATA`. Never answer a group `SEND_COMMAND`; results of group commands are reported via the pending flag.
+- Answer `REQUEST_STATE` only if the application provides a state; otherwise ignore it.
 - Frame RX/TX handling with incremental CRC8 computation (byte by byte while receiving and transmitting).
 - Transaction sequencing per `PROTOCOL.md` section 1.3 (turnaround slot, arbitration slots, response).
 
@@ -24,7 +24,7 @@ A compliant HUBUS slave must provide:
 - `IDLE_EVENT_SIGNAL`: Hold `DATA` low to announce a pending event.
 - `RX_FRAME`: Receive the master frame after START; stop evaluating once the address does not match.
 - `TURNAROUND`: Release `DATA` for one slot; evaluate CRC, address, and buffer state.
-- `ARBITRATION_ACTIVE`: Contend with the open MCID bits (only if addressed by the group mask and able to answer: any slave for `REQUEST_INFO`, a pending slave for `REQUEST_DATA`). The first arbitration slot is slot `2·TARGET_LEN` of the 12-slot pattern.
+- `ARBITRATION_ACTIVE`: Contend with the open MCID bits (only if addressed by the group mask and able to answer: any slave for `REQUEST_INFO`, a slave with a state for `REQUEST_STATE`, a pending slave for `REQUEST_DATA`). The first arbitration slot is slot `2·TARGET_LEN` of the 12-slot pattern.
 - `ARBITRATION_HANDOFF`: Lost at the current bit; drive `DATA` low for the following handoff slot.
 - `ARBITRATION_DROPPED`: Passive until the transaction ends.
 - `SELECTED_TRANSFER`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request, or directly after the last arbitration slot as the winner of a group request.
@@ -79,13 +79,14 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Every buffer write increments the 2-bit `GEN` counter, which is transmitted in the `SLAVE_DATA` header (`MESSAGE_FORMAT.md` section 4.3).
 - The application passes the `MORE` flag with each buffer write (fragmented transfers) and writes the next fragment only when the buffer is empty (`MESSAGE_FORMAT.md` section 6.1).
 - Static device info for `REQUEST_INFO` (`MESSAGE_FORMAT.md` section 4.1) can be a constant in flash and needs no RAM.
+- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM.
 
 ## 4.1 Responses
 
-- A slave only sends frames in response to `REQUEST_INFO` (`SLAVE_INFO`) and `REQUEST_DATA` (`SLAVE_DATA`, only if the buffer is not empty), either exactly addressed or after winning the arbitration of a group request.
+- A slave only sends frames in response to `REQUEST_INFO` (`SLAVE_INFO`), `REQUEST_STATE` (`SLAVE_DATA` with the live state, only if the application provides one) and `REQUEST_DATA` (`SLAVE_DATA` with the buffer, only if the buffer is not empty), either exactly addressed or after winning the arbitration of a group request.
 - Commands are executed without acknowledgement. No error frames exist; application errors are reported through the buffer.
 - Unknown reserved opcodes (`0x01..0x0F`) are ignored.
-- After transmitting a complete `SLAVE_DATA` response, the slave remembers this (one flag) until the transaction ends: STOP clears buffer and pending flag, RESET keeps both.
+- After transmitting a complete `SLAVE_DATA` response to `REQUEST_DATA`, the slave remembers this (one flag) until the transaction ends: STOP clears buffer and pending flag, RESET keeps both. A state frame (`REQUEST_STATE`) clears nothing.
 
 ## 5. No Timeouts on the Slave
 

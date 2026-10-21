@@ -138,6 +138,13 @@ Rewritten against the specification (R18); the old implementation has been remov
 - **Effect on the slave:** the participation condition (matching mask, plus pending for `REQUEST_DATA`), the start slot `2·TARGET_LEN`, and the transition from arbitration into transmission. `SEND_COMMAND` to a group is unchanged.
 - See `MESSAGE_FORMAT.md` §3, §3.1, `ARBITRATION.md`, `PROTOCOL.md` §1.3, §3.2, §3.5.
 
+### R20: Live State and Event Buffer (`REQUEST_STATE`)
+
+- **Status:** resolved in the specification (2026-10-22); implementation follows
+- **Problem:** `REQUEST_DATA` reads the event buffer, which is empty unless something happened. A slave with several buttons also has a current state that the master wants to read at any time, and the master wants to ask only those slaves that have a change to report. Reading a state through `STATUS_CAPTURE` plus a burst needed two steps and went through the event buffer, where it could overwrite unread events.
+- **Resolution:** master type `00` becomes `REQUEST_STATE`. It reads the live state the application exposes (pointer and length, no copy), from any slave that has a state, at any time, with exact or group addressing; nothing is cleared. `REQUEST_DATA` keeps its meaning: only slaves with pending data contend, all others drop out at once. The state frame uses the `SLAVE_DATA` type code with `MORE = 0` and `GEN = 00`; `SLAVE_INFO` capability bit 1 announces a state. All four master type codes are now in use. `STATUS_CAPTURE` stays for collecting values through a burst.
+- See `MESSAGE_FORMAT.md` §3, §4.4, `PROTOCOL.md` §1.3, §3.4, `ARBITRATION.md` §3, `SLAVE_PROPERTIES.md` §4.
+
 ### R6: Fairness (D3, largely)
 
 - **Status:** resolved for v0 (2026-10-20)
