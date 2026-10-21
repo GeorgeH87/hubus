@@ -1,0 +1,64 @@
+@startuml timing-conditions
+title START, one frame bit, STOP, and RESET: DATA changes while CLK is high
+binary "CLK" as CLK
+binary "DATA" as DATA
+concise "Condition" as C
+
+@0
+CLK is low
+DATA is high
+C is "idle"
+
+@10
+CLK is high
+
+@15
+DATA is low
+C is "START"
+
+@20
+CLK is low
+C is "bit 1 (DATA low)"
+
+@30
+CLK is high
+
+@40
+CLK is low
+C is "release"
+
+@42
+DATA is high
+
+@44
+DATA is low
+C is "pull low"
+
+@50
+CLK is high
+
+@55
+DATA is high
+C is "STOP"
+
+@60
+CLK is low
+C is "idle"
+
+@80
+CLK is high
+
+@85
+DATA is low
+C is "RESET"
+
+@90
+DATA is high
+
+@100
+CLK is low
+C is "idle"
+
+@110
+DATA is high
+@enduml

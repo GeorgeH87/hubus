@@ -1,0 +1,45 @@
+@startuml timing-request-data
+title REQUEST_DATA transaction: who drives DATA in each phase
+concise "Phase" as P
+robust "DATA driven by" as D
+concise "CLK low time" as L
+
+@0
+P is "idle"
+D is "nobody"
+L is "any"
+
+@10
+P is "START"
+D is "master"
+
+@20
+P is "master frame\n24 bit"
+L is "T_CLK_LOW"
+
+@60
+P is "T\n1 slot"
+D is "nobody"
+
+@70
+P is "slave frame\n8 x (3 + LEN) bit"
+D is "slave"
+L is "T_TURNAROUND\nbefore first bit"
+
+@72
+L is "T_CLK_LOW"
+
+@130
+P is "STOP"
+D is "master"
+
+@140
+P is "idle"
+D is "nobody"
+L is "any"
+
+@150
+P is {-}
+D is {-}
+L is {-}
+@enduml

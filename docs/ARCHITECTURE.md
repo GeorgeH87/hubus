@@ -2,7 +2,7 @@
 
 This document explains how the HUBUS communication stack is designed and how its layers interact. It complements the normative specs (`PROTOCOL.md`, `ARBITRATION.md`, `MESSAGE_FORMAT.md`, `HARDWARE_REQUIREMENTS.md`) with diagrams. Where this document and a spec differ, the spec wins.
 
-Diagram conventions: Mermaid diagrams render on GitHub; timing diagrams are ASCII (`‾` high, `_` low). On `DATA`, a node pulls the line low for bit `1` and releases it for bit `0`.
+Diagram conventions: sequence, activity, and state diagrams are Mermaid and render on GitHub; timing diagrams are PlantUML images (Mermaid has no timing diagram type, see section 6). In ASCII sketches, `DATA` low means the line is pulled low.
 
 ## 1. Design in One Page
 
@@ -125,7 +125,7 @@ sequenceDiagram
     M->>B: START · POLL_PENDING(len 0) · T
     B-->>M: arbitration: 12 slots (bit/handoff)
     X-->>M: lost at bit 2 → handoff slot low
-    Note over M: winner = 5 (000101); 3 (000011) lost at bit 2<br/>push mask 0000 / len 4 (group MCID 0..3)
+    Note over M: winner = 5 (000101), 3 (000011) lost at bit 2<br/>push mask 0000 / len 4 (group MCID 0..3)
     M->>B: STOP, START · REQUEST_DATA(5) · T
     B-->>M: SLAVE_DATA (pressed)
     M->>B: STOP (buffer cleared)
@@ -145,27 +145,30 @@ Pending: 42 (`101010`), 40 (`101000`), 25 (`011001`), 15 (`001111`).
 ```mermaid
 sequenceDiagram
     participant M as Master
-    participant S42 as 42 · 101010
-    participant S40 as 40 · 101000
-    participant S25 as 25 · 011001
-    participant S15 as 15 · 001111
+    participant S42 as 42 (101010)
+    participant S40 as 40 (101000)
+    participant S25 as 25 (011001)
+    participant S15 as 15 (001111)
 
-    M->>+S42: POLL_PENDING len 0 (all)
-    M-)S15: (same frame, all slaves receive it)
-    Note over M,S15: turnaround slot T
-    S42-->>M: bit5 = 1 (low)
-    S40-->>M: bit5 = 1 (low)
-    S25--xS25: bit5 = 0, sees low → lost
-    S25-->>M: handoff5 low
-    S15-->>M: handoff5 low
-    Note over M: push mask "0"/len 1
-    Note over M,S15: bit 4, 3, 2 … 42 and 40 equal
-    S42-->>M: bit1 = 1
-    S40--xS40: bit1 = 0, sees low → lost
-    S40-->>M: handoff1 low
-    Note over M: push mask "10100"/len 5
-    Note over M: winner = 101010 = 42
-    M->>-S42: next transaction: REQUEST_DATA(42)
+    M->>S42: POLL_PENDING len 0, received by all slaves
+    Note over M,S15: turnaround slot T, all released
+    Note over M,S15: slot b5
+    S42-->>M: bit 5 = 1 (DATA low)
+    S40-->>M: bit 5 = 1 (DATA low)
+    Note over S25,S15: send 0 but see low: lost at bit 5
+    Note over M,S15: slot h5
+    S25-->>M: handoff 5 (DATA low)
+    S15-->>M: handoff 5 (DATA low)
+    Note over M: push mask 0 / len 1
+    Note over M,S15: bits 4 to 2: 42 and 40 send identical bits
+    Note over M,S15: slot b1
+    S42-->>M: bit 1 = 1 (DATA low)
+    Note over S40: sends 0 but sees low: lost at bit 1
+    Note over M,S15: slot h1
+    S40-->>M: handoff 1 (DATA low)
+    Note over M: push mask 10100 / len 5
+    Note over M: sampled bits 101010, winner is 42
+    M->>S42: next transaction: REQUEST_DATA (42)
 ```
 
 Service order: 42, then pop `10100`/5 → 40, pop `0`/1 → 25 (15 loses at bit 4, pushes `00`/2), pop `00`/2 → 15. Four pending slaves cost four polls.
@@ -392,94 +395,55 @@ stateDiagram-v2
 
 ## 6. Timing Diagrams
 
-All timing values are *minimums* set by the master; a slower master only slows the bus. Defaults are conservative placeholders until measured on hardware (`OPEN_ISSUES.md` H3).
+Mermaid has no timing diagram type, so these diagrams are PlantUML. The sources are in `diagrams/*.puml`, the rendered images in `diagrams/*.svg`; `tools/render-diagrams.sh` regenerates them.
+
+All timing values are *minimums* set by the master; a slower master only slows the bus. Defaults are conservative placeholders until measured on hardware (`OPEN_ISSUES.md` H3). Time units in the diagrams are arbitrary.
 
 ### 6.1 Bit Transfer
 
-`DATA` changes only while `CLK` is low and is sampled on the rising edge.
+`DATA` changes only while `CLK` is low (here 2 units after the falling edge) and is sampled on the rising edge. The three sampled bits are `0` (released), `1` (pulled low), `0`.
 
-```
-          ┌───────┐       ┌───────┐       ┌───────┐
-CLK   ____┘       └───────┘       └───────┘       └____
-          ↑sample         ↑sample         ↑sample
-DATA  ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\_______________/‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-          bit = 0         bit = 1         bit = 0
-          (released)      (pulled low)    (released)
-          |<-- T_CLK_LOW ->|   set after falling edge
-```
+![Bit transfer](diagrams/timing-bit-transfer.svg)
 
 `T_CLK_LOW` must cover the slowest slave's ISR latency plus the time to update `DATA`.
 
 ### 6.2 START, STOP, RESET
 
-```
-START                          STOP                       RESET
-              ┌─────────┐                ┌─────────┐              ┌─────────┐
-CLK   ________┘         └___      ________┘         └___   _______┘         └___
-DATA  ‾‾‾‾‾‾‾‾‾‾‾‾\_________      __________/‾‾‾‾‾‾‾‾‾‾‾   ‾‾‾‾‾‾‾‾\______/‾‾‾‾‾‾
-                  ↑ falls while CLK high      ↑ rises while CLK high   START immediately
-                  (all slaves resync)         (bus idle)               followed by STOP
-              |<->| T_COND around the DATA edge
-```
+`DATA` falls while `CLK` is high (START), one bit follows, `DATA` rises while `CLK` is high (STOP), and finally START immediately followed by STOP without a clock pulse in between (RESET).
 
-Sequence for START: raise `CLK`, pull `DATA` low, lower `CLK`, first frame bit follows. STOP: with `CLK` low pull `DATA` low, raise `CLK`, release `DATA`, lower `CLK` (idle). Inside a burst `CLK` is **not** lowered after STOP; the next START follows directly.
+![START, STOP, and RESET](diagrams/timing-conditions.svg)
 
-### 6.3 `REQUEST_DATA` Transaction (master frame, turnaround, slave response)
+START: raise `CLK`, pull `DATA` low, lower `CLK`. STOP: with `CLK` low pull `DATA` low, raise `CLK`, release `DATA`, lower `CLK`. Inside a burst `CLK` is **not** lowered after STOP; the next START follows directly (section 6.6). `T_COND` is the minimum `CLK` high time around the `DATA` edge.
 
-```
-          START   master frame (header, LEN=0, CRC8)   T     slave frame          STOP
-CLK     __┌─┐_┌─┐_┌─┐_ ... _┌─┐_┌─┐_┌─┐_┌─┐_┌─┐_ ... _┌─┐_┌─┐_ ... ┌─┐_┌─┐_ ... ┌─┐__
-DATA    ‾‾‾\_[ master drives: bits 15 … 0 | CRC8 ]_‾‾[ slave drives: 1 0 b b … CRC8 ]_/‾‾
-              open-drain, master             all     open-drain, selected slave
-                                             released
-                                    |<- T_TURNAROUND (CLK low) ->|
-```
+### 6.3 `REQUEST_DATA` Transaction
 
-* After the master frame every node releases `DATA` for one slot (`T`). The slave checks CRC, address and buffer state there.
-* `CLK` stays low for at least `T_TURNAROUND` before the next rising edge so the slave can prepare its first bit.
-* First response bit low → slave frame follows (type starts with `1`). First bit high → no response; the master ends immediately.
+![REQUEST_DATA transaction](diagrams/timing-request-data.svg)
+
+* After the master frame every node releases `DATA` for one slot (`T`). The slave has already checked CRC, address, and buffer state when the last frame bit arrived.
+* `CLK` stays low for at least `T_TURNAROUND` before the first rising edge after `T`, so the slave can prepare its first response bit.
+* First response bit low means a slave frame follows (its type starts with `1`). First bit high means no response; the master ends the transaction immediately.
 
 ### 6.4 Arbitration: 12 Slots
 
-Example `POLL_PENDING len 0` with pending slaves 42 (`101010`) and 25 (`011001`):
+Pending slaves 42 (`101010`) and 25 (`011001`); the first slot is the turnaround slot `T`. The rows `42 drives low` and `25 drives low` are high while that node pulls `DATA` low.
 
-```
-slot:        T | b5 h5 | b4 h4 | b3 h3 | b2 h2 | b1 h1 | b0 h0 | STOP
-CLK      ... ┌┐ ┌┐ ┌┐  ┌┐ ┌┐  ┌┐ ┌┐  ┌┐ ┌┐  ┌┐ ┌┐  ┌┐ ┌┐  (12 pulses after T)
-42 drives:   . | L  .  | .  .  | L  .  | .  .  | L  .  | .  .
-25 drives:   . | .  L  | L  .  | .  .  | .  .  | .  .  | .  .     (b4: 25 sends 1;
-                                                                    h5: lost at bit 5)
-DATA bus:    ‾ | \_ /‾\_ ‾‾ ‾‾ \_ ‾‾ ‾‾ ‾‾ \_ ‾‾ ‾‾ ‾‾ ‾‾ | ‾
-master sees: - | 1  1  | 0  0  | 1  0  | 0  0  | 1  0  | 0  0
-                  ^h5 low → push mask "0"/len 1
-winner bits (b5…b0) = 1 0 1 0 1 0 = 42
-```
+![Arbitration](diagrams/timing-arbitration.svg)
 
-`b` = arbitration slot (contenders with bit `1` pull `DATA` low), `h` = handoff slot (contenders that lost at exactly this bit pull low). The layout is fixed and independent of the line state. After `h0` every slave, including the winner, is passive.
-
-> Note: 25 would only drive `b4` after having lost at `b5`; since it lost it stays passive. The line above is simplified, see §3.3 and `ARBITRATION.md` §7 for the exact per-slot table.
+`b` is an arbitration slot (contenders with bit `1` pull `DATA` low), `h` is a handoff slot (contenders that lost at exactly this bit pull low). In `b5` 42 pulls low and 25 sends `0`, so 25 loses and pulls low in `h5`; the master pushes the mask `0`/len 1. From then on only 42 contends: it pulls low in `b3` and `b1`, and the master reads the winner `101010`. The layout is fixed (12 slots after `T`) and independent of the line state. After `h0` every slave, including the winner, is passive. See §3.3 and `ARBITRATION.md` §7 for a four-slave example.
 
 ### 6.5 Idle Event Handshake
 
-```
-              slave writes buffer          master confirms            next transaction
-CLK   _______________________________┌───────┐________________________________┌── (START)
-                                      │       │                               │
-DATA  ‾‾‾‾‾‾‾‾‾\_______________________________/‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\_
-                ↑ slave pulls DATA low         ↑ released after FIRST FALLING CLK edge
-                  (CLK low, bus idle)            (not while CLK is high: that would be a STOP)
-```
+![Idle event handshake](diagrams/timing-idle-event.svg)
 
-Master side: before every START/RESET (CLK low) check `DATA`; if low, run the handshake first. After raising `CLK` for a START check `DATA` once more: low means a slave started signaling just before the edge (race, `PROTOCOL.md` §7.1); lower `CLK` and repeat the transaction.
+The slave pulls `DATA` low while `CLK` is low and the bus is idle. The master confirms with one clock pulse; the slave releases `DATA` after the **falling** edge (releasing while `CLK` is high would look like a STOP). The master then checks `DATA` again before it raises `CLK` for the START.
+
+Master side: before every START/RESET (`CLK` low) check `DATA`; if low, run the handshake first. After raising `CLK` for a START check `DATA` once more: low means a slave started signaling just before the edge (race, `PROTOCOL.md` §7.1); lower `CLK` and repeat the transaction.
 
 ### 6.6 Burst on the Wire
 
-```
- | POLL(len 0) | REQUEST_DATA(42) | POLL(10100/5) | REQUEST_DATA(40) | ... | last STOP
- START … STOP ┐ START … STOP    ┐ START … STOP    ┐ START … STOP    ┐ ... STOP
- CLK held HIGH between the transactions (no idle gap, no event signal possible)
- CLK lowered only after the final STOP → bus idle, still-pending slaves signal again
-```
+![Burst](diagrams/timing-burst.svg)
+
+`CLK` stays high between the transactions of a burst, so no pending slave can announce itself in between. `CLK` is lowered only after the final STOP; slaves that are still pending then signal again (idle event handshake).
 
 ## 7. Worst-Case Frame and Transaction Length
 

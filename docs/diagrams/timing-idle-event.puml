@@ -1,0 +1,50 @@
+@startuml timing-idle-event
+title Idle event handshake: the slave releases DATA only after one complete clock pulse
+binary "CLK" as CLK
+binary "DATA" as DATA
+binary "Slave drives DATA low" as S
+concise "Phase" as P
+
+@0
+CLK is low
+DATA is high
+S is low
+P is "idle"
+
+@10
+S is high
+DATA is low
+P is "event signal"
+
+@20
+P is "master sees DATA low"
+
+@30
+CLK is high
+P is "confirmation tick"
+
+@40
+CLK is low
+
+@42
+S is low
+DATA is high
+P is "released"
+
+@55
+P is "master checks DATA"
+
+@60
+CLK is high
+P is "START"
+
+@65
+DATA is low
+
+@70
+CLK is low
+P is "master frame"
+
+@80
+DATA is low
+@enduml

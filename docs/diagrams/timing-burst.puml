@@ -1,0 +1,45 @@
+@startuml timing-burst
+title Burst: CLK stays high between the transactions, DATA is released and pulled low again
+concise "Transaction" as T
+binary "CLK" as CLK
+robust "Pending slaves" as PS
+
+@0
+T is "idle"
+CLK is low
+PS is "announce"
+
+@10
+T is "POLL len 0"
+CLK is high
+PS is "wait"
+
+@40
+T is "REQUEST_DATA 42"
+
+@70
+T is "POLL 10100 / 5"
+
+@100
+T is "REQUEST_DATA 40"
+
+@130
+T is "POLL 0 / 1"
+
+@160
+T is "REQUEST_DATA 25"
+
+@190
+T is "POLL 00 / 2"
+
+@220
+T is "REQUEST_DATA 15"
+
+@250
+T is "final STOP"
+CLK is low
+PS is "announce again"
+
+@260
+T is "idle"
+@enduml

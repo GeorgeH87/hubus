@@ -1,0 +1,36 @@
+@startuml timing-bit-transfer
+title Bit transfer: DATA changes while CLK is low, sampled on the rising edge
+binary "CLK" as CLK
+binary "DATA" as DATA
+
+@0
+CLK is low
+DATA is high
+
+@10
+CLK is high
+
+@20
+CLK is low
+
+@22
+DATA is low
+
+@30
+CLK is high
+
+@40
+CLK is low
+
+@42
+DATA is high
+
+@50
+CLK is high
+
+@60
+CLK is low
+
+@70
+DATA is high
+@enduml

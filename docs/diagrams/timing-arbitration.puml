@@ -1,0 +1,175 @@
+@startuml timing-arbitration
+title Arbitration: turnaround slot T, then 12 slots (b = bit, h = handoff), pending 42 (101010) and 25 (011001)
+binary "CLK" as CLK
+binary "DATA line" as DATA
+binary "42 drives low" as S42
+binary "25 drives low" as S25
+concise "Slot" as SL
+
+@0
+CLK is low
+DATA is high
+S42 is low
+S25 is low
+
+@0
+SL is "T"
+
+@2
+S42 is low
+S25 is low
+DATA is high
+
+@10
+CLK is high
+
+@20
+SL is "b5"
+CLK is low
+
+@22
+S42 is high
+S25 is low
+DATA is low
+
+@30
+CLK is high
+
+@40
+SL is "h5"
+CLK is low
+
+@42
+S42 is low
+S25 is high
+DATA is low
+
+@50
+CLK is high
+
+@60
+SL is "b4"
+CLK is low
+
+@62
+S42 is low
+S25 is low
+DATA is high
+
+@70
+CLK is high
+
+@80
+SL is "h4"
+CLK is low
+
+@82
+S42 is low
+S25 is low
+DATA is high
+
+@90
+CLK is high
+
+@100
+SL is "b3"
+CLK is low
+
+@102
+S42 is high
+S25 is low
+DATA is low
+
+@110
+CLK is high
+
+@120
+SL is "h3"
+CLK is low
+
+@122
+S42 is low
+S25 is low
+DATA is high
+
+@130
+CLK is high
+
+@140
+SL is "b2"
+CLK is low
+
+@142
+S42 is low
+S25 is low
+DATA is high
+
+@150
+CLK is high
+
+@160
+SL is "h2"
+CLK is low
+
+@162
+S42 is low
+S25 is low
+DATA is high
+
+@170
+CLK is high
+
+@180
+SL is "b1"
+CLK is low
+
+@182
+S42 is high
+S25 is low
+DATA is low
+
+@190
+CLK is high
+
+@200
+SL is "h1"
+CLK is low
+
+@202
+S42 is low
+S25 is low
+DATA is high
+
+@210
+CLK is high
+
+@220
+SL is "b0"
+CLK is low
+
+@222
+S42 is low
+S25 is low
+DATA is high
+
+@230
+CLK is high
+
+@240
+SL is "h0"
+CLK is low
+
+@242
+S42 is low
+S25 is low
+DATA is high
+
+@250
+CLK is high
+
+@260
+CLK is low
+S42 is low
+S25 is low
+DATA is high
+@enduml
