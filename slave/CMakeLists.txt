@@ -7,6 +7,13 @@ if(HUBUS_AVR)
     set(HUBUS_DATA_PIN "" CACHE STRING "Bit number of DATA")
     set(HUBUS_TX_BUF_SIZE "31" CACHE STRING "Outgoing buffer size in bytes (1..31)")
     set(HUBUS_RX_BUF_SIZE "31" CACHE STRING "Largest accepted command payload in bytes (1..31)")
+    # REQUEST_STATE support costs about 130 bytes of flash; the 2 KB devices (ATtiny24/25) build without it.
+    if(HUBUS_AVR_MCU MATCHES "^attiny(24a?|25)$")
+        set(HUBUS_ENABLE_STATE_DEFAULT 0)
+    else()
+        set(HUBUS_ENABLE_STATE_DEFAULT 1)
+    endif()
+    set(HUBUS_ENABLE_STATE "${HUBUS_ENABLE_STATE_DEFAULT}" CACHE STRING "REQUEST_STATE support (1: yes, 0: no)")
 
     if(HUBUS_CLK_PORT STREQUAL "")
         hubus_avr_default_pins(${HUBUS_AVR_MCU} clk_port clk_pin data_port data_pin)
@@ -26,7 +33,8 @@ if(HUBUS_AVR)
     target_compile_options(hubus_slave PRIVATE ${HUBUS_WARNINGS})
     # The core is compiled with the same buffer sizes as the library.
     target_compile_definitions(hubus_core PUBLIC
-        HUBUS_TX_BUF_SIZE=${HUBUS_TX_BUF_SIZE} HUBUS_RX_BUF_SIZE=${HUBUS_RX_BUF_SIZE})
+        HUBUS_TX_BUF_SIZE=${HUBUS_TX_BUF_SIZE} HUBUS_RX_BUF_SIZE=${HUBUS_RX_BUF_SIZE}
+        HUBUS_ENABLE_STATE=${HUBUS_ENABLE_STATE})
 
     # Reference firmware: uses the complete API and is the basis of the flash/RAM budget.
     add_executable(hubus_size_reference size_reference.c)
@@ -35,7 +43,13 @@ if(HUBUS_AVR)
     set_target_properties(hubus_size_reference PROPERTIES SUFFIX ".elf")
 
     # Budget of the ATtiny85 reference build (library + reference firmware).
-    set(HUBUS_BUDGET_FLASH 2050 CACHE STRING "ATtiny85 flash budget in bytes")
+    # Without REQUEST_STATE the reference build stays within 2 KB; with it, it needs about 140 bytes more.
+    if(HUBUS_ENABLE_STATE)
+        set(HUBUS_BUDGET_FLASH_DEFAULT 2200)
+    else()
+        set(HUBUS_BUDGET_FLASH_DEFAULT 2050)
+    endif()
+    set(HUBUS_BUDGET_FLASH "${HUBUS_BUDGET_FLASH_DEFAULT}" CACHE STRING "ATtiny85 flash budget in bytes")
     set(HUBUS_BUDGET_RAM 112 CACHE STRING "ATtiny85 RAM budget in bytes (data + bss)")
     add_custom_target(hubus_size ALL
         COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:hubus_size_reference>

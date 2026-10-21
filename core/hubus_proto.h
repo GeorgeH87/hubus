@@ -22,7 +22,7 @@
 #define HUBUS_ARB_SLOTS (2u * HUBUS_MCID_BITS)
 
 /* Master -> slave message types (2 bit). */
-#define HUBUS_M_RESERVED 0u /* slaves ignore this type */
+#define HUBUS_M_REQUEST_STATE 0u /* current state of the slave, live from the application */
 #define HUBUS_M_REQUEST_INFO 1u
 #define HUBUS_M_REQUEST_DATA 2u
 #define HUBUS_M_SEND_COMMAND 3u
@@ -42,5 +42,6 @@
 #define HUBUS_INFO_MAX_CMD 2u
 #define HUBUS_INFO_APP 3u
 #define HUBUS_CAP_STATUS_CAPTURE 0x01u
+#define HUBUS_CAP_STATE 0x02u /* answers REQUEST_STATE */
 
 #endif /* HUBUS_PROTO_H */

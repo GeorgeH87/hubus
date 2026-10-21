@@ -5,9 +5,10 @@
  *   PB1 = push button to ground (internal pull-up)
  *
  * Every debounced state change is written to the buffer (one byte, 1 =
- * pressed) and thereby announced to the master via the idle event handshake.
- * The master can also read the current state at any time with
- * STATUS_CAPTURE followed by REQUEST_DATA.
+ * pressed) and thereby announced to the master via the idle event handshake
+ * (event, REQUEST_DATA). The current state is also exposed live: the master
+ * can read it at any time with REQUEST_STATE, independent of events. A slave
+ * with several buttons would expose one bit per button in the same way.
  */
 #include <avr/io.h>
 #include <avr/pgmspace.h>
@@ -39,6 +40,8 @@ int main(void)
         .mcid = 0x05,
         .info = info,
         .info_len = sizeof info,
+        .state = &pressed,
+        .state_len = 1,
         .on_status_capture = on_status_capture,
         .on_command = 0,
         .ctx = 0,

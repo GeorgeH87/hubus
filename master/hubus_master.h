@@ -79,6 +79,7 @@ typedef struct {
     uint32_t polls;
     uint32_t info_requests;
     uint32_t data_requests;
+    uint32_t state_requests;
     uint32_t commands;
     uint32_t no_response;
     uint32_t crc_errors;
@@ -142,12 +143,14 @@ hubus_status_t hubus_master_send_command(hubus_master_t *m, uint8_t target_len, 
 /* STATUS_CAPTURE (opcode 0x00) to a group or a single slave. */
 hubus_status_t hubus_master_status_capture(hubus_master_t *m, uint8_t target_len, uint8_t prefix);
 
-/* REQUEST_INFO / REQUEST_DATA to exactly one slave (no arbitration). */
+/* REQUEST_INFO / REQUEST_DATA / REQUEST_STATE to exactly one slave (no arbitration). */
 hubus_status_t hubus_master_request_info(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
 hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
+/* The live state of the slave as a SLAVE_DATA frame (docs/MESSAGE_FORMAT.md section 4.4). Clears nothing. */
+hubus_status_t hubus_master_request_state(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
 
 /*
- * Group REQUEST_INFO / REQUEST_DATA (`req_type`, target_len 0..5): the matching slaves arbitrate and the winner
+ * Group REQUEST_INFO / REQUEST_DATA / REQUEST_STATE (`req_type`, target_len 0..5): the matching slaves arbitrate and the winner
  * answers in the same transaction. `res` is always filled; `res->contender` is 0 if nobody answered (HUBUS_OK).
  * With a contender, `out` holds the winner's frame if the return value is HUBUS_OK; on HUBUS_ERR_CRC or
  * HUBUS_ERR_MISMATCH the winner and the derived masks in `res` are still valid.
@@ -178,6 +181,18 @@ hubus_status_t hubus_master_burst(hubus_master_t *m, hubus_data_fn on_data, void
 
 /* check_event + burst: one iteration of a service loop. */
 hubus_status_t hubus_master_service(hubus_master_t *m, hubus_data_fn on_data, void *ctx, hubus_burst_stats_t *stats);
+
+/*
+ * Called for every state frame. `f->mcid` is the slave, `f->payload`/`f->len` its state.
+ */
+typedef void (*hubus_state_fn)(void *ctx, const hubus_slave_frame_t *f);
+
+/*
+ * Reads the current state of every slave that has one (group REQUEST_STATE with the mask stack of a burst, one
+ * transaction per slave, descending MCID order). A winner whose frame is invalid is asked again exactly within the
+ * retry budget, then skipped. Returns the number of state frames delivered in `*count` (may be NULL).
+ */
+hubus_status_t hubus_master_read_states(hubus_master_t *m, hubus_state_fn on_state, void *ctx, uint16_t *count);
 
 /* ---- commissioning -------------------------------------------------- */
 

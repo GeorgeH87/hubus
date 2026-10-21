@@ -795,6 +795,111 @@ static void test_burst_needs_one_transaction_per_pending_slave(void)
 }
 
 
+/* ---- REQUEST_STATE ----------------------------------------------------------- */
+
+static void test_request_state_reads_the_live_state_and_clears_nothing(void)
+{
+    hubus_slave_frame_t f;
+    unsigned a = fx_add_full(&fx, 9, 1, 9, 3);
+
+    fx_startup(&fx);
+    fx_write(&fx, a, 5); /* an event is pending */
+    fx.app[a].state[1] = 0x77;
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_state(&fx.master, 9, &f));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_S_DATA, f.type);
+    TEST_ASSERT_EQUAL_UINT8(9, f.mcid);
+    TEST_ASSERT_EQUAL_UINT8(3, f.len);
+    TEST_ASSERT_EQUAL_UINT8(0x77, f.payload[1]);
+    TEST_ASSERT_EQUAL_UINT8(0, f.gen);
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&fx.core[a]));
+    TEST_ASSERT_EQUAL_UINT16(1, fx.master.counters.state_requests);
+}
+
+static void test_request_state_of_a_slave_without_state_is_no_response(void)
+{
+    hubus_slave_frame_t f;
+
+    fx_add(&fx, 9);
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_ERR_NO_RESPONSE, hubus_master_request_state(&fx.master, 9, &f));
+}
+
+static unsigned n_states;
+static uint8_t state_order[16];
+
+static void on_state(void *ctx, const hubus_slave_frame_t *f)
+{
+    (void)ctx;
+    state_order[n_states++] = f->mcid;
+}
+
+static void test_read_states_collects_every_slave_with_a_state(void)
+{
+    uint16_t count = 0;
+    unsigned a = fx_add_full(&fx, 42, 1, 42, 2);
+
+    fx_add_full(&fx, 40, 1, 40, 2);
+    fx_add_full(&fx, 25, 0, 25, 4);
+    fx_add_full(&fx, 15, 1, 15, 1);
+    fx_add(&fx, 50);              /* no state: not asked, not counted */
+    fx_write(&fx, a, 1);          /* a pending event stays untouched */
+    fx_startup(&fx);
+    n_states = 0;
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_read_states(&fx.master, on_state, NULL, &count));
+    TEST_ASSERT_EQUAL_UINT16(4, count);
+    TEST_ASSERT_EQUAL_UINT(4, n_states);
+    TEST_ASSERT_EQUAL_UINT8(42, state_order[0]); /* descending MCID order */
+    TEST_ASSERT_EQUAL_UINT8(40, state_order[1]);
+    TEST_ASSERT_EQUAL_UINT8(25, state_order[2]);
+    TEST_ASSERT_EQUAL_UINT8(15, state_order[3]);
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&fx.core[a]));
+    TEST_ASSERT_TRUE(fx.master.counters.state_requests <= 6u); /* about one transaction per slave */
+}
+
+static void test_read_states_with_nobody_having_a_state(void)
+{
+    uint16_t count = 99;
+
+    fx_add(&fx, 9);
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_read_states(&fx.master, NULL, NULL, &count));
+    TEST_ASSERT_EQUAL_UINT16(0, count);
+    TEST_ASSERT_EQUAL_UINT16(1, fx.master.counters.state_requests);
+}
+
+static void test_read_states_skips_a_duplicate_mcid_with_different_states(void)
+{
+    uint16_t count = 0;
+
+    fx_add_full(&fx, 9, 1, 1, 2);
+    fx_add_full(&fx, 9, 1, 2, 2);  /* configuration fault: same MCID */
+    fx.app[1].state[0] = 0xEE;     /* different state: the overlapping frames fail the CRC */
+    fx_add_full(&fx, 10, 1, 3, 2);
+    fx_startup(&fx);
+    n_states = 0;
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_read_states(&fx.master, on_state, NULL, &count));
+    TEST_ASSERT_EQUAL_UINT16(1, count);
+    TEST_ASSERT_EQUAL_UINT8(10, state_order[0]);
+    TEST_ASSERT_TRUE(fx.master.fail[9] > 0);
+}
+
+static void test_state_requests_do_not_affect_event_bursts(void)
+{
+    hubus_burst_stats_t st;
+    unsigned a = fx_add_full(&fx, 42, 1, 42, 2);
+    unsigned b = fx_add_full(&fx, 40, 1, 40, 2);
+
+    fx_startup(&fx);
+    fx_write(&fx, b, 9);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_read_states(&fx.master, NULL, NULL, NULL));
+    TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
+    TEST_ASSERT_EQUAL_UINT16(1, st.served); /* only the slave with an event contends; 42 drops out */
+    TEST_ASSERT_EQUAL_UINT8(40, fx.log[0].mcid);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&fx.core[a]));
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&fx.core[b]));
+}
+
+
 static void test_runtime_heuristic_flags_duplicate_mcid(void)
 {
     hubus_burst_stats_t st;
@@ -928,6 +1033,12 @@ int main(void)
     RUN_TEST(test_full_scan_still_finds_all_present_slaves);
     RUN_TEST(test_scan_without_slaves_is_a_single_transaction);
     RUN_TEST(test_burst_needs_one_transaction_per_pending_slave);
+    RUN_TEST(test_request_state_reads_the_live_state_and_clears_nothing);
+    RUN_TEST(test_request_state_of_a_slave_without_state_is_no_response);
+    RUN_TEST(test_read_states_collects_every_slave_with_a_state);
+    RUN_TEST(test_read_states_with_nobody_having_a_state);
+    RUN_TEST(test_read_states_skips_a_duplicate_mcid_with_different_states);
+    RUN_TEST(test_state_requests_do_not_affect_event_bursts);
     RUN_TEST(test_runtime_heuristic_flags_duplicate_mcid);
     RUN_TEST(test_diagnose_many_failing_mcids_is_a_line_problem);
     RUN_TEST(test_counters_track_transactions_and_errors);

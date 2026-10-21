@@ -21,6 +21,7 @@ typedef struct {
     uint8_t last_args[HUBUS_MAX_PAYLOAD];
     uint8_t last_len;
     uint8_t status;
+    volatile uint8_t state[4];
 } app_t;
 
 static hubus_sim_t sim;
@@ -48,7 +49,7 @@ static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t l
 }
 
 /* Adds slave `idx` with the given MCID to the bus. */
-static void add_slave(unsigned idx, uint8_t mcid, int capture)
+static void add_slave_state(unsigned idx, uint8_t mcid, int capture, uint8_t state_len)
 {
     hubus_core_config_t cfg;
 
@@ -61,9 +62,16 @@ static void add_slave(unsigned idx, uint8_t mcid, int capture)
     cfg.info_len = sizeof info_bytes;
     cfg.on_status_capture = capture ? on_capture : NULL;
     cfg.on_command = on_command;
+    cfg.state = state_len ? app[idx].state : NULL;
+    cfg.state_len = state_len;
     cfg.ctx = &app[idx];
     TEST_ASSERT_TRUE(hubus_core_init(&core[idx], &cfg, sim.clk, sim.data));
     TEST_ASSERT_EQUAL_UINT(idx, hubus_sim_add(&sim, &core[idx]));
+}
+
+static void add_slave(unsigned idx, uint8_t mcid, int capture)
+{
+    add_slave_state(idx, mcid, capture, 0);
 }
 
 void setUp(void)
@@ -927,19 +935,174 @@ static void test_failed_group_response_ended_with_reset_keeps_data(void)
     TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0])); /* RESET preserves buffer and pending flag */
 }
 
-static void test_reserved_master_type_is_ignored(void)
+/* ---- REQUEST_STATE ---------------------------------------------------------- */
+
+static void test_request_state_returns_the_live_state(void)
+{
+    uint8_t buf[40];
+    hubus_header_t h;
+    size_t n;
+
+    add_slave_state(0, 9, 1, 3);
+    app[0].state[0] = 0x11;
+    app[0].state[1] = 0x22;
+    app[0].state[2] = 0x33;
+    n = raw_request(&rm, HUBUS_M_REQUEST_STATE, 9, buf);
+    raw_stop(&rm, 0);
+    TEST_ASSERT_EQUAL_UINT(3 + 3, n);
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, &h));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_S_DATA, h.type);
+    TEST_ASSERT_EQUAL_UINT8(9, h.mcid);
+    TEST_ASSERT_EQUAL_UINT8(0, h.field); /* MORE = 0, GEN = 00 */
+    TEST_ASSERT_EQUAL_UINT8(3, h.len);
+    TEST_ASSERT_EQUAL_UINT8(0x11, buf[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x33, buf[4]);
+
+    /* it is live: a change of the application state shows in the next request */
+    app[0].state[2] = 0x44;
+    n = raw_request(&rm, HUBUS_M_REQUEST_STATE, 9, buf);
+    raw_stop(&rm, 0);
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, NULL));
+    TEST_ASSERT_EQUAL_UINT8(0x44, buf[4]);
+}
+
+static void test_request_state_changes_neither_buffer_nor_gen(void)
+{
+    uint8_t buf[40];
+    hubus_header_t h;
+    uint8_t v = 7;
+    size_t n;
+
+    add_slave_state(0, 9, 1, 2);
+    buf_write(0, &v, 1, 0);
+    n = raw_request(&rm, HUBUS_M_REQUEST_STATE, 9, buf);
+    raw_stop(&rm, 0);
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0])); /* the STOP after a state frame clears nothing */
+    TEST_ASSERT_EQUAL_UINT8(1, core[0].buf_len);
+
+    /* the event is still delivered afterwards, with its own GEN */
+    TEST_ASSERT_TRUE(read_data(9, buf, &h) > 0);
+    TEST_ASSERT_EQUAL_UINT8(1, HUBUS_HDR_GEN(&h));
+    TEST_ASSERT_EQUAL_UINT8(7, buf[2]);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&core[0]));
+}
+
+static void test_request_state_without_state_is_silent(void)
 {
     uint8_t buf[40];
 
-    add_slave(0, 42, 1);
-    make_pending(0);
-    raw_start(&rm);
-    raw_send_frame(&rm, HUBUS_M_RESERVED, 0, 0, NULL, 0);
-    raw_turnaround(&rm);
-    TEST_ASSERT_EQUAL_HEX16(0, raw_recv_arb(&rm, 0));
-    TEST_ASSERT_EQUAL_UINT(0, raw_recv_frame(&rm, buf));
+    add_slave(0, 9, 1);
+    TEST_ASSERT_EQUAL_UINT(0, raw_request(&rm, HUBUS_M_REQUEST_STATE, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0]));
+    TEST_ASSERT_EQUAL_UINT8(1, sim.data);
+}
+
+static void test_slave_info_announces_the_state_capability(void)
+{
+    uint8_t buf[40];
+
+    add_slave_state(0, 9, 1, 1);
+    add_slave(1, 10, 1);
+    add_slave_state(2, 11, 0, 1);
+    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE | HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 10, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 11, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
+}
+
+static void test_group_state_request_lets_every_slave_with_a_state_contend(void)
+{
+    hubus_arb_result_t r;
+    hubus_header_t h;
+    group_t g;
+
+    add_slave_state(0, 42, 1, 1); /* has a state, nothing pending */
+    add_slave_state(1, 40, 1, 1);
+    add_slave(2, 50, 1);          /* higher MCID but no state: drops out */
+    group_request(&g, HUBUS_M_REQUEST_STATE, 0, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
+    TEST_ASSERT_EQUAL_UINT8(42, r.winner);
+    TEST_ASSERT_EQUAL_UINT8(1, r.n_masks);
+    TEST_ASSERT_EQUAL_UINT8(40, r.masks[0].prefix);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_S_DATA, h.type);
+    TEST_ASSERT_EQUAL_UINT8(42, h.mcid);
+}
+
+static void test_event_request_drops_slaves_without_pending_data_while_state_request_does_not(void)
+{
+    hubus_arb_result_t r;
+    group_t g;
+    uint8_t v = 1;
+
+    add_slave_state(0, 42, 1, 1);
+    add_slave_state(1, 25, 1, 1);
+    buf_write(1, &v, 1, 0); /* only 25 has an event */
+    raw_tick(&rm);
+
+    group_request(&g, HUBUS_M_REQUEST_DATA, 0, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
+    TEST_ASSERT_EQUAL_UINT8(25, r.winner); /* 42 has a state but no change: out */
+    TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
+
+    group_request(&g, HUBUS_M_REQUEST_STATE, 0, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
+    TEST_ASSERT_EQUAL_UINT8(42, r.winner);
+    TEST_ASSERT_EQUAL_UINT8(1, r.n_masks);
+}
+
+static void test_write_during_state_transmission_is_not_busy(void)
+{
+    uint8_t buf[40];
+    uint8_t v = 3;
+
+    add_slave_state(0, 9, 1, 2);
+    raw_start(&rm);
+    raw_send_frame(&rm, HUBUS_M_REQUEST_STATE, HUBUS_TARGET_LEN_EXACT, 9, NULL, 0);
+    raw_turnaround(&rm);
+    (void)raw_recv_bit(&rm); /* the state frame is in progress */
+    TEST_ASSERT_EQUAL_UINT(HUBUS_ST_TX, core[0].state);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_core_write(&core[0], &v, 1, 0)); /* the event buffer is not being sent */
+    raw_reset(&rm);
+    (void)buf;
+}
+
+static void test_maximum_state_and_state_without_pointer(void)
+{
+    hubus_core_config_t cfg;
+    uint8_t buf[40];
+    static volatile uint8_t st[31];
+    unsigned i;
+
+    for (i = 0; i < sizeof st; i++) {
+        st[i] = (uint8_t)(i + 1);
+    }
+    memset(&cfg, 0, sizeof cfg);
+    cfg.mcid = 5;
+    cfg.state = st;
+    cfg.state_len = 31;
+    TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
+    hubus_sim_add(&sim, &core[0]);
+    TEST_ASSERT_EQUAL_UINT(3 + 31, raw_request(&rm, HUBUS_M_REQUEST_STATE, 5, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 34, NULL));
+    TEST_ASSERT_EQUAL_UINT8(31, buf[2 + 30]);
+
+    /* a length without a pointer means: no state */
+    hubus_sim_init(&sim);
+    raw_init(&rm, &sim);
+    cfg.state = NULL;
+    cfg.state_len = 2;
+    TEST_ASSERT_TRUE(hubus_core_init(&core[1], &cfg, sim.clk, sim.data));
+    hubus_sim_add(&sim, &core[1]);
+    TEST_ASSERT_EQUAL_UINT(0, raw_request(&rm, HUBUS_M_REQUEST_STATE, 5, buf));
+    raw_stop(&rm, 0);
 }
 
 /* ---- idle event signaling ------------------------------------------------ */
@@ -1259,7 +1422,14 @@ int main(void)
     RUN_TEST(test_lone_contender_with_all_open_bits_zero_still_answers);
     RUN_TEST(test_group_request_with_bad_crc_does_not_arbitrate);
     RUN_TEST(test_failed_group_response_ended_with_reset_keeps_data);
-    RUN_TEST(test_reserved_master_type_is_ignored);
+    RUN_TEST(test_request_state_returns_the_live_state);
+    RUN_TEST(test_request_state_changes_neither_buffer_nor_gen);
+    RUN_TEST(test_request_state_without_state_is_silent);
+    RUN_TEST(test_slave_info_announces_the_state_capability);
+    RUN_TEST(test_group_state_request_lets_every_slave_with_a_state_contend);
+    RUN_TEST(test_event_request_drops_slaves_without_pending_data_while_state_request_does_not);
+    RUN_TEST(test_write_during_state_transmission_is_not_busy);
+    RUN_TEST(test_maximum_state_and_state_without_pointer);
     RUN_TEST(test_write_while_idle_signals_event);
     RUN_TEST(test_event_is_released_after_one_complete_clock_pulse);
     RUN_TEST(test_event_without_a_running_master_stays_low);

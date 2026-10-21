@@ -25,6 +25,8 @@
  *   mcid               1..63, unique on the bus
  *   info, info_len     application bytes of SLAVE_INFO, in flash (PROGMEM) on AVR, 0..28 bytes;
  *                      include a device-unique value (serial number)
+ *   state, state_len   live state for REQUEST_STATE (RAM, read while transmitting, 0..31 bytes); NULL: no state.
+ *                      The application keeps it up to date; no copy is made. Needs HUBUS_ENABLE_STATE.
  *   on_status_capture  writes the current status via hubus_slave_write(); NULL: not supported
  *   on_command         application commands (opcode 0x10..0xFF); may be NULL
  *   ctx                passed to the callbacks

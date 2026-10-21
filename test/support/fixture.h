@@ -22,6 +22,7 @@ typedef struct {
     uint8_t last_len;
     uint8_t status;
     uint8_t info[4];
+    volatile uint8_t state[4]; /* live state exposed for REQUEST_STATE (if state_len > 0) */
 } fx_app_t;
 
 typedef struct {
@@ -81,7 +82,8 @@ static inline void fx_init(fx_t *fx)
 }
 
 /* Adds a slave with a device-unique serial in SLAVE_INFO. Returns its index. */
-static inline unsigned fx_add_ex(fx_t *fx, uint8_t mcid, int capture, uint8_t serial)
+/* Slave with a live state of `state_len` bytes (0: no state). The state bytes start as mcid, mcid+1, ... */
+static inline unsigned fx_add_full(fx_t *fx, uint8_t mcid, int capture, uint8_t serial, uint8_t state_len)
 {
     unsigned idx = fx->n++;
     hubus_core_config_t cfg;
@@ -93,16 +95,30 @@ static inline unsigned fx_add_ex(fx_t *fx, uint8_t mcid, int capture, uint8_t se
     fx->app[idx].info[1] = 0x01;
     fx->app[idx].info[2] = 0x00;
     fx->app[idx].info[3] = serial;
+    {
+        unsigned k;
+
+        for (k = 0; k < sizeof fx->app[idx].state; k++) {
+            fx->app[idx].state[k] = (uint8_t)(mcid + k);
+        }
+    }
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
     cfg.info = fx->app[idx].info;
     cfg.info_len = sizeof fx->app[idx].info;
     cfg.on_status_capture = capture ? fx_on_capture : NULL;
     cfg.on_command = fx_on_command;
+    cfg.state = state_len ? fx->app[idx].state : NULL;
+    cfg.state_len = state_len;
     cfg.ctx = &fx->app[idx];
     TEST_ASSERT_TRUE(hubus_core_init(&fx->core[idx], &cfg, fx->sim.clk, fx->sim.data));
     TEST_ASSERT_EQUAL_UINT(idx, hubus_sim_add(&fx->sim, &fx->core[idx]));
     return idx;
+}
+
+static inline unsigned fx_add_ex(fx_t *fx, uint8_t mcid, int capture, uint8_t serial)
+{
+    return fx_add_full(fx, mcid, capture, serial, 0);
 }
 
 static inline unsigned fx_add(fx_t *fx, uint8_t mcid)

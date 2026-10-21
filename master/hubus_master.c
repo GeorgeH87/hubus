@@ -529,6 +529,8 @@ static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_
     }
     if (req_type == HUBUS_M_REQUEST_INFO) {
         m->counters.info_requests++;
+    } else if (req_type == HUBUS_M_REQUEST_STATE) {
+        m->counters.state_requests++;
     } else {
         m->counters.data_requests++;
     }
@@ -573,10 +575,15 @@ hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_
     return request(m, HUBUS_M_REQUEST_DATA, HUBUS_S_DATA, HUBUS_TARGET_LEN_EXACT, mcid, NULL, out);
 }
 
+hubus_status_t hubus_master_request_state(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out)
+{
+    return request(m, HUBUS_M_REQUEST_STATE, HUBUS_S_DATA, HUBUS_TARGET_LEN_EXACT, mcid, NULL, out);
+}
+
 hubus_status_t hubus_master_request_group(hubus_master_t *m, uint8_t req_type, uint8_t prefix, uint8_t target_len,
                                           hubus_arb_result_t *res, hubus_slave_frame_t *out)
 {
-    if ((req_type != HUBUS_M_REQUEST_INFO && req_type != HUBUS_M_REQUEST_DATA) ||
+    if ((req_type != HUBUS_M_REQUEST_INFO && req_type != HUBUS_M_REQUEST_DATA && req_type != HUBUS_M_REQUEST_STATE) ||
         target_len >= HUBUS_TARGET_LEN_EXACT || !res) {
         return HUBUS_ERR_ARG;
     }
@@ -739,6 +746,93 @@ hubus_status_t hubus_master_service(hubus_master_t *m, hubus_data_fn on_data, vo
         return r;
     }
     return hubus_master_burst(m, on_data, ctx, stats);
+}
+
+/* ---- state ------------------------------------------------------------------- */
+
+/* Asks `mcid` exactly for its state, repeating failed attempts within the retry budget. */
+static hubus_status_t state_retry(hubus_master_t *m, uint8_t mcid, hubus_status_t r, hubus_slave_frame_t *f)
+{
+    uint8_t attempts = 0;
+
+    while (r != HUBUS_OK && r != HUBUS_ERR_LINE_FAULT && r != HUBUS_ERR_ARG && attempts < m->cfg.retry_budget) {
+        note_failure(m, mcid, r);
+        attempts++;
+        r = hubus_master_request_state(m, mcid, f);
+    }
+    return r;
+}
+
+hubus_status_t hubus_master_read_states(hubus_master_t *m, hubus_state_fn on_state, void *ctx, uint16_t *count)
+{
+    hubus_mask_t mask = {0, 0};
+    hubus_status_t result = HUBUS_OK;
+    uint16_t n = 0;
+
+    hubus_mask_stack_clear(&m->stack);
+    m->hold = 1;
+
+    for (;;) {
+        hubus_slave_frame_t f;
+        hubus_status_t r;
+        uint8_t mcid = 0;
+        uint8_t have = 0;
+
+        if (mask.len == HUBUS_TARGET_LEN_EXACT) {
+            /* One MCID exactly: a slave lost at bit 0 against it, so it exists. */
+            mcid = mask.prefix;
+            have = 1;
+            r = hubus_master_request_state(m, mcid, &f);
+        } else {
+            hubus_arb_result_t res;
+            uint8_t i;
+
+            r = hubus_master_request_group(m, HUBUS_M_REQUEST_STATE, mask.prefix, mask.len, &res, &f);
+            if (res.contender) {
+                for (i = 0; i < res.n_masks; i++) {
+                    if (!hubus_mask_stack_push(&m->stack, res.masks[i])) {
+                        result = HUBUS_ERR_STACK;
+                        break;
+                    }
+                }
+                mcid = res.winner;
+                have = 1;
+            }
+        }
+        if (result != HUBUS_OK) {
+            break;
+        }
+        if (have) {
+            r = state_retry(m, mcid, r, &f);
+            if (r == HUBUS_OK) {
+                n++;
+                if (on_state) {
+                    on_state(ctx, &f);
+                }
+            } else if (r == HUBUS_ERR_LINE_FAULT || r == HUBUS_ERR_ARG) {
+                result = r;
+                break;
+            }
+        } else if (r != HUBUS_OK) {
+            result = r;
+            break;
+        }
+        if (!hubus_mask_stack_pop(&m->stack, &mask)) {
+            break;
+        }
+    }
+
+    m->hold = 0;
+    if (result == HUBUS_OK || result == HUBUS_ERR_STACK) {
+        finish_idle(m, 0);
+    }
+    if (result == HUBUS_ERR_STACK) {
+        (void)recover(m);
+    }
+    if (count) {
+        *count = n;
+    }
+    return result;
 }
 
 /* ---- commissioning --------------------------------------------------- */

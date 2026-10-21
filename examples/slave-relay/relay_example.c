@@ -7,8 +7,9 @@
  * Application commands (SEND_COMMAND, opcode and one argument byte):
  *   0x10 <0|1>   switch the output off / on
  *   0x11         toggle the output
- * The state can be read back with STATUS_CAPTURE followed by REQUEST_DATA
- * (or collected in a burst): one byte, 0 = off, 1 = on. Commands are never
+ * The state can be read back at any time with REQUEST_STATE: the slave
+ * exposes the PORTB register directly (bit 0 = relay, 1 = on); no copy is made.
+ * STATUS_CAPTURE followed by a burst still works. Commands are never
  * acknowledged.
  *
  * Everything runs in the ISR; the main loop is idle.
@@ -61,6 +62,8 @@ int main(void)
         .mcid = 0x03,
         .info = info,
         .info_len = sizeof info,
+        .state = &PORTB,
+        .state_len = 1,
         .on_status_capture = on_status_capture,
         .on_command = on_command,
         .ctx = 0,

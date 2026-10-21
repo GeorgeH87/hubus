@@ -124,6 +124,29 @@ static void test_transmit_buffer_limit(void)
     TEST_ASSERT_EQUAL_MEMORY(six, buf + 2, 6);
 }
 
+static volatile uint8_t live[2] = {1, 2};
+
+/* The 2 KB build leaves REQUEST_STATE out: a slave configured with a state does not answer and does not announce it. */
+static void test_state_support_is_compiled_out(void)
+{
+    hubus_core_config_t cfg;
+    hubus_slave_core_t other;
+    uint8_t buf[40];
+
+    TEST_ASSERT_EQUAL_INT(0, HUBUS_ENABLE_STATE);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.mcid = 10;
+    cfg.state = live;
+    cfg.state_len = sizeof live;
+    TEST_ASSERT_TRUE(hubus_core_init(&other, &cfg, sim.clk, sim.data));
+    hubus_sim_add(&sim, &other);
+    TEST_ASSERT_EQUAL_UINT(0, raw_request(&rm, HUBUS_M_REQUEST_STATE, 10, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 10, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[2 + HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -132,5 +155,6 @@ int main(void)
     RUN_TEST(test_command_that_fits_is_executed);
     RUN_TEST(test_oversized_command_is_ignored_and_the_slave_stays_in_sync);
     RUN_TEST(test_transmit_buffer_limit);
+    RUN_TEST(test_state_support_is_compiled_out);
     return UNITY_END();
 }

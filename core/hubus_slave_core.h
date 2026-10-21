@@ -34,6 +34,12 @@
 #error "HUBUS_RX_BUF_SIZE must be 1..31"
 #endif
 
+/* REQUEST_STATE support (docs/MESSAGE_FORMAT.md section 4.4). It costs about 130 bytes of flash and 3 bytes of RAM and is
+ * compiled out for 2 KB devices (ATtiny24/25): such a slave simply never answers REQUEST_STATE. */
+#ifndef HUBUS_ENABLE_STATE
+#define HUBUS_ENABLE_STATE 1
+#endif
+
 /* Application bytes of SLAVE_INFO follow 3 protocol bytes. */
 #define HUBUS_INFO_APP_MAX (HUBUS_MAX_PAYLOAD - HUBUS_INFO_APP)
 
@@ -52,6 +58,8 @@ typedef struct {
     uint8_t mcid;                              /* 1..63 */
     const uint8_t *info;                       /* application bytes of SLAVE_INFO (flash on AVR), may be NULL */
     uint8_t info_len;                          /* 0..HUBUS_INFO_APP_MAX */
+    const volatile uint8_t *state;             /* live state for REQUEST_STATE, read while transmitting; may be NULL */
+    uint8_t state_len;                         /* 0 (no state) .. HUBUS_MAX_PAYLOAD */
     hubus_status_capture_fn on_status_capture; /* NULL: STATUS_CAPTURE not supported */
     hubus_command_fn on_command;               /* application opcodes 0x10..0xFF, may be NULL */
     void *ctx;
@@ -78,6 +86,10 @@ typedef struct hubus_slave_core {
     uint8_t enabled;
     const uint8_t *info;
     uint8_t info_len;
+#if HUBUS_ENABLE_STATE
+    const volatile uint8_t *app_state;
+    uint8_t app_state_len;
+#endif
     hubus_status_capture_fn on_status_capture;
     hubus_command_fn on_command;
     void *ctx;

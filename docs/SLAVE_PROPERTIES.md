@@ -79,7 +79,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Every buffer write increments the 2-bit `GEN` counter, which is transmitted in the `SLAVE_DATA` header (`MESSAGE_FORMAT.md` section 4.3).
 - The application passes the `MORE` flag with each buffer write (fragmented transfers) and writes the next fragment only when the buffer is empty (`MESSAGE_FORMAT.md` section 6.1).
 - Static device info for `REQUEST_INFO` (`MESSAGE_FORMAT.md` section 4.1) can be a constant in flash and needs no RAM.
-- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM.
+- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM. State support is a compile-time option of the slave library (`HUBUS_ENABLE_STATE`, about 100 bytes of flash); it is left out for 2 KB devices, which then never answer `REQUEST_STATE`.
 
 ## 4.1 Responses
 

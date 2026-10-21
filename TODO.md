@@ -49,7 +49,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Public API: init, single outgoing buffer write with `MORE`, `STATUS_CAPTURE` callback, command callback, static `SLAVE_INFO` [L17, L18, L22].
 - [x] Compile-time buffer sizes; `SLAVE_INFO` byte 2; ignore oversized commands [L25].
 - [x] Protect buffer writes against the ISR (atomic access, defer writes during transmission) [L13, L19].
-- [x] Flash/RAM budget for the ATtiny85 reference build; check with `avr-size`. About 1970 bytes flash and 106 bytes RAM for the reference build (budget 2050 / 112).
+- [x] Flash/RAM budget for the ATtiny85 reference build; check with `avr-size`. About 2120 bytes flash and 109 bytes RAM for the reference build with `REQUEST_STATE` (budget 2200 / 112), 2020 / 106 without it (budget 2050 / 112; the 2 KB devices ATtiny24/25 build without it).
 - [ ] Optional: run in simavr and measure ISR cycles (input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`).
 - [x] Rewrite library README in English; describe only implemented features [L14].
 - [x] Remove the old ATtiny85-only implementation.

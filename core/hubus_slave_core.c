@@ -35,7 +35,7 @@ static void on_stop(hubus_slave_core_t *c)
      * cleared by the START, so buffer, GEN, and pending flag stay intact. */
     c->armed = 1;
     c->data_low = 0;
-    if (c->tx_complete && c->tx_type == HUBUS_S_DATA) {
+    if (c->tx_complete && c->action == HUBUS_M_REQUEST_DATA) {
         c->pending = 0;
         c->buf_len = 0;
         c->more = 0;
@@ -45,6 +45,18 @@ static void on_stop(hubus_slave_core_t *c)
 }
 
 /* ---- receive -------------------------------------------------------- */
+
+/* A request this slave can answer proceeds to the turnaround slot, anything else is ignored. */
+static void accept_request(hubus_slave_core_t *c, uint8_t can_answer)
+{
+    if (!can_answer) {
+        go_ignore(c);
+        return;
+    }
+    c->action = c->rx_type;
+    c->phase = 0;
+    c->state = HUBUS_ST_TURN;
+}
 
 static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
 {
@@ -66,19 +78,20 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
             }
         }
         break;
+    /* A slave without pending data (REQUEST_DATA) or without a state (REQUEST_STATE) does not take part and drops
+     * out at once. */
     case HUBUS_M_REQUEST_DATA:
-        if (!c->pending) {
-            go_ignore(c);
-            break;
-        }
-        /* fall through */
-    case HUBUS_M_REQUEST_INFO:
-        c->action = c->rx_type;
-        c->phase = 0;
-        c->state = HUBUS_ST_TURN;
+        accept_request(c, c->pending);
         break;
-    default: /* reserved type */
+    case HUBUS_M_REQUEST_STATE:
+#if HUBUS_ENABLE_STATE
+        accept_request(c, c->app_state_len);
+#else
         go_ignore(c);
+#endif
+        break;
+    case HUBUS_M_REQUEST_INFO:
+        accept_request(c, 1u);
         break;
     }
 }
@@ -190,12 +203,22 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
         b = c->tx_hdr[idx];
     } else if (idx < HUBUS_HEADER_BYTES + c->tx_len) {
         uint8_t i = (uint8_t)(idx - HUBUS_HEADER_BYTES);
+#if HUBUS_ENABLE_STATE
+        if (c->action == HUBUS_M_REQUEST_STATE) {
+            b = c->app_state[i];
+        } else
+#endif
         if (c->tx_type == HUBUS_S_DATA) {
             b = c->buf[i];
         } else if (i == HUBUS_INFO_VERSION) {
             b = HUBUS_PROTOCOL_VERSION;
         } else if (i == HUBUS_INFO_CAPS) {
             b = c->on_status_capture ? HUBUS_CAP_STATUS_CAPTURE : 0u;
+#if HUBUS_ENABLE_STATE
+            if (c->app_state_len) {
+                b |= HUBUS_CAP_STATE;
+            }
+#endif
         } else if (i == HUBUS_INFO_MAX_CMD) {
             b = HUBUS_RX_BUF_SIZE;
         } else {
@@ -216,6 +239,12 @@ static void tx_init(hubus_slave_core_t *c)
         c->tx_type = HUBUS_S_INFO;
         c->tx_len = (uint8_t)(HUBUS_INFO_APP + c->info_len);
         field = 0;
+#if HUBUS_ENABLE_STATE
+    } else if (c->action == HUBUS_M_REQUEST_STATE) {
+        c->tx_type = HUBUS_S_DATA;
+        c->tx_len = c->app_state_len;
+        field = 0; /* MORE = 0, GEN = 00 */
+#endif
     } else {
         c->tx_type = HUBUS_S_DATA;
         c->tx_len = c->buf_len;
@@ -311,7 +340,7 @@ static void on_rise(hubus_slave_core_t *c, uint8_t bit)
         arb_sample(c, bit);
         break;
     case HUBUS_ST_TX:
-        if (c->tx_idx >= c->tx_total && c->tx_nbits == 0u && c->tx_type == HUBUS_S_DATA) {
+        if (c->tx_idx >= c->tx_total && c->tx_nbits == 0u && c->action == HUBUS_M_REQUEST_DATA) {
             c->tx_complete = 1; /* last bit has been sampled by the master */
         }
         break;
@@ -336,6 +365,10 @@ uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, u
     c->mcid = cfg->mcid;
     c->info = cfg->info;
     c->info_len = cfg->info_len;
+#if HUBUS_ENABLE_STATE
+    c->app_state = cfg->state;
+    c->app_state_len = cfg->state ? (uint8_t)(cfg->state_len & HUBUS_MAX_PAYLOAD) : 0u; /* 0..31, the LEN field */
+#endif
     c->on_status_capture = cfg->on_status_capture;
     c->on_command = cfg->on_command;
     c->ctx = cfg->ctx;
@@ -383,7 +416,7 @@ uint8_t hubus_core_write(hubus_slave_core_t *c, const uint8_t *data, uint8_t len
     if (len > HUBUS_TX_BUF_SIZE) {
         return HUBUS_WRITE_TOO_LONG;
     }
-    if (c->state == HUBUS_ST_TX && c->tx_type == HUBUS_S_DATA) {
+    if (c->state == HUBUS_ST_TX && c->action == HUBUS_M_REQUEST_DATA) {
         return HUBUS_WRITE_BUSY; /* the frame must not mix old and new content */
     }
     for (i = 0; i < len; i++) {
