@@ -90,3 +90,14 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [ ] Determine concrete timing values and pull-up value; update `HARDWARE_REQUIREMENTS.md` [H3].
 - [ ] Multi-node test with mixed device families (`v0-multi` milestone).
 - [ ] Optional: sigrok protocol decoder for HUBUS.
+
+## 10. Master Daemon (`hubusd`, MQTT)
+
+Requirements: `docs/DAEMON_REQUIREMENTS.md`. Not started.
+
+- [ ] Confirm the open decisions (configuration format, unknown slaves).
+- [ ] Daemon core: bus thread, command queue, statistics, availability tracking, tested against the bus simulation with a fake MQTT client.
+- [ ] Device profiles (relay, switch, temperature) and Home Assistant discovery.
+- [ ] Configuration file parser with validation.
+- [ ] `libmosquitto` binding, reconnect, last will, retained state.
+- [ ] systemd unit, installation notes, end-to-end test on hardware.
