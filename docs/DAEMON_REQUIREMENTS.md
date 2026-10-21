@@ -39,7 +39,7 @@ Example setup: one Raspberry Pi, one ATtiny as relay controller, one ATtiny as p
 
 - F6: Send an application command to one slave, a prefix group, or all slaves (`TARGET_LEN` 0..6) with opcode and argument bytes.
 - F7: Trigger `STATUS_CAPTURE` for one slave, a group, or all.
-- F8: After a command that changes state, the daemon can automatically trigger `STATUS_CAPTURE` for that slave and publish the read-back state (configurable, default on). Commands are never acknowledged by slaves, so the published state is always a value read from the slave, never the command that was sent.
+- F8: After a command that changes state, the daemon reports the state according to the configurable `readback` mode (global and per slave): `slave` (default) triggers `STATUS_CAPTURE` and publishes the value read from the slave; `cache` publishes the state the command establishes without contacting the slave again; `none` publishes nothing. Commands are never acknowledged by slaves, so only `slave` mode proves that the state was established.
 - F9: Commissioning scan on request (`REQUEST_INFO` to all MCIDs), including the suspected-duplicate-MCID result.
 - F10: Raw request of `SLAVE_INFO` and of the buffer of one slave on request.
 

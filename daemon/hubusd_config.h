@@ -15,13 +15,18 @@
 #define HUBUSD_MAX_PROFILES 16
 #define HUBUSD_MAX_WARNINGS 16
 #define HUBUSD_NAME_LEN 48
+
+/* State reported after a command (config key `readback`). */
+#define HUBUSD_READBACK_NONE 0  /* nothing: the next event or capture shows the state */
+#define HUBUSD_READBACK_SLAVE 1 /* STATUS_CAPTURE: ask the slave (default) */
+#define HUBUSD_READBACK_CACHE 2 /* report the state the command establishes, without contacting the slave */
 #define HUBUSD_TOPIC_LEN 64
 
 typedef struct {
     uint8_t mcid;
     char name[HUBUSD_NAME_LEN];
     char profile[HUBUSD_PROFILE_NAME_LEN]; /* empty: recognised from SLAVE_INFO, otherwise raw topics only */
-    int readback;                          /* -1: use bus.readback */
+    int readback;                          /* HUBUSD_READBACK_*, -1: use bus.readback */
 } hubusd_slave_cfg_t;
 
 typedef struct {
@@ -52,7 +57,7 @@ typedef struct {
     } mqtt;
 
     struct {
-        int readback;               /* STATUS_CAPTURE after a state changing command */
+        int readback;               /* HUBUSD_READBACK_*: what is reported after a state changing command */
         unsigned ping_interval_s;   /* REQUEST_INFO per configured slave to track availability, 0: off */
         unsigned ping_failures;     /* consecutive misses before a slave is offline */
         unsigned scan_interval_s;   /* commissioning scan for unconfigured slaves, 0: only at start */

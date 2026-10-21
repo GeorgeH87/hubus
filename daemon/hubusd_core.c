@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "hubusd_json.h"
 
@@ -1005,7 +1006,8 @@ static void capture_exact(hubusd_t *d, unsigned mcid)
     run_burst(d);
 }
 
-static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t *args, uint8_t n)
+/* `expected` is the state the command establishes (for readback: cache), NULL if it is not known. */
+static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t *args, uint8_t n, const char *expected)
 {
     const hubusd_slave_t *s = &d->slave[mcid];
     hubus_status_t r;
@@ -1023,7 +1025,15 @@ static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t
         return;
     }
     d->stats.commands_executed++;
-    if (slave_readback(d, mcid) && info_can_capture(s)) {
+    if (slave_readback(d, mcid) == HUBUSD_READBACK_CACHE) {
+        /* no contact with the slave: report what the command establishes */
+        if (expected) {
+            hubusd_slave_t *w = &d->slave[mcid];
+
+            snprintf(w->last_state, sizeof w->last_state, "%s", expected);
+            pub_topic(d, 1, expected, "slave/%u/state", mcid);
+        }
+    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_can_capture(s)) {
         /* commands are never acknowledged: read the state back */
         r = hubus_master_status_capture(&d->master, 6, (uint8_t)mcid);
         if (r == HUBUS_OK) {
@@ -1073,7 +1083,7 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
         } else if (!hubusd_profile_command(s->profile, q->text, &c)) {
             reject(d, "'%s' is not a valid command for profile '%s'", q->text, s->profile->name);
         } else {
-            send_exact(d, q->prefix, c.opcode, c.args, c.n_args);
+            send_exact(d, q->prefix, c.opcode, c.args, c.n_args, strcasecmp(q->text, "ON") == 0 ? "ON" : "OFF");
         }
         break;
     }
@@ -1082,7 +1092,7 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
             if (q->opcode == HUBUS_OP_STATUS_CAPTURE) {
                 capture_exact(d, q->prefix);
             } else {
-                send_exact(d, q->prefix, q->opcode, q->args, q->n_args);
+                send_exact(d, q->prefix, q->opcode, q->args, q->n_args, NULL);
             }
         } else {
             r = hubus_master_send_command(&d->master, q->target_len, q->prefix, q->opcode, q->args, q->n_args);

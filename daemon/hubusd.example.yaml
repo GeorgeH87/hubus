@@ -33,7 +33,8 @@ mqtt:
   stats_interval_s: 60               # 0 = only on request
 
 bus:
-  readback: true          # after a command, read the state back with STATUS_CAPTURE
+  readback: slave         # state reported after a command: slave (default: STATUS_CAPTURE, ask the slave),
+                          # cache (the state the command establishes, slave is not contacted), none
   ping_interval_s: 30     # availability check per slave, 0 = off
   ping_failures: 3        # missed checks before a slave is offline
   scan_interval_s: 300    # look for unconfigured slaves, 0 = only at start
@@ -47,7 +48,7 @@ slaves:
     name: Door button
   - mcid: 7
     name: Cellar temperature
-    readback: true        # per-slave override of bus.readback
+    readback: cache       # per-slave override of bus.readback (slave | cache | none)
 
 # Profiles for custom firmware. Built in: relay (type 0x01), switch (0x02), temperature (0x03).
 # profiles:

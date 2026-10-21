@@ -455,6 +455,59 @@ static void test_readback_can_be_disabled(void)
     assert_last("hubus/slave/3/state", "ON");
 }
 
+static void test_cache_readback_reports_the_command_without_contacting_the_slave(void)
+{
+    standard_setup("bus:\n  readback: cache\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].captures); /* the initial state read at startup */
+    n_msgs = 0;
+    say("hubus/slave/3/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].captures); /* no STATUS_CAPTURE after the command */
+    assert_last("hubus/slave/3/state", "ON");
+    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/state")->retain);
+    TEST_ASSERT_EQUAL_UINT(0, count("hubus/slave/3/data"));
+    say("hubus/slave/3/set", "off");
+    settle();
+    assert_last("hubus/slave/3/state", "OFF");
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].captures);
+    /* an explicit capture still asks the slave */
+    say("hubus/slave/3/capture", "");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(2, dev[0].captures);
+}
+
+static void test_cache_readback_does_not_know_about_a_defective_slave(void)
+{
+    standard_setup("bus:\n  readback: cache\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    dev[0].core.on_command = NULL; /* the relay ignores commands */
+    say("hubus/slave/3/set", "ON");
+    settle();
+    assert_last("hubus/slave/3/state", "ON"); /* the cache is optimistic; mode `slave` would show OFF */
+    TEST_ASSERT_EQUAL_UINT8(0, dev[0].state);
+}
+
+static void test_cache_readback_leaves_raw_commands_alone(void)
+{
+    standard_setup("bus:\n  readback: cache\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    n_msgs = 0;
+    say("hubus/slave/3/cmd", "0x10 1");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* the effect of a raw command is not known */
+}
+
+static void test_readback_mode_per_slave_overrides_the_bus_default(void)
+{
+    standard_setup("bus:\n  readback: slave\n  scan_interval_s: 0\n  ping_interval_s: 0\n"
+                   "slaves:\n  - mcid: 3\n    readback: cache\n  - mcid: 5\n");
+    dev[0].core.on_command = NULL;
+    say("hubus/slave/3/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].captures);
+    assert_last("hubus/slave/3/state", "ON");
+}
+
 static void test_invalid_set_commands_are_rejected(void)
 {
     standard_setup(base_yaml);
@@ -973,6 +1026,10 @@ int main(void)
     RUN_TEST(test_set_switches_the_relay_and_publishes_the_read_back_state);
     RUN_TEST(test_published_state_is_the_real_state_not_the_command);
     RUN_TEST(test_readback_can_be_disabled);
+    RUN_TEST(test_cache_readback_reports_the_command_without_contacting_the_slave);
+    RUN_TEST(test_cache_readback_does_not_know_about_a_defective_slave);
+    RUN_TEST(test_cache_readback_leaves_raw_commands_alone);
+    RUN_TEST(test_readback_mode_per_slave_overrides_the_bus_default);
     RUN_TEST(test_invalid_set_commands_are_rejected);
     RUN_TEST(test_malformed_topics_and_payloads_are_rejected);
     RUN_TEST(test_unrelated_topics_are_ignored);

@@ -151,6 +151,27 @@ static void read_bool(ctx_t *c, yn_t *map, const char *key, int *out)
     }
 }
 
+/* readback: slave | cache | none (true = slave, false = none) */
+static void read_readback(ctx_t *c, yn_t *map, const char *key, int *out)
+{
+    yn_t *n = scalar(c, map, key);
+
+    if (!n) {
+        return;
+    }
+    if (strcasecmp(n->text, "slave") == 0 || strcasecmp(n->text, "true") == 0 || strcasecmp(n->text, "yes") == 0 ||
+        strcasecmp(n->text, "on") == 0) {
+        *out = HUBUSD_READBACK_SLAVE;
+    } else if (strcasecmp(n->text, "cache") == 0) {
+        *out = HUBUSD_READBACK_CACHE;
+    } else if (strcasecmp(n->text, "none") == 0 || strcasecmp(n->text, "false") == 0 || strcasecmp(n->text, "no") == 0 ||
+               strcasecmp(n->text, "off") == 0) {
+        *out = HUBUSD_READBACK_NONE;
+    } else {
+        fail(c, n->line, "%s must be slave, cache, or none, got %c%s%c", key, 39, n->text, 39);
+    }
+}
+
 static void read_double(ctx_t *c, yn_t *map, const char *key, double *out)
 {
     yn_t *n = scalar(c, map, key);
@@ -347,7 +368,7 @@ static void load_bus(ctx_t *c, yn_t *root)
     if (!s) {
         return;
     }
-    read_bool(c, s, "readback", &cfg->bus.readback);
+    read_readback(c, s, "readback", &cfg->bus.readback);
     read_unsigned(c, s, "ping_interval_s", 0, 86400, &cfg->bus.ping_interval_s);
     read_unsigned(c, s, "ping_failures", 1, 100, &cfg->bus.ping_failures);
     read_unsigned(c, s, "scan_interval_s", 0, 86400, &cfg->bus.scan_interval_s);
@@ -564,8 +585,8 @@ static void load_slaves(ctx_t *c, yn_t *root)
         }
         rb = -1;
         if (yn_get(e, "readback")) {
-            int b = 1;
-            read_bool(c, e, "readback", &b);
+            int b = HUBUSD_READBACK_SLAVE;
+            read_readback(c, e, "readback", &b);
             rb = b;
         }
         sl->readback = (int)rb;

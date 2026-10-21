@@ -50,14 +50,14 @@ Slaves are recognised from the first application byte of their `SLAVE_INFO` (dev
 
 | Topic | Payload | Effect |
 |---|---|---|
-| `hubus/slave/<n>/set` | `ON` / `OFF` | Command according to the profile (relay: opcode `0x10`). Afterwards the state is read back from the slave and published. |
+| `hubus/slave/<n>/set` | `ON` / `OFF` | Command according to the profile (relay: opcode `0x10`). Afterwards the state is read back from the slave and published (configurable, see `readback` below). |
 | `hubus/slave/<n>/cmd` | `0x10 1 2` | Raw command: opcode, then argument bytes (numbers, spaces or commas). Opcode `0x00` (status capture) or `0x10..0xFF`. |
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon publishes it. |
 | `hubus/group/<prefix>/<len>/cmd` | as `cmd` | Group (`len` 0..5) or broadcast (`0/0`) command. Slaves never answer group commands; use opcode `0` to make a group publish its states. |
 | `hubus/master/cmd/scan` | any | Commissioning scan; result on `hubus/master/scan`. |
 | `hubus/master/cmd/stats` | any | Publish statistics now. |
 
-Commands are never acknowledged by slaves. A published state is therefore always a value that was read from the slave, never the command that was sent. If a command was invalid or could not be executed, `hubus/master/log` says why and `commands_rejected` counts it.
+Commands are never acknowledged by slaves. By default the published state is therefore a value that was read from the slave, not the command that was sent; with `readback: cache` it is the state the command establishes (see below). If a command was invalid or could not be executed, `hubus/master/log` says why and `commands_rejected` counts it.
 
 ### Published
 
@@ -85,6 +85,18 @@ mosquitto_pub -t hubus/master/cmd/stats -n
 ```
 
 A button press needs no request: the slave announces it on the bus, the daemon collects it, and `hubus/slave/5/state` becomes `ON`, with the frame on `hubus/slave/5/data`.
+
+### State after a command (`readback`)
+
+What `hubus/slave/<n>/state` shows after a `set` command is configurable, globally under `bus.readback` and per slave with `readback:`:
+
+| Mode | Behavior |
+|---|---|
+| `slave` (default) | The daemon sends `STATUS_CAPTURE` and reads the answer. The published state is what the slave reports, so a defective or unreachable slave shows its real state. Costs two more bus transactions per command. |
+| `cache` | The slave is not contacted again. The daemon publishes the state the command establishes (`ON` after `ON`, `OFF` after `OFF`) from its own cache. Fast and free of extra bus traffic, but optimistic: it cannot notice a command that did not arrive or was not executed. The next event, ping-triggered refresh after an outage, or an explicit `capture` corrects it. |
+| `none` | Nothing is published after the command; the state changes only through events and captures. |
+
+Raw commands (`cmd` topic) have no known effect and publish no state in `cache` mode. `true`/`false` are accepted as `slave`/`none`.
 
 ## 4. Home Assistant
 

@@ -80,7 +80,7 @@ static void test_empty_configuration_gives_defaults(void)
     TEST_ASSERT_EQUAL_STRING("hubus", cfg.mqtt.base_topic);
     TEST_ASSERT_EQUAL_STRING("homeassistant", cfg.mqtt.discovery_prefix);
     TEST_ASSERT_TRUE(cfg.mqtt.discovery);
-    TEST_ASSERT_TRUE(cfg.bus.readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.bus.readback);
     TEST_ASSERT_EQUAL_UINT(0, cfg.n_slaves);
     TEST_ASSERT_EQUAL_UINT(0, cfg.n_warnings);
     TEST_ASSERT_EQUAL_UINT(50000, cfg.master.t_clk_low_ns);
@@ -142,7 +142,7 @@ static void test_full_configuration(void)
     TEST_ASSERT_EQUAL_STRING("home/hubus", cfg.mqtt.base_topic);
     TEST_ASSERT_FALSE(cfg.mqtt.discovery);
     TEST_ASSERT_EQUAL_UINT(10, cfg.mqtt.stats_interval_s);
-    TEST_ASSERT_FALSE(cfg.bus.readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.bus.readback);
     TEST_ASSERT_EQUAL_UINT(5, cfg.bus.ping_interval_s);
     TEST_ASSERT_EQUAL_UINT(3, cfg.n_slaves);
     TEST_ASSERT_EQUAL_UINT8(3, cfg.slaves[0].mcid);
@@ -188,6 +188,24 @@ static void test_error_classes(void)
     expect_error("- a\n- b\n", "must be a mapping");
     expect_error("mqtt:\n  password_file: /does/not/exist\n", "password_file");
     expect_error("mqtt: {host: [\n", "line");
+}
+
+static void test_readback_modes(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: cache\nslaves:\n  - mcid: 1\n    readback: none\n  - mcid: 2\n    readback: slave\n  - mcid: 3\n    readback: cache\n  - mcid: 4\n"));
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.bus.readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.slaves[0].readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.slaves[1].readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.slaves[2].readback);
+    TEST_ASSERT_EQUAL_INT(-1, cfg.slaves[3].readback);
+    TEST_ASSERT_EQUAL_INT(0, parse(""));
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.bus.readback); /* default */
+    TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: true\n"));
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.bus.readback);
+    TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: false\n"));
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.bus.readback);
+    expect_error("bus:\n  readback: sometimes\n", "slave, cache, or none");
+    expect_error("slaves:\n  - mcid: 1\n    readback: later\n", "slave, cache, or none");
 }
 
 static void test_error_reports_the_right_line(void)
@@ -409,6 +427,7 @@ int main(void)
     RUN_TEST(test_full_configuration);
     RUN_TEST(test_unknown_keys_are_warnings_with_line_numbers);
     RUN_TEST(test_error_classes);
+    RUN_TEST(test_readback_modes);
     RUN_TEST(test_error_reports_the_right_line);
     RUN_TEST(test_too_many_slaves);
     RUN_TEST(test_password_from_file_and_environment);
