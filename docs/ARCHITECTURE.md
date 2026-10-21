@@ -203,9 +203,9 @@ sequenceDiagram
         M->>M: report hardware line fault, retry later
     else DATA released
         M->>S: RESET (START+STOP)
-        M->>S: REQUEST_INFO for configured MCIDs (probe)
-        M->>S: REQUEST_INFO MCID 1..63 (scan for unknown / duplicate)
         M->>S: full burst (data pending before reset)
+        M->>S: REQUEST_INFO for configured MCIDs (probe, up to ping_failures times)
+        M->>S: REQUEST_INFO MCID 1..63 (scan for unknown / duplicate)
         M->>S: STATUS_CAPTURE + read state of every online slave
     end
 ```
@@ -219,7 +219,7 @@ Mirrors `hubusd_step()` in `daemon/hubusd_core.c`; one pass per call.
 ```mermaid
 flowchart TD
     A([hubusd_step]) --> B{bus state}
-    B -- STARTING --> B1["bus_start: recover (clock DATA high, RESET),<br/>ping configured slaves, scan 1..63,<br/>burst, refresh_states"] --> Z
+    B -- STARTING --> B1["bus_start: recover (clock DATA high, RESET),<br/>burst, ping configured slaves, scan 1..63,<br/>refresh_states"] --> Z
     B -- LINE_FAULT --> B2{startup_retry_s<br/>elapsed?}
     B2 -- yes --> B1
     B2 -- no --> B3[reject queued commands,<br/>publish stats] --> Z
@@ -384,8 +384,8 @@ Inside the library every transaction that detects a line error (readback mismatc
 ```mermaid
 stateDiagram-v2
     [*] --> Unknown
-    Unknown --> Online: startup ping, scan, or data frame
-    Unknown --> Offline: startup ping failed (threshold 1)
+    Unknown --> Online: startup burst, probe, or scan
+    Unknown --> Offline: startup probes failed (ping_failures times)
     Online --> Offline: ping_failures consecutive misses
     Offline --> Online: ping, scan, or data frame<br/>(needs_refresh → STATUS_CAPTURE + burst)
 ```

@@ -955,14 +955,26 @@ static void bus_start(hubusd_t *d)
     d->bus = HUBUSD_BUS_OK;
     d->last_error[0] = '\0';
     log_event(d, 0, "bus started");
+    run_burst(d); /* data that was pending before the reset (docs/PROTOCOL.md section 3.3) */
     for (i = 0; i < d->cfg.n_slaves && d->bus == HUBUSD_BUS_OK; i++) {
-        ping(d, d->cfg.slaves[i].mcid, 1);
+        unsigned mcid = d->cfg.slaves[i].mcid;
+        unsigned tries;
+
+        d->slave[mcid].ping_failures = 0;
+        /* a single miss (noise) must not mark a slave offline: same threshold as in normal operation */
+        for (tries = 0; tries < d->cfg.bus.ping_failures && d->bus == HUBUSD_BUS_OK; tries++) {
+            ping(d, mcid, d->cfg.bus.ping_failures);
+            if (d->slave[mcid].ping_failures == 0) {
+                break; /* answered: SLAVE_INFO is known */
+            }
+        }
+        /* the early burst could not decode the data (no info, no profile yet): read the state again */
+        if (d->slave[mcid].online == 1) {
+            d->slave[mcid].needs_refresh = 1;
+        }
     }
     if (d->bus == HUBUSD_BUS_OK) {
         do_scan(d, 0);
-    }
-    if (d->bus == HUBUSD_BUS_OK) {
-        run_burst(d); /* data that was pending before the reset */
     }
     if (d->bus == HUBUSD_BUS_OK) {
         refresh_states(d);

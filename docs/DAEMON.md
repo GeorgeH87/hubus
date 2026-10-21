@@ -64,7 +64,7 @@ Commands are never acknowledged by slaves. By default the published state is the
 | Topic | Retained | Content |
 |---|---|---|
 | `hubus/master/status` | yes | `online` / `offline` (last will) |
-| `hubus/master/state` | yes | bus state (`ok`, `line_fault`), last error, version, configured and online slaves, **unknown slaves found on the bus** (not configured, therefore ignored) |
+| `hubus/master/state` | yes | bus state (`ok`, `line_fault`), last error, version, configured and online slaves, **unknown slaves found on the bus** (not configured, therefore not published; their buffered data is read and discarded, otherwise they would announce themselves again after every burst) |
 | `hubus/master/stats` | no | uptime, bursts, polls, requests, frames, duplicates, gaps, retries, skipped slaves, commands sent/rejected, errors by kind, recoveries, queue depth, publish errors |
 | `hubus/master/diagnosis` | yes | `ok`, `suspected_duplicate_mcid` with the MCIDs, or `line_problem` |
 | `hubus/master/scan` | no | result of the last scan |
@@ -92,7 +92,7 @@ What `hubus/slave/<n>/state` shows after a `set` command is configurable, global
 
 | Mode | Behavior |
 |---|---|
-| `slave` (default) | The daemon sends `STATUS_CAPTURE` and reads the answer. The published state is what the slave reports, so a defective or unreachable slave shows its real state. Costs two more bus transactions per command. |
+| `slave` (default) | The daemon sends `STATUS_CAPTURE` and reads the answer. The published state is what the slave reports, so a defective or unreachable slave shows its real state. Costs three more bus transactions per command (`STATUS_CAPTURE`, `POLL_PENDING`, `REQUEST_DATA`); data of other pending slaves is collected in the same burst. |
 | `cache` | The slave is not contacted again. The daemon publishes the state the command establishes (`ON` after `ON`, `OFF` after `OFF`) from its own cache. Fast and free of extra bus traffic, but optimistic: it cannot notice a command that did not arrive or was not executed. The next event, ping-triggered refresh after an outage, or an explicit `capture` corrects it. |
 | `none` | Nothing is published after the command; the state changes only through events and captures. |
 
@@ -137,7 +137,7 @@ A slave without a profile stays fully usable through the raw topics (`data`, `cm
 
 - **Bus thread:** the only thread that touches GPIO. It handles queued commands (at most four per loop), then waits for idle events (a slave announcing data), collects them in a burst, and publishes. The MQTT thread only validates messages and puts them in a bounded queue (32 entries); a full queue is counted in `queue_full` and never blocks the bus.
 - **Availability:** slaves do not speak unless asked, so the daemon checks every configured slave with `REQUEST_INFO` every `bus.ping_interval_s` (one slave per loop). After `bus.ping_failures` misses a slave is `offline`; when it answers again it is `online` and its state is read with `STATUS_CAPTURE`. Valid data frames also count as proof of life.
-- **Startup:** startup sequence with RESET, probe of all configured slaves, scan for unconfigured ones, a burst for data that was pending, and a state read of every online slave.
+- **Startup:** startup sequence with RESET, a burst for data that was pending before the reset, probe of all configured slaves (a missing slave is probed `bus.ping_failures` times before it is `offline`), scan for unconfigured ones, and a state read of every online slave. Data collected by the first burst is published as `data` only; its `state` follows with the state read, because the slave profile is known only after the probe.
 - **Faults:** a stuck `DATA` line puts the bus in `line_fault` (published with the error); commands are rejected meanwhile and the startup sequence is retried every `bus.startup_retry_s`. CRC failures are retried within the retry budget; repeated failures of one MCID raise `suspected_duplicate_mcid` in the diagnosis.
 - **Reconnect:** the MQTT client reconnects by itself; on every connection the retained messages (status, state, info, discovery) are published again.
 - **Shutdown:** `SIGTERM`/`SIGINT` publish `offline`, generate a RESET on the bus, and release the GPIO lines.

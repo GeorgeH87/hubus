@@ -732,6 +732,51 @@ static void test_configured_slave_missing_at_startup_is_offline(void)
     TEST_ASSERT_NULL(last("homeassistant/sensor/hubus_7/config")); /* profile unknown until the slave answers */
 }
 
+static int first_index(const char *topic)
+{
+    unsigned i;
+
+    for (i = 0; i < n_msgs; i++) {
+        if (strcmp(msgs[i].topic, topic) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static void test_data_pending_before_startup_is_collected_before_the_probes(void)
+{
+    uint8_t pressed = 1;
+    int data, info;
+
+    load(base_yaml);
+    add_dev(3, DEV_RELAY);
+    add_dev(5, DEV_SWITCH);
+    add_dev(7, DEV_TEMP);
+    dev[1].state = 1;
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 1, &pressed, 1, 0)); /* button 5 was pressed */
+    start_daemon();
+    settle();
+    data = first_index("hubus/slave/5/data");
+    info = first_index("hubus/slave/3/info");
+    TEST_ASSERT_TRUE(data >= 0);
+    TEST_ASSERT_TRUE(info >= 0);
+    TEST_ASSERT_TRUE_MESSAGE(data < info, "burst must precede the probes (docs/PROTOCOL.md section 3.3)");
+    assert_last("hubus/slave/5/state", "ON");
+}
+
+static void test_startup_probes_a_missing_slave_ping_failures_times(void)
+{
+    load(base_yaml); /* ping_failures: 2 */
+    add_dev(3, DEV_RELAY);
+    add_dev(5, DEV_SWITCH); /* no slave 7 */
+    start_daemon();
+    settle();
+    /* two probes at startup (threshold) plus one request of the scan */
+    TEST_ASSERT_EQUAL_UINT32(3, dmn->master.mcid_counters[7].no_response);
+    assert_last("hubus/slave/7/availability", "offline");
+}
+
 static void test_slave_appearing_later_gets_discovery(void)
 {
     load(base_yaml);
@@ -1046,6 +1091,8 @@ int main(void)
     RUN_TEST(test_slave_goes_offline_and_comes_back);
     RUN_TEST(test_a_single_missed_ping_does_not_mark_the_slave_offline);
     RUN_TEST(test_configured_slave_missing_at_startup_is_offline);
+    RUN_TEST(test_data_pending_before_startup_is_collected_before_the_probes);
+    RUN_TEST(test_startup_probes_a_missing_slave_ping_failures_times);
     RUN_TEST(test_slave_appearing_later_gets_discovery);
     RUN_TEST(test_statistics_on_request);
     RUN_TEST(test_statistics_are_published_periodically);

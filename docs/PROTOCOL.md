@@ -120,7 +120,7 @@ A slave that is not addressed ignores everything until the next START, STOP, or 
 So that one turnaround slot is sufficient, no slave step may require bulk processing:
 
 - CRC8 is computed incrementally, byte by byte, while receiving and while transmitting.
-- At the turnaround slot only three checks remain: CRC result, address match, buffer empty or not.
+- The three checks (CRC result, address match, buffer empty or not) are made as soon as the last frame bit has been received. The turnaround slot itself only has to be counted, and the slave prepares its first response bit in it. A slave that fails a check goes to `IGNORE` without entering the turnaround state.
 
 ## 2. Roles and Responsibilities
 
@@ -321,6 +321,8 @@ The master sends `REQUEST_INFO` to every MCID `1..63`:
 - no response: MCID unused,
 - repeated CRC failures: suspected duplicate MCID or line problem.
 
+The master may repeat the scan periodically (`hubusd`: `bus.scan_interval_s`) to find slaves that were added or restarted. A scan costs about 63 short transactions, so it delays commands and events by that time; the interval is a master-side policy.
+
 Two slaves with the same MCID overlap their responses on the wired-AND line. If their `SLAVE_INFO` content differs, the CRC fails. Slaves SHOULD therefore include a device-unique value (for example a serial number set at programming time) in the application bytes of `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1); then the scan detects duplicates reliably.
 
 ### Runtime Heuristic
@@ -375,3 +377,10 @@ If the master stops clocking mid-frame, slaves remain in their current state, po
 
 - Effect: bus is blocked until the master restarts.
 - Recovery: master startup sequence (section 3.3).
+
+### 7.3 Repeated Commands
+
+When the master reads back a different `DATA` level than it transmitted while sending a frame, it runs the recovery sequence (section 3.3) and repeats the transaction, up to its retry budget. This applies to every frame type, including `SEND_COMMAND`. A corrupted frame fails the CRC check in every slave, so the repetition is the first valid delivery.
+
+- Effect: only a corruption that the CRC8 cannot detect (`MESSAGE_FORMAT.md` section 7) lets a slave execute the damaged frame and, after the repetition, the correct frame once more.
+- Accepted: such an error pattern needs several simultaneous bit errors and is rarer than any other fault of the bus. Commands with side effects that must never run twice should be made idempotent by the application (for example "set to on" instead of "toggle").
