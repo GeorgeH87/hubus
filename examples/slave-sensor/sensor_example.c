@@ -1,84 +1,75 @@
-/**
- * HuBus Slave Example: Temperature Sensor
- * 
- * A temperature sensor slave that:
- * - Periodically reads sensor value (ADC)
- * - Buffers data for master requests
- * - Responds to REQUEST_DATA with current temperature
- * - Uses callback to handle master requests efficiently
- * 
- * Target: ATtiny85 with:
- * - PB2 = CLK (input)
- * - PB3 = DATA (open-drain)
- * - PB4 = ADC input (temperature sensor analog)
- * 
- * Simple ADC reading for temperature (0..255 maps to 0..100°C)
+/*
+ * Temperature sensor slave (ATtiny85).
+ *
+ *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
+ *
+ * Uses the internal temperature sensor of the ATtiny85 (ADC channel 15,
+ * 1.1 V reference), so no external pin is needed. The main loop measures
+ * about ten times per second. STATUS_CAPTURE writes the latest raw ADC value
+ * (two bytes, big endian) into the buffer; the master reads it with
+ * REQUEST_DATA or collects it in a burst. Converting the raw value to degrees
+ * needs a per-device calibration (about 1 LSB per kelvin, see datasheet).
  */
-
 #include <avr/io.h>
-#include <util/delay.h>
+#include <avr/pgmspace.h>
 #include <stdint.h>
-#include "../../lib/hubus-slave/hubus_slave.h"
+#include <util/atomic.h>
+#include <util/delay.h>
 
-// ADC channel for temperature sensor
-#define TEMP_ADC_CHANNEL 3  // ADC3 on PB3 (or use different pin)
+#include "hubus_slave.h"
 
-// Global temperature value
-static uint8_t current_temp = 0;
+/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
+#define DEVICE_TYPE_TEMPERATURE 0x03
+static const uint8_t info[] PROGMEM = {DEVICE_TYPE_TEMPERATURE, 0x01, 0x00, 0x00, 0x00, 0x03};
 
-// Callback function: handles master requests
-static void on_hubus_event(hubus_event_t event, const uint8_t *payload, uint8_t len)
+static volatile uint16_t latest;
+
+static uint16_t measure(void)
 {
-    switch (event) {
-        case HUBUS_EVENT_REQUEST_DATA:
-            // Master requests data (POLL_PENDING, REQUEST_INFO, or REQUEST_DATA)
-            // Send current temperature reading
-            hubus_slave_set_buffered_data(&current_temp, 1);
-            break;
-            
-        default:
-            break;
+    ADMUX = _BV(REFS1) | 0x0F;                /* 1.1 V reference, temperature sensor */
+    ADCSRA = _BV(ADEN) | _BV(ADPS2) | _BV(ADPS1); /* clk/64 */
+    _delay_ms(1);                             /* sensor settling */
+    ADCSRA |= _BV(ADSC);
+    while (ADCSRA & _BV(ADSC)) {
     }
+    ADCSRA |= _BV(ADSC); /* the first conversion after switching the channel is discarded */
+    while (ADCSRA & _BV(ADSC)) {
+    }
+    return ADC;
 }
 
-// Simple ADC read
-static uint8_t read_adc(uint8_t channel)
+static void on_status_capture(void *ctx)
 {
-    // Configure ADC for single-ended input
-    ADMUX = (1 << REFS0) | (channel & 0x0F);
-    ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS0);  // Enable, prescaler
-    
-    // Start conversion
-    ADCSRA |= (1 << ADSC);
-    
-    // Wait for completion
-    while (ADCSRA & (1 << ADSC));
-    
-    return ADCH;  // Return high byte (8-bit result)
+    uint16_t value = latest;
+    uint8_t bytes[2];
+
+    (void)ctx;
+    bytes[0] = (uint8_t)(value >> 8);
+    bytes[1] = (uint8_t)value;
+    (void)hubus_slave_write(bytes, sizeof bytes, 0);
 }
 
 int main(void)
 {
-    // Initialize HuBus slave
-    // MCID = 0x02 (slave ID 2)
-    hubus_slave_init(0x02, on_hubus_event);
-    
-    uint16_t sample_counter = 0;
-    
-    // Main loop
-    while (1) {
-        // Process HuBus communication
-        hubus_slave_process();
-        
-        // Periodically read temperature (e.g., every 100ms)
-        sample_counter++;
-        if (sample_counter > 10000) {
-            current_temp = read_adc(TEMP_ADC_CHANNEL);
-            sample_counter = 0;
+    static const hubus_slave_config_t cfg = {
+        .mcid = 0x07,
+        .info = info,
+        .info_len = sizeof info,
+        .on_status_capture = on_status_capture,
+        .on_command = 0,
+        .ctx = 0,
+    };
+
+    latest = measure();
+    hubus_slave_init(&cfg);
+
+    for (;;) {
+        uint16_t value = measure();
+
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+        {
+            latest = value;
         }
-        
-        _delay_us(10);
+        _delay_ms(100);
     }
-    
-    return 0;
 }

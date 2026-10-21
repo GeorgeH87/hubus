@@ -12,6 +12,10 @@ This directory contains the normative documentation for HUBUS.
 - `ITERATIVE_CONCEPT.md`: open decisions, roadmap, and deferred topics.
 - `OPEN_ISSUES.md`: tracking list of known gaps, inconsistencies, and defects.
 
+## Development
+
+- `DEVELOPMENT.md`: WSL/Ubuntu development environment and toolchain.
+
 ## Examples
 
 - `TYPICAL_SESSION.md`: end-to-end reference session.

@@ -1,77 +1,76 @@
-/**
- * HuBus Slave Example: LED/Relay Control (ISR-Only)
- * 
- * Demonstrates interrupt-driven HuBus slave:
- * - Receives ON/OFF commands via callback
- * - Sends status when requested
- * - Main loop is completely empty (ISR handles everything)
- * 
- * Target: ATtiny85 with:
- * - PB2 = CLK (input, PCINT trigger)
- * - PB3 = DATA (open-drain)
- * - PB0 = LED/Relay output (active high)
+/*
+ * Relay / LED slave (ATtiny85).
+ *
+ *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
+ *   PB0 = relay driver / LED, active high
+ *
+ * Application commands (SEND_COMMAND, opcode and one argument byte):
+ *   0x10 <0|1>   switch the output off / on
+ *   0x11         toggle the output
+ * The state can be read back with STATUS_CAPTURE followed by REQUEST_DATA
+ * (or collected in a burst): one byte, 0 = off, 1 = on. Commands are never
+ * acknowledged.
+ *
+ * Everything runs in the ISR; the main loop is idle.
  */
-
 #include <avr/io.h>
-#include "../../lib/hubus-slave/hubus_slave.h"
+#include <avr/pgmspace.h>
+#include <avr/sleep.h>
 
-// LED/Relay output pin
-#define LED_DDR     DDRB
-#define LED_PORT    PORTB
-#define LED_PIN     PB0
+#include "hubus_slave.h"
 
-// LED state
-static uint8_t led_on = 0;
+#define RELAY_BIT PB0
 
-// Callback function: handles incoming commands
-static void on_hubus_event(hubus_event_t event, const uint8_t *payload, uint8_t len)
+#define OP_SET 0x10
+#define OP_TOGGLE 0x11
+
+/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
+#define DEVICE_TYPE_RELAY 0x01
+static const uint8_t info[] PROGMEM = {DEVICE_TYPE_RELAY, 0x01, 0x00, 0x00, 0x00, 0x01};
+
+static void relay_set(uint8_t on)
 {
-    switch (event) {
-        case HUBUS_EVENT_COMMAND:
-            // Master sent SEND_COMMAND
-            // Command format: byte 0 = opcode
-            if (len > 0) {
-                uint8_t opcode = payload[0];
-                
-                if (opcode == 0x01) {
-                    // Turn ON
-                    LED_PORT |= (1 << LED_PIN);
-                    led_on = 1;
-                } else if (opcode == 0x00) {
-                    // Turn OFF
-                    LED_PORT &= ~(1 << LED_PIN);
-                    led_on = 0;
-                }
-            }
-            break;
-            
-        case HUBUS_EVENT_REQUEST_STATUS:
-            // Master requests status (either POLL_PENDING or REQUEST_INFO)
-            hubus_slave_set_status(&led_on, 1);
-            break;
-            
-        default:
-            break;
+    if (on) {
+        PORTB |= _BV(RELAY_BIT);
+    } else {
+        PORTB &= (uint8_t)~_BV(RELAY_BIT);
+    }
+}
+
+static void on_status_capture(void *ctx)
+{
+    uint8_t state = (PORTB & _BV(RELAY_BIT)) ? 1u : 0u;
+
+    (void)ctx;
+    (void)hubus_slave_write(&state, 1, 0);
+}
+
+static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t len)
+{
+    (void)ctx;
+    if (opcode == OP_SET && len >= 1) {
+        relay_set(args[0] != 0);
+    } else if (opcode == OP_TOGGLE) {
+        PORTB ^= _BV(RELAY_BIT);
     }
 }
 
 int main(void)
 {
-    // Configure LED pin as output
-    LED_DDR |= (1 << LED_PIN);
-    LED_PORT &= ~(1 << LED_PIN);  // Start with LED off
-    
-    // Initialize HuBus slave (automatically enables PCINT ISR)
-    // MCID = 0x01 (slave ID 1)
-    // Callback handles all HuBus events
-    hubus_slave_init(0x01, on_hubus_event);
-    
-    // Main loop: ISR handles everything automatically!
-    // This can be empty, or run your application logic:
-    while (1) {
-        // ISR processes CLK edges and calls callback
-        // No polling, no timing loops needed
+    static const hubus_slave_config_t cfg = {
+        .mcid = 0x03,
+        .info = info,
+        .info_len = sizeof info,
+        .on_status_capture = on_status_capture,
+        .on_command = on_command,
+        .ctx = 0,
+    };
+
+    DDRB |= _BV(RELAY_BIT);
+    hubus_slave_init(&cfg);
+
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    for (;;) {
+        sleep_mode();
     }
-    
-    return 0;
 }

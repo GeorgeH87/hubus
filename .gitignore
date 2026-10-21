@@ -1,0 +1,20 @@
+# Build output
+/build/
+/out/
+cmake-build-*/
+
+# Editor and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Firmware artifacts
+*.elf
+*.hex
+*.eep
+*.map
+*.lst
+*.o
+*.a

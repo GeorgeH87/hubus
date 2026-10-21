@@ -1,0 +1,20 @@
+# libgpiod HAL for the Raspberry Pi (libgpiod v2 API).
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(GPIOD QUIET libgpiod>=2.0)
+endif()
+
+if(GPIOD_FOUND)
+    add_library(hubus_master_gpiod STATIC hubus_master_gpiod.c)
+    target_include_directories(hubus_master_gpiod PUBLIC .)
+    target_link_libraries(hubus_master_gpiod PUBLIC hubus_master ${GPIOD_LIBRARIES})
+    target_include_directories(hubus_master_gpiod PRIVATE ${GPIOD_INCLUDE_DIRS})
+    target_compile_options(hubus_master_gpiod PRIVATE ${HUBUS_WARNINGS})
+
+    add_executable(hubus_master_example ../examples/master/master_example.c)
+    target_link_libraries(hubus_master_example PRIVATE hubus_master_gpiod)
+    target_compile_options(hubus_master_example PRIVATE ${HUBUS_WARNINGS})
+    message(STATUS "libgpiod ${GPIOD_VERSION} found: building the Raspberry Pi master HAL")
+else()
+    message(STATUS "libgpiod >= 2.0 not found: skipping the Raspberry Pi master HAL")
+endif()

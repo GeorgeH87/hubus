@@ -52,6 +52,10 @@ The bus is idle between a STOP (or RESET) and the next START. `CLK` is low durin
 
 Idle event signaling by a slave (`DATA` pulled low while `CLK` is low) is distinguishable from START because `CLK` is low.
 
+### Back-to-Back Transactions
+
+STOP leaves `CLK` high until the master lowers it. A master that continues immediately with the next transaction (for example inside a burst, section 3.2) keeps `CLK` high and generates the next START directly: `DATA` rises (STOP) and falls again (START) while `CLK` is high. The bus is then never idle, `CLK` does not fall in between, and no pending slave announces itself between the transactions of a burst (section 3.1). Only the final STOP of a burst is followed by lowering `CLK`.
+
 ### Generating Conditions
 
 - START: with `DATA` released (high) and `CLK` low, the master raises `CLK`, then pulls `DATA` low, then lowers `CLK`. The first frame bit follows.
@@ -197,6 +201,17 @@ The idle handshake is level-based and master-clock-confirmed:
 4. Slave releases `DATA` after the first falling `CLK` edge, i.e. after one complete clock pulse (releasing while `CLK` is high would look like a STOP). If several slaves signal at the same time, all release after that pulse.
 5. Master starts a burst (`POLL_PENDING`, section 3.2), beginning with a START condition.
 
+### When a Slave Announces Itself
+
+A slave pulls `DATA` low (event signaling) in exactly two situations, both with `CLK` low and the bus idle:
+
+1. The application writes the buffer while the slave had no pending data (the flag changes from 0 to 1). Overwriting data that is already pending does not signal again.
+2. The first falling `CLK` edge after a STOP or RESET, if the slave still has pending data. This is how a slave that was skipped in a burst, or that has data written during a transaction, announces itself again.
+
+A slave signals at most once per STOP. In particular it does not signal again on the clock pulses of an idle event handshake, and not at all on a falling `CLK` edge that follows a START. Without this rule, pending slaves in different phases would keep each other's signals alive and the master could never see `DATA` released.
+
+Master side: before every START (and RESET) with `CLK` low, the master checks `DATA`. If it is low it runs the handshake first. After raising `CLK` for the condition it checks `DATA` once more: a slave that started signaling just before `CLK` rose (section 7.1) holds `DATA` low, and the master lowers `CLK` again, which releases the slave, and repeats the transaction.
+
 The slave has no timeout for this handshake. If no master is running, the slave keeps `DATA` low indefinitely; this is harmless and is resolved by the master startup sequence (section 3.3).
 
 If `DATA` remains low past a configured number of clock ticks, the master treats it as a line fault (master-side policy).
@@ -226,6 +241,8 @@ The handoff slot after bit `k` tells the master whether such a slave exists. The
 Masks pushed later have longer prefixes and cover higher MCIDs, so last-in-first-out order yields strictly descending MCID order. The stack holds at most one mask per prefix length (at most 6 entries in v0).
 
 Optimization: a mask with `TARGET_LEN=6` identifies one MCID exactly; the master may skip the poll and request data directly.
+
+All transactions of a burst are generated back-to-back with `CLK` held high after each STOP (section 1.2), so pending slaves do not announce themselves in between. The master lowers `CLK` after the final STOP; slaves that are still pending then signal again (section 3.1).
 
 ### Properties
 

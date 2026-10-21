@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The AVR toolchain of older Ubuntu releases (gcc-avr < 14) does not know the
+# tinyAVR 0/1/2-series, so everything runs in the same Ubuntu release as the
+# development environment (docs/DEVELOPMENT.md).
+jobs:
+  host:
+    name: Host build, unit tests, bus simulation
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sh tools/setup-ubuntu.sh
+      - name: Build and test (sanitizers on)
+        run: sh tools/build-host.sh
+
+  mutation:
+    name: Test suite sanity check (mutants)
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sh tools/setup-ubuntu.sh
+      - name: Every mutant must be killed by the tests
+        run: sh tools/mutation-check.sh
+
+  avr:
+    name: Slave firmware (${{ matrix.mcu }})
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mcu:
+          - attiny25
+          - attiny85
+          - attiny84
+          - attiny88
+          - attiny841
+          - attiny861
+          - attiny1614
+          - attiny3216
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sh tools/setup-ubuntu.sh
+      - name: Build (the ATtiny85 build fails if it exceeds its flash/RAM budget)
+        run: |
+          cmake --preset avr -B build/avr-${{ matrix.mcu }} -DHUBUS_AVR_MCU=${{ matrix.mcu }}
+          cmake --build build/avr-${{ matrix.mcu }}

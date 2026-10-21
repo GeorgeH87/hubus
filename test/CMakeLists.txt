@@ -1,0 +1,45 @@
+set(HUBUS_TEST_WARNINGS -Wall -Wextra -Wshadow)
+if(HUBUS_WERROR)
+    list(APPEND HUBUS_TEST_WARNINGS -Werror)
+endif()
+
+add_library(unity STATIC unity/unity.c)
+target_include_directories(unity PUBLIC unity)
+target_compile_options(unity PRIVATE -w) # third-party code
+
+add_library(hubus_sim STATIC sim/hubus_sim.c)
+target_include_directories(hubus_sim PUBLIC sim support)
+target_link_libraries(hubus_sim PUBLIC hubus_master hubus_core)
+target_compile_options(hubus_sim PRIVATE ${HUBUS_TEST_WARNINGS})
+
+function(hubus_test name)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${name}.c)
+        return()
+    endif()
+    add_executable(${name} ${name}.c)
+    target_link_libraries(${name} PRIVATE unity hubus_sim ${ARGN})
+    target_compile_options(${name} PRIVATE ${HUBUS_TEST_WARNINGS})
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES TIMEOUT 120)
+endfunction()
+
+hubus_test(test_crc)
+hubus_test(test_frame)
+hubus_test(test_arb)
+hubus_test(test_gen)
+hubus_test(test_slave_core)
+hubus_test(test_master)
+hubus_test(test_faults)
+hubus_test(test_slave_lib hubus_slave_host)
+
+# Small command buffer: oversized commands must be ignored. The core is
+# compiled again with HUBUS_RX_BUF_SIZE=4 and HUBUS_TX_BUF_SIZE=6.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_small_buffers.c)
+add_executable(test_small_buffers test_small_buffers.c ${HUBUS_CORE_SOURCES_ABS} sim/hubus_sim.c)
+target_include_directories(test_small_buffers PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master sim support)
+target_compile_definitions(test_small_buffers PRIVATE HUBUS_RX_BUF_SIZE=4 HUBUS_TX_BUF_SIZE=6)
+target_link_libraries(test_small_buffers PRIVATE unity)
+target_compile_options(test_small_buffers PRIVATE ${HUBUS_TEST_WARNINGS})
+add_test(NAME test_small_buffers COMMAND test_small_buffers)
+set_tests_properties(test_small_buffers PROPERTIES TIMEOUT 120)
+endif()

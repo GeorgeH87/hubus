@@ -4,80 +4,81 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 
 ## 1. Development Environment
 
-- [ ] Set up WSL2 with Ubuntu on the development PC.
-- [ ] Install host toolchain: `gcc`, `cmake`, `make`/`ninja`.
-- [ ] Install AVR toolchain: `gcc-avr`, `avr-libc`, `avrdude`, `simavr`.
-- [ ] Verify tinyAVR 0/1/2-series support of the AVR toolchain; install a newer avr-gcc or Microchip device packs if needed [P6].
-- [ ] VS Code with the WSL extension.
+- [x] Set up WSL2 with Ubuntu on the development PC (see `docs/DEVELOPMENT.md`).
+- [x] Install host toolchain: `gcc`, `cmake`, `make`/`ninja`.
+- [x] Install AVR toolchain: `gcc-avr`, `avr-libc`, `avrdude`, `simavr`.
+- [x] Verify tinyAVR 0/1/2-series support of the AVR toolchain [R17, was P6].
+- [x] VS Code with the WSL extension.
 
 ## 2. Project Skeleton
 
-- [ ] Create directory structure:
+- [x] Create directory structure:
   - `core/`: hardware-independent protocol code (shared by master, slave, and tests)
   - `slave/`: slave library with HALs for classic tinyAVR and tinyAVR 0/1/2-series
   - `master/`: Raspberry Pi master with `libgpiod` HAL
   - `test/`: unit tests and bus simulation
-- [ ] CMake build with presets `host` (tests, simulation, master) and `avr` (slave firmware via toolchain file) [P2].
-- [ ] Add `.gitignore` [P2].
-- [ ] Integrate Unity as test framework [P3].
-- [ ] Choose and add a license [P5].
+- [x] CMake build with presets `host` (tests, simulation, master) and `avr` (slave firmware via toolchain file) [P2].
+- [x] Add `.gitignore` [P2].
+- [x] Integrate Unity as test framework [P3].
+- [x] Choose and add a license [P5]. MIT.
 
 ## 3. Protocol Core (`core/`)
 
-- [ ] CRC-8/AUTOSAR, incremental byte-wise API; test against check value `0xDF` [L20, L23].
-- [ ] Frame codec: 16-bit header encode/decode (`TYPE`, `TARGET_LEN`/`MORE`+`GEN`, `MCID`, `LEN`) [L21].
-- [ ] Target-mask prefix match, MCID `0` reserved [L15].
-- [ ] Arbitration helpers: pending mask derivation from handoff slots, last-in-first-out mask stack.
-- [ ] `GEN` evaluation for the master (normal, duplicate, wrap, gap, baseline).
-- [ ] Slave state machine as pure logic: input = line event (`CLK` edge, START, STOP, RESET) and `DATA` level, output = `DATA` drive [L1–L12, L16–L19].
-- [ ] Unit tests for every module, built with sanitizers (`-fsanitize=address,undefined`).
+- [x] CRC-8/AUTOSAR, incremental byte-wise API; test against check value `0xDF` [L20, L23].
+- [x] Frame codec: 16-bit header encode/decode (`TYPE`, `TARGET_LEN`/`MORE`+`GEN`, `MCID`, `LEN`) [L21].
+- [x] Target-mask prefix match, MCID `0` reserved [L15].
+- [x] Arbitration helpers: pending mask derivation from handoff slots, last-in-first-out mask stack.
+- [x] `GEN` evaluation for the master (normal, duplicate, wrap, gap, baseline).
+- [x] Slave state machine as pure logic: input = line event (`CLK` edge, START, STOP, RESET) and `DATA` level, output = `DATA` drive [L1–L12, L16–L19].
+- [x] Unit tests for every module, built with sanitizers (`-fsanitize=address,undefined`).
 
 ## 4. Bus Simulation (`test/`)
 
-- [ ] Virtual open-drain wired-AND `DATA` line and master-driven `CLK`.
-- [ ] Simulated master and N simulated slaves using the real core code.
-- [ ] Scenarios: startup + RESET, idle event handshake, full burst with handoff slots, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`, `STATUS_CAPTURE`, fragmented transfer with `MORE`.
-- [ ] Fault injection: bit flips, lost/extra clock edges, lost STOP, stuck line, duplicate MCID, event signal racing START.
-- [ ] Verify all accepted rare cases recover as specified.
+- [x] Virtual open-drain wired-AND `DATA` line and master-driven `CLK`.
+- [x] Simulated master and N simulated slaves using the real core code.
+- [x] Scenarios: startup + RESET, idle event handshake, full burst with handoff slots, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`, `STATUS_CAPTURE`, fragmented transfer with `MORE`.
+- [x] Fault injection: bit flips, lost/extra clock edges, lost STOP, stuck line, duplicate MCID, event signal racing START.
+- [x] Verify all accepted rare cases recover as specified.
 
 ## 5. Slave Library (`slave/`)
 
-- [ ] HAL interface: pin read, `DATA` pull-low/release, interrupt setup for `CLK` and `DATA` [L24].
-- [ ] HAL for classic tinyAVR (pin change interrupts, register names per device) [L24].
-- [ ] HAL for tinyAVR 0/1/2-series (`PORTx`/`VPORTx`, `PINnCTRL`) [L24].
-- [ ] Automatic HAL selection from the compiler device macro.
-- [ ] Public API: init, single outgoing buffer write with `MORE`, `STATUS_CAPTURE` callback, command callback, static `SLAVE_INFO` [L17, L18, L22].
-- [ ] Compile-time buffer sizes; `SLAVE_INFO` byte 2; ignore oversized commands [L25].
-- [ ] Protect buffer writes against the ISR (atomic access, defer writes during transmission) [L13, L19].
-- [ ] Flash/RAM budget for the ATtiny85 reference build; check with `avr-size`.
+- [x] HAL interface: pin read, `DATA` pull-low/release, interrupt setup for `CLK` and `DATA` [L24].
+- [x] HAL for classic tinyAVR (pin change interrupts, register names per device) [L24].
+- [x] HAL for tinyAVR 0/1/2-series (`PORTx`/`VPORTx`, `PINnCTRL`) [L24].
+- [x] Automatic HAL selection from the compiler device macro.
+- [x] Public API: init, single outgoing buffer write with `MORE`, `STATUS_CAPTURE` callback, command callback, static `SLAVE_INFO` [L17, L18, L22].
+- [x] Compile-time buffer sizes; `SLAVE_INFO` byte 2; ignore oversized commands [L25].
+- [x] Protect buffer writes against the ISR (atomic access, defer writes during transmission) [L13, L19].
+- [x] Flash/RAM budget for the ATtiny85 reference build; check with `avr-size`. About 1970 bytes flash and 106 bytes RAM for the reference build (budget 2050 / 112).
 - [ ] Optional: run in simavr and measure ISR cycles (input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`).
-- [ ] Rewrite library README in English; describe only implemented features [L14].
-- [ ] Remove the old ATtiny85-only implementation.
+- [x] Rewrite library README in English; describe only implemented features [L14].
+- [x] Remove the old ATtiny85-only implementation.
 
 ## 6. Master (`master/`)
 
-- [ ] HAL interface: set `CLK`, pull/release/read `DATA`, wait.
-- [ ] `libgpiod` HAL: chip selection by label, `DATA` as open-drain line; check `libgpiod` v1 vs v2 on the target OS [H2].
-- [ ] Line conditions: START, STOP, RESET; startup sequence; error recovery.
-- [ ] Transactions: `POLL_PENDING` with arbitration and handoff slots, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`.
-- [ ] Burst scheduling with pending mask stack and retry budget.
-- [ ] Idle event handshake detection.
-- [ ] `GEN` duplicate/gap handling, fragment reassembly hooks for applications.
-- [ ] Commissioning scan and duplicate MCID heuristic.
-- [ ] Configurable timing minimums (for the slowest slave on the bus).
-- [ ] Real-time priority option for the clock thread.
+- [x] HAL interface: set `CLK`, pull/release/read `DATA`, wait.
+- [x] `libgpiod` HAL: chip selection by label, `DATA` as open-drain line; check `libgpiod` v1 vs v2 on the target OS [H2]. Implemented for the v2 API and compile-tested on Ubuntu 26.04 (libgpiod 2.2.1); not run on a Raspberry Pi yet, v1 support is still open.
+- [x] Line conditions: START, STOP, RESET; startup sequence; error recovery.
+- [x] Transactions: `POLL_PENDING` with arbitration and handoff slots, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`.
+- [x] Burst scheduling with pending mask stack and retry budget.
+- [x] Idle event handshake detection.
+- [x] `GEN` duplicate/gap handling, fragment reassembly hooks for applications.
+- [x] Commissioning scan and duplicate MCID heuristic.
+- [x] Configurable timing minimums (for the slowest slave on the bus).
+- [x] Real-time priority option for the clock thread.
 
 ## 7. Examples
 
-- [ ] Rewrite slave examples against the new API: relay/LED, switch, temperature sensor [E1–E4].
-- [ ] Master example application (scan, burst, commands).
-- [ ] Update `examples/*.md` if behavior details change during implementation.
+- [x] Rewrite slave examples against the new API: relay/LED, switch, temperature sensor [E1–E3]. Compile-tested for the ATtiny85, not run on hardware.
+- [x] Remove the superseded example files `slave-relay/relay_isr_only.c` and `relay_pcint_example.c` [E4].
+- [x] Master example application (scan, burst, commands). Compiles; not run on a Raspberry Pi yet.
+- [x] Update `examples/*.md` if behavior details change during implementation.
 
 ## 8. Continuous Integration
 
-- [ ] GitHub Actions: host build, unit tests, bus simulation [P4].
-- [ ] AVR build matrix (for example ATtiny25, 85, 84, 88, 841, 1614, 3216) [P4].
-- [ ] Fail the build if the ATtiny85 reference build exceeds its flash/RAM budget [P4].
+- [x] GitHub Actions: host build, unit tests, bus simulation [P4]. Workflow added; first run on GitHub pending.
+- [x] AVR build matrix (for example ATtiny25, 85, 84, 88, 841, 1614, 3216) [P4].
+- [x] Fail the build if the ATtiny85 reference build exceeds its flash/RAM budget [P4].
 
 ## 9. Hardware Bring-Up
 

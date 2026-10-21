@@ -2,7 +2,16 @@
 
 HUBUS is a lightweight bus communication concept for one Raspberry Pi master and multiple ATtiny-based slaves.
 
-This repository starts with protocol-first documentation so the concept can be refined iteratively before firmware work begins.
+The protocol is specified in `docs/` and implemented in C: a hardware-independent core shared by master, slave, and tests, a slave library for tinyAVR devices, a master for the Raspberry Pi, and a bus simulation with fault injection. Hardware bring-up (timing values, real Raspberry Pi and ATtiny runs) is still open, see `TODO.md`.
+
+## Repository Layout
+
+- `core/`: protocol code without hardware access (CRC, frame codec, arbitration, slave state machine).
+- `slave/`: slave library with one HAL per device family (`slave/README.md`).
+- `master/`: master logic on a HAL, plus the libgpiod HAL for the Raspberry Pi.
+- `test/`: unit tests, bus simulation, fault injection.
+- `examples/`: slave firmware examples (relay, switch, temperature sensor), a master command line tool, and the documented protocol sessions.
+- `docs/`: specification and development environment (`docs/DEVELOPMENT.md` explains how to build and test).
 
 ## Goals
 
@@ -45,6 +54,7 @@ This repository starts with protocol-first documentation so the concept can be r
 - `docs/SLAVE_PROPERTIES.md`: mandatory slave capabilities and behavior.
 - `docs/ITERATIVE_CONCEPT.md`: roadmap, open points, and next iterations.
 - `docs/OPEN_ISSUES.md`: tracking list of known gaps, inconsistencies, and defects.
+- `docs/DEVELOPMENT.md`: development environment and toolchain.
 - `TODO.md`: implementation roadmap.
 - `examples/TYPICAL_SESSION.md`: full flow example.
 - `examples/ERROR_SCENARIOS.md`: failure modes and recovery behavior.
@@ -55,3 +65,7 @@ This repository starts with protocol-first documentation so the concept can be r
 This project focuses on defining a reusable bus library and protocol that enable common device behaviors.
 
 Device-specific implementations (for example relay, LED, switch, or temperature sensor) are out of core scope and are treated as optional example implementations only.
+
+## License
+
+HUBUS is open source under the MIT License, see `LICENSE`. The bundled Unity test framework in `test/unity/` is also MIT-licensed (`test/unity/LICENSE.txt`).

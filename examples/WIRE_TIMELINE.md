@@ -43,3 +43,4 @@ This example shows a status-capture command followed by a burst that collects th
 - Slaves without buffered data ignore `POLL_PENDING` and `REQUEST_DATA` silently.
 - Buffered status snapshots may be overwritten before retrieval.
 - Each `POLL_PENDING` transaction is: START · master frame · turnaround slot · 12 arbitration slots · STOP. Each `REQUEST_DATA` is a separate transaction: START · master frame · turnaround slot · `SLAVE_DATA` · STOP (`docs/PROTOCOL.md` section 1.3).
+- Within the burst the master keeps `CLK` high after each STOP and starts the next transaction directly (`docs/PROTOCOL.md` section 1.2). It lowers `CLK` only after the final STOP; slaves that are still pending then announce themselves again.

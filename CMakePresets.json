@@ -1,0 +1,40 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "host",
+      "displayName": "Host: tests, bus simulation, master",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "HUBUS_SANITIZE": "ON",
+        "HUBUS_WERROR": "ON"
+      }
+    },
+    {
+      "name": "avr",
+      "displayName": "AVR: slave firmware (ATtiny85 by default)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/avr",
+      "toolchainFile": "${sourceDir}/cmake/avr-gcc.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "HUBUS_WERROR": "ON",
+        "HUBUS_AVR_MCU": "attiny85"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "host", "configurePreset": "host" },
+    { "name": "avr", "configurePreset": "avr" }
+  ],
+  "testPresets": [
+    {
+      "name": "host",
+      "configurePreset": "host",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

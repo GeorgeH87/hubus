@@ -16,7 +16,7 @@ No open specification issues. Remaining items are hardware measurements (section
 
 - **Status:** open (spec part resolved: all timing values are minimums, so jitter only slows the bus)
 - **Problem:** A Linux user-space bit-banged clock has significant jitter and occasional long pauses. `T_CLK_LOW`, `T_COND`, and `T_TURNAROUND` minimums must still be met reliably.
-- **Direction:** `libgpiod` in user space is the baseline (`HARDWARE_REQUIREMENTS.md` §4.2). Measure achievable clock rate and jitter on Pi 3, Pi 4, and Pi 5; use real-time priority if needed. Note: `libgpiod` v1 and v2 have different APIs; check which version the target OS ships and keep the HAL thin enough to support both if necessary.
+- **Direction:** `libgpiod` in user space is the baseline (`HARDWARE_REQUIREMENTS.md` §4.2). Measure achievable clock rate and jitter on Pi 3, Pi 4, and Pi 5; use real-time priority if needed. Note: `libgpiod` v1 and v2 have different APIs; check which version the target OS ships and keep the HAL thin enough to support both if necessary. Status of the implementation: `master/hubus_master_gpiod.c` uses the v2 API (compile-tested against libgpiod 2.2.1, not yet run on a Raspberry Pi); a v1 variant is not written.
 
 ### H3: Concrete Timing Values
 
@@ -24,59 +24,19 @@ No open specification issues. Remaining items are hardware measurements (section
 - **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, `T_SAMPLE`, `T_GUARD`, the line-fault threshold, and the pull-up value have no concrete values.
 - **Direction:** Derive `T_CLK_LOW` from measured slave ISR latency; freeze after first hardware experiments.
 
-## 3. Slave Library (`lib/hubus-slave`)
+## 3. Slave Library (`slave/`, `core/`)
 
-The library will be reworked after the specification issues above are resolved. Known defects to address:
-
-| ID | Location | Problem |
-|---|---|---|
-| L1 | `hubus_gpio_hal.c` | ISR only sets a flag; the state machine is never called. The advertised ISR-only architecture is not implemented. |
-| L2 | `hubus_slave_config.h` | `HUBUS_CLK_PIN`/`HUBUS_DATA_PIN` are bit numbers (`PB2`/`PB3`) instead of `PINB`; line reads return constants. |
-| L3 | `hubus_gpio_hal.c` | Missing `<avr/interrupt.h>` (`ISR`, `sei`); does not compile. |
-| L4 | `hubus_state.c` | Bit polarity inverted (spec: low = `1`). |
-| L5 | `hubus_state.c` | Slaves without a pending flag ignore `CLK` in idle and never receive master frames. |
-| L6 | whole library | `hubus_data_pull_low()` is never called: no event signaling, no arbitration, no transmission. |
-| L7 | `hubus_state.c` | Payload and CRC read from bit 24 although they start at bit 21. |
-| L8 | `hubus_state.c` | CRC computed over C struct fields instead of the received bit stream, without the CRC byte. |
-| L9 | PCINT | Fires on both edges; each bit sampled twice. To be replaced by edge discrimination including START/STOP detection. |
-| L10 | `hubus_state.c` | Every received frame leads to `TRANSFER`, even when not addressed; data buffer cleared without sending. |
-| L11 | `hubus_frame.c` | TX CRC header packing differs from RX validation. |
-| L12 | `hubus_state.c` | Transmission, arbitration, and START/STOP/RESET handling are missing. |
-| L13 | `hubus_buffer.c` | `memcpy` in setters is not atomic against the ISR. |
-| L14 | `README.md` | Describes target features (ISR-only, timings) as implemented; written in German. |
-| L15 | `hubus_state.c`, `README.md` | Accepts MCID `0` (documented range `0..63`); must reject or flag MCID `0` (valid range `1..63`). |
-| L16 | `hubus_state.c` | Arbitration must implement handoff slots and only contend when addressed by the `POLL_PENDING` mask. |
-| L17 | `hubus_buffer.*`, `hubus_slave.h` | Two buffers (data + status) must become one outgoing buffer; add static `SLAVE_INFO`; implement `STATUS_CAPTURE` opcode (application callback provides status). |
-| L18 | `hubus_frame.h`, `hubus_state.h` | Remove `SLAVE_ACK`/`SLAVE_ERROR`/`SLAVE_STATUS` types and related events; add `SLAVE_INFO`. Callback events (`HUBUS_EVENT_REQUEST_DATA` for all request types) no longer match the spec. |
-| L19 | `hubus_state.c` | Implement buffer clearing per `PROTOCOL.md` §3.4 (clear on STOP after complete response, keep on RESET); today the buffer is cleared in `TRANSFER` without sending anything. Guard against application writes during transmission. |
-| L20 | `hubus_crc.*`, `hubus_state.c` | CRC8 must be computed incrementally while receiving/transmitting (today computed in bulk at frame end); implement turnaround slot and response start per `PROTOCOL.md` §1.3. |
-| L21 | `hubus_frame.*`, `hubus_state.c`, `hubus_bitbuffer.*` | Implement the 16-bit header (no SOF, 2-bit TYPE, `MORE`/`GEN` in slave frames) and CRC8 over header + payload bytes; current code assumes SOF and the old 21-bit layout. |
-| L22 | `hubus_buffer.*`, `hubus_slave.h` | Replace the optional 8-bit generation counter with the mandatory 2-bit `GEN` (transmitted in the header); add a `MORE` parameter to the buffer write API. |
-| L23 | `hubus_slave_config.h`, `hubus_crc.c` | Switch CRC parameters from `0xD5 / 0x00 / 0x00` to CRC-8/AUTOSAR (`0x2F / 0xFF / 0xFF`); regenerate the lookup table; add a check-value test (`0xDF`). |
-| L24 | whole library | Split into a hardware-independent core and HALs for classic tinyAVR and tinyAVR 0/1/2-series; select HAL from the device macro. Today GPIO/PCINT code is ATtiny85-specific (`GIMSK`/`PCMSK`/`PCINT0_vect`), and the README wrongly claims ATtiny1616 support by renaming ports. |
-| L25 | `hubus_slave_config.h`, `hubus_slave.c` | Make receive and transmit buffer sizes compile-time options; report the accepted command payload in `SLAVE_INFO` byte 2; ignore oversized commands while staying synchronized. |
-
-## 4. Examples
-
-| ID | Location | Problem |
-|---|---|---|
-| E1 | all slave examples | Use non-existent API (`HUBUS_EVENT_REQUEST_STATUS`, `hubus_slave_process()`, `hubus_slave_process_clk_edge()`); none compile. |
-| E2 | `switch_example.c` | `(BUTTON_PIN >> BUTTON_PIN)` reads `PB1` instead of `PINB`. |
-| E3 | `sensor_example.c` | ADC3 is on PB3, the `DATA` line; `ADCH` without `ADLAR` returns only 2 bits. |
-| E4 | `slave-relay/` | `relay_example.c` and `relay_isr_only.c` are near duplicates. |
-
-## 5. Project Infrastructure
-
-| ID | Problem |
-|---|---|
-| P1 | No master implementation. Target: C, Raspberry Pi 3 and newer, `libgpiod`, shared protocol core (`HARDWARE_REQUIREMENTS.md` §4.2). |
-| P2 | No build system (Makefile / avr-gcc), no `.gitignore`. |
-| P3 | No host-side unit tests (frame codec, CRC, arbitration simulation on a virtual wired-AND bus). |
-| P4 | No CI. Should build the slave library for a device matrix (for example ATtiny25, 85, 84, 88, 841, 1614, 3216) and fail if the ATtiny85 build exceeds its flash/RAM budget. |
-| P5 | No license. |
-| P6 | Toolchain: the Ubuntu `gcc-avr` package is old; tinyAVR 0/1/2-series support likely needs a newer avr-gcc or Microchip device packs. Verify when setting up the environment. |
+Rewritten against the specification (R18); the old implementation has been removed.
 
 ## 6. Resolved
+
+### R18: Slave Library Rewrite, Master, Simulation, Build, and CI (L1–L25, E1–E4, P1–P5)
+
+- **Status:** resolved (2026-10-21)
+- **Resolution:** Protocol code split into `core/` (CRC-8/AUTOSAR, 16-bit header codec, arbitration helpers, `GEN` evaluation, slave state machine) shared by `slave/`, `master/`, and the tests; one HAL per device family (classic tinyAVR, tinyAVR 0/1/2-series) selected from the device macro; incremental CRC, turnaround slot, handoff slots, buffer clearing on STOP only, single outgoing buffer with `MORE`/`GEN`, static `SLAVE_INFO`, `STATUS_CAPTURE`, compile-time buffer sizes, write protection during transmission. The master (C, HAL-based, libgpiod v2 HAL for the Raspberry Pi) implements startup, recovery, bursts with the pending mask stack, commissioning, and duplicate-MCID heuristics. CMake presets, Unity tests, a bus simulation with fault injection, and a GitHub Actions workflow with the AVR device matrix and the ATtiny85 flash/RAM budget exist. See `docs/DEVELOPMENT.md` section 5.
+- **Found during implementation (specification clarified):** pending slaves announcing themselves after every STOP would block the next START inside a burst, and pending slaves in different phases could keep each other's idle signals alive. Resolved by back-to-back transactions with `CLK` held high inside a burst and by the "announce once per STOP" rule (`PROTOCOL.md` sections 1.2 and 3.1).
+- **Note:** the library alone needs about 1.9 KB of flash, so on 2 KB devices (ATtiny25 class) only about 70 bytes remain for the application (`slave/README.md`).
+
 
 ### R1: Frame Delimiting, Reset, and Slave Timeouts
 
@@ -157,6 +117,11 @@ The library will be reworked after the specification issues above are resolved. 
 
 - **Status:** resolved (2026-10-21)
 - **Resolution:** HUBUS v0 is a 3.3 V bus: all slaves supplied with 3.3 V, `DATA` pull-up to 3.3 V, no level shifters. See `HARDWARE_REQUIREMENTS.md` §4.
+
+### R17: AVR Toolchain for tinyAVR 0/1/2-series (was P6)
+
+- **Status:** resolved (2026-10-21)
+- **Resolution:** Ubuntu 26.04 ships `gcc-avr` 14.2 and `avr-libc` 2.2.1, which support classic tinyAVR and tinyAVR 0/1/2-series without Microchip device packs. Verified by compiling for ATtiny25, 85, 84, 88, 841, 202, 1614, 1624, and 3216. Limitation: `simavr` 1.6 only simulates classic devices (for example ATtiny84/85), not the 0/1/2-series. See `docs/DEVELOPMENT.md`.
 
 ### R6: Fairness (D3, largely)
 

@@ -55,7 +55,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 
 ### Idle Event Signal Rules
 
-- When an event is pending during idle and `CLK` is low, slave enters `IDLE_EVENT_SIGNAL` and pulls `DATA` low.
+- The slave enters `IDLE_EVENT_SIGNAL` and pulls `DATA` low in exactly two cases: (1) the buffer is written while no data was pending and the bus is idle with `CLK` low; (2) at the first falling `CLK` edge after a STOP or RESET, if data is still pending (the slave is "armed" by the STOP/RESET and disarmed by signaling or by a START). A slave therefore signals at most once per STOP (`PROTOCOL.md` section 3.1).
 - After the first falling `CLK` edge (one complete clock pulse), the slave releases `DATA` and returns to `IDLE_LISTEN`. Releasing while `CLK` is high is not allowed, since it would look like a STOP.
 - There is no local timeout: the slave holds `DATA` low until that clock pulse arrives.
 
