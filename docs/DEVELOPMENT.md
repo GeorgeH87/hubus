@@ -86,7 +86,7 @@ The same build is available through CMake presets (`host`, `avr`; see `CMakePres
 
 - `test_crc`, `test_frame`, `test_arb`, `test_gen`: unit tests of the core modules (check value `0xDF`, header layout, exhaustive prefix matching, Hamming distance 4 for 12-byte payloads, arbitration against the spec example and random bursts, `GEN` evaluation).
 - `test_slave_core`: the slave state machine with exact wire traffic from a bit-level master (`test/support/rawmaster.h`).
-- `test_master`: the real master with real slave cores on the simulated wired-AND bus (startup, bursts, commands, commissioning, fragments).
+- `test_master`: the real master with real slave cores on the simulated wired-AND bus (startup, bursts, commands, commissioning with group requests, fragments).
 - `test_faults`: fault injection (bit errors, lost and extra clock edges, lost STOP/START, stuck line, noise in arbitration, event racing a START, duplicate MCID).
 - `test_slave_lib`: the public slave API on the host HAL.
 - `test_small_buffers`: the core compiled with small compile-time buffers.

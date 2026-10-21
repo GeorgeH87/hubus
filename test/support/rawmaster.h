@@ -162,13 +162,14 @@ static inline size_t raw_recv_frame(raw_t *r, uint8_t *buf)
     return total_bits / 8;
 }
 
-/* Receives the 12 arbitration slots; slot 0 ends up in bit 0 (1 = DATA low). */
-static inline uint16_t raw_recv_arb(raw_t *r)
+/* Receives the arbitration slots of a request with `tlen` (2 * (6 - tlen) slots). They end up at their position
+ * of the 12-slot pattern, the first one in bit 2 * tlen (1 = DATA low). */
+static inline uint16_t raw_recv_arb(raw_t *r, uint8_t tlen)
 {
     uint16_t slots = 0;
     unsigned i;
 
-    for (i = 0; i < HUBUS_ARB_SLOTS; i++) {
+    for (i = 2u * tlen; i < HUBUS_ARB_SLOTS; i++) {
         if (raw_recv_bit(r)) {
             slots |= (uint16_t)(1u << i);
         }

@@ -142,12 +142,18 @@ hubus_status_t hubus_master_send_command(hubus_master_t *m, uint8_t target_len, 
 /* STATUS_CAPTURE (opcode 0x00) to a group or a single slave. */
 hubus_status_t hubus_master_status_capture(hubus_master_t *m, uint8_t target_len, uint8_t prefix);
 
-/* REQUEST_INFO / REQUEST_DATA to exactly one slave. */
+/* REQUEST_INFO / REQUEST_DATA to exactly one slave (no arbitration). */
 hubus_status_t hubus_master_request_info(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
 hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
 
-/* POLL_PENDING with a prefix mask; fills the arbitration result. */
-hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t target_len, hubus_arb_result_t *res);
+/*
+ * Group REQUEST_INFO / REQUEST_DATA (`req_type`, target_len 0..5): the matching slaves arbitrate and the winner
+ * answers in the same transaction. `res` is always filled; `res->contender` is 0 if nobody answered (HUBUS_OK).
+ * With a contender, `out` holds the winner's frame if the return value is HUBUS_OK; on HUBUS_ERR_CRC or
+ * HUBUS_ERR_MISMATCH the winner and the derived masks in `res` are still valid.
+ */
+hubus_status_t hubus_master_request_group(hubus_master_t *m, uint8_t req_type, uint8_t prefix, uint8_t target_len,
+                                          hubus_arb_result_t *res, hubus_slave_frame_t *out);
 
 /* ---- burst ---------------------------------------------------------- */
 
@@ -184,8 +190,14 @@ typedef struct {
     hubus_slave_frame_t info[HUBUS_MCID_MAX + 1u];
 } hubus_scan_t;
 
-/* REQUEST_INFO to every MCID 1..63. */
+/*
+ * Commissioning scan: group REQUEST_INFO with the mask stack of a burst finds every slave, one transaction per
+ * slave. A winner whose frame fails the CRC is asked again exactly, which flags duplicate MCIDs.
+ */
 hubus_status_t hubus_master_scan(hubus_master_t *m, hubus_scan_t *scan);
+
+/* Full scan: exactly addressed REQUEST_INFO to every MCID 1..63. */
+hubus_status_t hubus_master_scan_full(hubus_master_t *m, hubus_scan_t *scan);
 
 #define HUBUS_DIAG_OK 0u
 #define HUBUS_DIAG_DUPLICATE 1u    /* a few MCIDs fail repeatedly: suspected duplicate MCID */

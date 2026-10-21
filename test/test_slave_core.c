@@ -458,31 +458,48 @@ static void test_other_mcid_is_silent(void)
     TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0]));
 }
 
-static void test_group_request_gets_no_response(void)
-{
+typedef struct {
+    uint16_t slots; /* arbitration slots at their position in the 12-slot pattern */
     uint8_t buf[40];
+    size_t n; /* response length, 0 if nobody answered */
+} group_t;
+
+/* One complete group request transaction, ended with STOP. */
+static void group_request(group_t *g, uint8_t type, uint8_t tlen, uint8_t prefix)
+{
+    raw_start(&rm);
+    raw_send_frame(&rm, type, tlen, prefix, NULL, 0);
+    raw_turnaround(&rm);
+    g->slots = raw_recv_arb(&rm, tlen);
+    g->n = raw_recv_frame(&rm, g->buf);
+    raw_stop(&rm, 0);
+}
+
+static void test_group_requests_are_answered_by_the_matching_slave_only(void)
+{
     unsigned tlen;
-    uint8_t v = 1;
+    group_t g;
 
     add_slave(0, 0x2A, 1);
-    buf_write(0, &v, 1, 0);
     for (tlen = 0; tlen < 6; tlen++) {
-        size_t n;
+        uint8_t v = 1;
 
-        raw_start(&rm);
-        raw_send_frame(&rm, HUBUS_M_REQUEST_DATA, (uint8_t)tlen, 0x2A, NULL, 0);
-        raw_turnaround(&rm);
-        n = raw_recv_frame(&rm, buf);
-        raw_stop(&rm, 0);
-        TEST_ASSERT_EQUAL_UINT(0, n);
-
-        raw_start(&rm);
-        raw_send_frame(&rm, HUBUS_M_REQUEST_INFO, (uint8_t)tlen, 0x2A, NULL, 0);
-        raw_turnaround(&rm);
-        n = raw_recv_frame(&rm, buf);
-        raw_stop(&rm, 0);
-        TEST_ASSERT_EQUAL_UINT(0, n);
+        buf_write(0, &v, 1, 0);
+        raw_tick(&rm);
+        group_request(&g, HUBUS_M_REQUEST_INFO, (uint8_t)tlen, 0x2A);
+        TEST_ASSERT_TRUE(g.n > 0);
+        TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0])); /* static info: nothing cleared */
+        group_request(&g, HUBUS_M_REQUEST_DATA, (uint8_t)tlen, 0x2A);
+        TEST_ASSERT_TRUE(g.n > 0);
+        TEST_ASSERT_FALSE(hubus_core_is_pending(&core[0])); /* the complete SLAVE_DATA was cleared by the STOP */
     }
+    /* group 0xxxxx does not contain 0x2A (101010) */
+    buf_write(0, &(uint8_t){1}, 1, 0);
+    raw_tick(&rm);
+    group_request(&g, HUBUS_M_REQUEST_DATA, 1, 0);
+    TEST_ASSERT_EQUAL_UINT(0, g.n);
+    group_request(&g, HUBUS_M_REQUEST_INFO, 1, 0);
+    TEST_ASSERT_EQUAL_UINT(0, g.n);
     TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0]));
 }
 
@@ -679,19 +696,7 @@ static void test_command_for_other_slave_is_ignored(void)
     TEST_ASSERT_EQUAL_UINT(0, app[0].commands);
 }
 
-/* ---- arbitration --------------------------------------------------------- */
-
-static uint16_t poll(uint8_t tlen, uint8_t prefix)
-{
-    uint16_t slots;
-
-    raw_start(&rm);
-    raw_send_frame(&rm, HUBUS_M_POLL_PENDING, tlen, prefix, NULL, 0);
-    raw_turnaround(&rm);
-    slots = raw_recv_arb(&rm);
-    raw_stop(&rm, 0);
-    return slots;
-}
+/* ---- group requests: arbitration, then the winner answers ---------------- */
 
 static void make_pending(unsigned idx)
 {
@@ -701,36 +706,51 @@ static void make_pending(unsigned idx)
     raw_tick(&rm); /* idle event handshake: DATA is released after one pulse */
 }
 
-static void test_poll_with_nobody_pending(void)
+static void test_group_request_with_nobody_pending(void)
 {
+    group_t g;
+
     add_slave(0, 9, 1);
-    TEST_ASSERT_EQUAL_HEX16(0, poll(0, 0));
+    group_request(&g, HUBUS_M_REQUEST_DATA, 0, 0);
+    TEST_ASSERT_EQUAL_HEX16(0, g.slots);
+    TEST_ASSERT_EQUAL_UINT(0, g.n);
+    TEST_ASSERT_EQUAL_UINT8(1, sim.data);
 }
 
-static void test_arbitration_single_slave_sends_its_mcid(void)
+static void test_single_pending_slave_answers_every_mcid(void)
 {
     unsigned mcid;
 
     for (mcid = 1; mcid < 64; mcid++) {
         hubus_arb_result_t r;
+        hubus_header_t h;
+        group_t g;
+        uint8_t v = (uint8_t)(mcid * 3);
 
         hubus_sim_init(&sim);
         raw_init(&rm, &sim);
         add_slave(0, (uint8_t)mcid, 1);
-        make_pending(0);
-        TEST_ASSERT_TRUE(hubus_arb_decode(poll(0, 0), 0, 0, &r));
-        TEST_ASSERT_TRUE(r.contender);
+        buf_write(0, &v, 1, 0);
+        raw_tick(&rm);
+        group_request(&g, HUBUS_M_REQUEST_DATA, 0, 0);
+        TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
         TEST_ASSERT_EQUAL_UINT8(mcid, r.winner);
         TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
-        TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0])); /* arbitration never clears anything */
+        TEST_ASSERT_EQUAL_UINT(4, g.n);
+        TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+        TEST_ASSERT_EQUAL_UINT8(HUBUS_S_DATA, h.type);
+        TEST_ASSERT_EQUAL_UINT8(mcid, h.mcid);
+        TEST_ASSERT_EQUAL_UINT8(v, g.buf[2]);
+        TEST_ASSERT_FALSE(hubus_core_is_pending(&core[0])); /* the STOP after the complete frame cleared it */
         TEST_ASSERT_EQUAL_UINT8(0, sim.violations);
     }
 }
 
-static void test_arbitration_spec_example(void)
+static void test_burst_example_from_the_spec(void)
 {
     hubus_arb_result_t r;
-    uint16_t slots;
+    hubus_header_t h;
+    group_t g;
 
     add_slave(0, 42, 1);
     add_slave(1, 40, 1);
@@ -741,40 +761,56 @@ static void test_arbitration_spec_example(void)
     make_pending(2);
     make_pending(3);
 
-    slots = poll(0, 0);
-    /* docs/ARBITRATION.md section 7: arb bits 101010, handoff after bit 5 and bit 1 */
-    TEST_ASSERT_EQUAL_HEX16((1u << 0) | (1u << 1) | (1u << 4) | (1u << 8) | (1u << 9), slots);
-    TEST_ASSERT_TRUE(hubus_arb_decode(slots, 0, 0, &r));
+    /* docs/ARBITRATION.md section 7, request 1: arb bits 101010, handoff after bit 5 and bit 1 */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 0, 0);
+    TEST_ASSERT_EQUAL_HEX16((1u << 0) | (1u << 1) | (1u << 4) | (1u << 8) | (1u << 9), g.slots);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
     TEST_ASSERT_EQUAL_UINT8(42, r.winner);
     TEST_ASSERT_EQUAL_UINT8(2, r.n_masks);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(42, h.mcid);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&core[0]));
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[1])); /* the losers keep their data */
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[2]));
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[3]));
 
-    /* poll 2: group 10100x -> only 40 contends */
-    slots = poll(5, 40);
-    TEST_ASSERT_TRUE(hubus_arb_decode(slots, 40, 5, &r));
+    /* request 2: group 10100x (2 slots), 40 has only a 0 bit left: both slots high, 40 still answers */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 5, 40);
+    TEST_ASSERT_EQUAL_HEX16(0, g.slots);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 40, 5, &r));
     TEST_ASSERT_EQUAL_UINT8(40, r.winner);
     TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(40, h.mcid);
 
-    /* poll 3: group 0xxxxx -> 25 wins, 15 loses at bit 4 */
-    slots = poll(1, 0);
-    TEST_ASSERT_TRUE(hubus_arb_decode(slots, 0, 1, &r));
+    /* request 3: group 0xxxxx (10 slots): 25 wins, 15 loses at bit 4 */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 1, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 1, &r));
     TEST_ASSERT_EQUAL_UINT8(25, r.winner);
     TEST_ASSERT_EQUAL_UINT8(1, r.n_masks);
     TEST_ASSERT_EQUAL_UINT8(2, r.masks[0].len);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(25, h.mcid);
 
-    /* poll 4: group 00xxxx -> 15 */
-    slots = poll(2, 0);
-    TEST_ASSERT_TRUE(hubus_arb_decode(slots, 0, 2, &r));
+    /* request 4: group 00xxxx (8 slots) -> 15 */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 2, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 2, &r));
     TEST_ASSERT_EQUAL_UINT8(15, r.winner);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(15, h.mcid);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&core[3]));
 }
 
 static void test_only_pending_slaves_contend(void)
 {
     hubus_arb_result_t r;
+    group_t g;
 
     add_slave(0, 42, 1);
     add_slave(1, 50, 1); /* higher MCID but nothing buffered */
     make_pending(0);
-    TEST_ASSERT_TRUE(hubus_arb_decode(poll(0, 0), 0, 0, &r));
+    group_request(&g, HUBUS_M_REQUEST_DATA, 0, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
     TEST_ASSERT_EQUAL_UINT8(42, r.winner);
     TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
 }
@@ -782,43 +818,128 @@ static void test_only_pending_slaves_contend(void)
 static void test_prefix_mask_selects_contenders(void)
 {
     hubus_arb_result_t r;
+    group_t g;
 
     add_slave(0, 42, 1); /* 101010 */
     add_slave(1, 21, 1); /* 010101 */
     make_pending(0);
     make_pending(1);
-    TEST_ASSERT_TRUE(hubus_arb_decode(poll(1, 0), 0, 1, &r)); /* 0xxxxx */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 1, 0); /* 0xxxxx */
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 1, &r));
     TEST_ASSERT_EQUAL_UINT8(21, r.winner);
-    TEST_ASSERT_TRUE(hubus_arb_decode(poll(1, 0x20), 0x20, 1, &r)); /* 1xxxxx */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 1, 0x20); /* 1xxxxx */
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0x20, 1, &r));
     TEST_ASSERT_EQUAL_UINT8(42, r.winner);
-    TEST_ASSERT_EQUAL_HEX16(0, poll(2, 0x30)); /* 11xxxx: nobody */
+    group_request(&g, HUBUS_M_REQUEST_DATA, 2, 0x30); /* 11xxxx: nobody */
+    TEST_ASSERT_EQUAL_HEX16(0, g.slots);
+    TEST_ASSERT_EQUAL_UINT(0, g.n);
 }
 
-static void test_arbitration_slaves_are_passive_afterwards(void)
+static void test_group_info_request_lets_every_slave_contend(void)
+{
+    hubus_arb_result_t r;
+    hubus_header_t h;
+    group_t g;
+
+    add_slave(0, 42, 1); /* nothing buffered */
+    add_slave(1, 40, 1);
+    group_request(&g, HUBUS_M_REQUEST_INFO, 0, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));
+    TEST_ASSERT_EQUAL_UINT8(42, r.winner);
+    TEST_ASSERT_EQUAL_UINT8(1, r.n_masks);
+    TEST_ASSERT_EQUAL_UINT8(5, r.masks[0].len);
+    TEST_ASSERT_EQUAL_UINT8(40, r.masks[0].prefix);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_S_INFO, h.type);
+    TEST_ASSERT_EQUAL_UINT8(42, h.mcid);
+}
+
+static void test_group_info_request_changes_no_state(void)
+{
+    uint8_t v = 7;
+    group_t g;
+
+    add_slave(0, 42, 1);
+    add_slave(1, 40, 1);
+    buf_write(1, &v, 1, 0);
+    raw_tick(&rm);
+    group_request(&g, HUBUS_M_REQUEST_INFO, 0, 0);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&core[0]));
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[1])); /* SLAVE_INFO is static: the STOP clears nothing */
+    TEST_ASSERT_EQUAL_UINT8(1, core[1].buf_len);
+}
+
+static void test_group_info_request_respects_prefix_mask(void)
+{
+    hubus_arb_result_t r;
+    group_t g;
+
+    add_slave(0, 42, 1); /* 101010 */
+    add_slave(1, 21, 1); /* 010101 */
+    group_request(&g, HUBUS_M_REQUEST_INFO, 1, 0);
+    TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 1, &r));
+    TEST_ASSERT_EQUAL_UINT8(21, r.winner);
+    group_request(&g, HUBUS_M_REQUEST_INFO, 2, 0x30);
+    TEST_ASSERT_EQUAL_UINT(0, g.n);
+}
+
+static void test_lone_contender_with_all_open_bits_zero_still_answers(void)
+{
+    hubus_header_t h;
+    group_t g;
+
+    add_slave(0, 40, 1); /* 101000 */
+    make_pending(0);
+    group_request(&g, HUBUS_M_REQUEST_DATA, 5, 40); /* 10100x */
+    TEST_ASSERT_EQUAL_HEX16(0, g.slots);
+    TEST_ASSERT_TRUE(g.n > 0);
+    TEST_ASSERT_TRUE(hubus_frame_decode(g.buf, g.n, &h));
+    TEST_ASSERT_EQUAL_UINT8(40, h.mcid);
+}
+
+static void test_group_request_with_bad_crc_does_not_arbitrate(void)
 {
     uint8_t buf[40];
 
     add_slave(0, 42, 1);
     make_pending(0);
     raw_start(&rm);
-    raw_send_frame(&rm, HUBUS_M_POLL_PENDING, 0, 0, NULL, 0);
+    raw_send_frame_x(&rm, HUBUS_M_REQUEST_DATA, 0, 0, NULL, 0, 0x10);
     raw_turnaround(&rm);
-    (void)raw_recv_arb(&rm);
-    /* after handoff slot 0 the master clocks on: no frame is sent by the winner */
+    TEST_ASSERT_EQUAL_HEX16(0, raw_recv_arb(&rm, 0));
     TEST_ASSERT_EQUAL_UINT(0, raw_recv_frame(&rm, buf));
     raw_stop(&rm, 0);
     TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0]));
 }
 
-static void test_poll_with_bad_crc_does_not_arbitrate(void)
+static void test_failed_group_response_ended_with_reset_keeps_data(void)
 {
+    uint8_t buf[40];
+
     add_slave(0, 42, 1);
     make_pending(0);
     raw_start(&rm);
-    raw_send_frame_x(&rm, HUBUS_M_POLL_PENDING, 0, 0, NULL, 0, 0x10);
+    raw_send_frame(&rm, HUBUS_M_REQUEST_DATA, 0, 0, NULL, 0);
     raw_turnaround(&rm);
-    TEST_ASSERT_EQUAL_HEX16(0, raw_recv_arb(&rm));
+    (void)raw_recv_arb(&rm, 0);
+    TEST_ASSERT_TRUE(raw_recv_frame(&rm, buf) > 0);
+    raw_reset(&rm);
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0])); /* RESET preserves buffer and pending flag */
+}
+
+static void test_reserved_master_type_is_ignored(void)
+{
+    uint8_t buf[40];
+
+    add_slave(0, 42, 1);
+    make_pending(0);
+    raw_start(&rm);
+    raw_send_frame(&rm, HUBUS_M_RESERVED, 0, 0, NULL, 0);
+    raw_turnaround(&rm);
+    TEST_ASSERT_EQUAL_HEX16(0, raw_recv_arb(&rm, 0));
+    TEST_ASSERT_EQUAL_UINT(0, raw_recv_frame(&rm, buf));
     raw_stop(&rm, 0);
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[0]));
 }
 
 /* ---- idle event signaling ------------------------------------------------ */
@@ -885,7 +1006,7 @@ static void test_pending_slave_signals_again_after_stop(void)
     buf_write(0, &v, 1, 0);
     raw_tick(&rm);
     TEST_ASSERT_EQUAL_UINT8(1, sim.data);
-    (void)poll(2, 0x30); /* a poll that does not address the slave */
+    group_request(&(group_t){0}, HUBUS_M_REQUEST_DATA, 2, 0x30); /* a request that does not address the slave */
     TEST_ASSERT_EQUAL_UINT8(0, sim.data); /* STOP, CLK low, slave still pending: announces itself again */
 }
 
@@ -899,17 +1020,17 @@ static void test_no_signal_between_back_to_back_transactions(void)
 
     /* STOP with CLK held high, then START immediately: CLK never falls in idle */
     raw_start(&rm);
-    raw_send_frame(&rm, HUBUS_M_POLL_PENDING, 2, 0x30, NULL, 0);
+    raw_send_frame(&rm, HUBUS_M_REQUEST_DATA, 2, 0x30, NULL, 0);
     raw_turnaround(&rm);
-    (void)raw_recv_arb(&rm);
+    (void)raw_recv_arb(&rm, 2);
     raw_stop(&rm, 1);
     TEST_ASSERT_EQUAL_UINT8(1, sim.clk);
     TEST_ASSERT_EQUAL_UINT8(1, sim.data);
     raw_start(&rm);
     TEST_ASSERT_EQUAL_UINT(2, sim.n_start);
-    raw_send_frame(&rm, HUBUS_M_POLL_PENDING, 2, 0x30, NULL, 0);
+    raw_send_frame(&rm, HUBUS_M_REQUEST_DATA, 2, 0x30, NULL, 0);
     raw_turnaround(&rm);
-    (void)raw_recv_arb(&rm);
+    (void)raw_recv_arb(&rm, 2);
     raw_stop(&rm, 0);
     TEST_ASSERT_EQUAL_UINT8(0, sim.data); /* only after CLK goes low does it announce itself */
 }
@@ -985,7 +1106,7 @@ static void test_reset_during_arbitration_returns_to_idle(void)
     buf_write(0, &v, 1, 0);
     raw_tick(&rm);
     raw_start(&rm);
-    raw_send_frame(&rm, HUBUS_M_POLL_PENDING, 0, 0, NULL, 0);
+    raw_send_frame(&rm, HUBUS_M_REQUEST_DATA, 0, 0, NULL, 0);
     raw_turnaround(&rm);
     for (i = 0; i < 3; i++) { /* arbitration bit 5, handoff 5, arbitration bit 4 ... */
         raw_clk(&rm, 1);
@@ -1112,7 +1233,7 @@ int main(void)
     RUN_TEST(test_write_during_response_is_refused);
     RUN_TEST(test_write_between_response_and_stop_survives_the_stop);
     RUN_TEST(test_other_mcid_is_silent);
-    RUN_TEST(test_group_request_gets_no_response);
+    RUN_TEST(test_group_requests_are_answered_by_the_matching_slave_only);
     RUN_TEST(test_invalid_target_len_is_ignored);
     RUN_TEST(test_bad_crc_request_is_ignored);
     RUN_TEST(test_status_capture_exact);
@@ -1127,13 +1248,18 @@ int main(void)
     RUN_TEST(test_command_with_bad_crc_is_not_executed);
     RUN_TEST(test_status_capture_unsupported_is_ignored);
     RUN_TEST(test_command_for_other_slave_is_ignored);
-    RUN_TEST(test_poll_with_nobody_pending);
-    RUN_TEST(test_arbitration_single_slave_sends_its_mcid);
-    RUN_TEST(test_arbitration_spec_example);
+    RUN_TEST(test_group_request_with_nobody_pending);
+    RUN_TEST(test_single_pending_slave_answers_every_mcid);
+    RUN_TEST(test_burst_example_from_the_spec);
     RUN_TEST(test_only_pending_slaves_contend);
     RUN_TEST(test_prefix_mask_selects_contenders);
-    RUN_TEST(test_arbitration_slaves_are_passive_afterwards);
-    RUN_TEST(test_poll_with_bad_crc_does_not_arbitrate);
+    RUN_TEST(test_group_info_request_lets_every_slave_contend);
+    RUN_TEST(test_group_info_request_changes_no_state);
+    RUN_TEST(test_group_info_request_respects_prefix_mask);
+    RUN_TEST(test_lone_contender_with_all_open_bits_zero_still_answers);
+    RUN_TEST(test_group_request_with_bad_crc_does_not_arbitrate);
+    RUN_TEST(test_failed_group_response_ended_with_reset_keeps_data);
+    RUN_TEST(test_reserved_master_type_is_ignored);
     RUN_TEST(test_write_while_idle_signals_event);
     RUN_TEST(test_event_is_released_after_one_complete_clock_pulse);
     RUN_TEST(test_event_without_a_running_master_stays_low);

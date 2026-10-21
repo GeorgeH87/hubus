@@ -18,23 +18,27 @@ typedef struct {
 
 /* Result of one arbitration. */
 typedef struct {
-    uint8_t contender;                /* 1 if a winner was found */
+    uint8_t contender;                /* 1 if a winner was found (always 1 after decode) */
     uint8_t winner;                   /* winner MCID */
     uint8_t n_masks;                  /* number of derived masks */
     hubus_mask_t masks[HUBUS_MCID_BITS]; /* in push order: bit 5 first, bit 0 last */
 } hubus_arb_result_t;
 
 /*
- * `slots` holds the 12 sampled slots, slot 0 in bit 0 (first slot after the
- * turnaround slot). A set bit means DATA was low. Even slots are arbitration
- * bits 5..0, odd slots the handoff slot after each of them.
+ * Decodes the arbitration slots of a group request (docs/ARBITRATION.md).
  *
- * `base_prefix`/`base_len` is the mask of the POLL_PENDING that produced the
- * slots. Returns 1 if the slots are plausible. Implausible slot patterns
- * (winner outside the polled prefix, handoff slot low where the winner bit is
- * 0, handoff inside the polled prefix, handoff without any arbitration bit)
- * are treated as noise: they are ignored and 0 is returned, `contender` tells
- * whether a usable winner remains.
+ * The request prefix `base_prefix`/`base_len` is not arbitrated, so only
+ * 2 * (6 - base_len) slots were on the wire. `slots` holds them at their
+ * position in the 12-slot pattern: the first sampled slot is bit 2 * base_len,
+ * a set bit means DATA was low. Even pattern slots are arbitration bits 5..0,
+ * odd slots the handoff slot after each of them.
+ *
+ * The caller has already seen the first response bit (a contender exists), so
+ * `contender` is always 1 and `winner` is the prefix followed by the sampled
+ * arbitration bits; the open bits of a lone contender may all be 0. Returns 1
+ * if the slots are plausible. Implausible patterns (a low slot inside the
+ * prefix, a handoff slot low where the winner bit is 0) are treated as noise:
+ * they are ignored and 0 is returned.
  */
 uint8_t hubus_arb_decode(uint16_t slots, uint8_t base_prefix, uint8_t base_len, hubus_arb_result_t *r);
 

@@ -11,7 +11,9 @@ void tearDown(void) {}
 /*
  * Model of what the slaves put on DATA during one arbitration (written
  * straight from docs/ARBITRATION.md section 4, independent of the slave
- * core). Returns the 12 slots, slot 0 in bit 0.
+ * core). Returns the slots at their position in the 12-slot pattern; the
+ * shared prefix bits of a masked request are not on the wire (slots below
+ * 2 * len stay 0).
  */
 static uint16_t model_slots(const uint8_t *pending, unsigned n, uint8_t prefix, uint8_t len)
 {
@@ -26,7 +28,7 @@ static uint16_t model_slots(const uint8_t *pending, unsigned n, uint8_t prefix, 
             active[n_active++] = pending[i];
         }
     }
-    for (k = 5; k >= 0; k--) {
+    for (k = 5 - (int)len; k >= 0; k--) {
         unsigned slot = (unsigned)(2 * (5 - k));
         int low = 0;
         unsigned keep = 0;
@@ -53,6 +55,19 @@ static uint16_t model_slots(const uint8_t *pending, unsigned n, uint8_t prefix, 
         }
     }
     return slots;
+}
+
+/* Does anybody answer the request? (The master sees this from the first response bit.) */
+static int model_has_contender(const uint8_t *pending, unsigned n, uint8_t prefix, uint8_t len)
+{
+    unsigned i;
+
+    for (i = 0; i < n; i++) {
+        if (hubus_mcid_match(pending[i], prefix, len)) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void test_spec_example_first_poll(void)
@@ -103,7 +118,7 @@ static void test_spec_example_full_burst(void)
 
         polls++;
         hubus_arb_decode(slots, mask.prefix, mask.len, &r);
-        if (r.contender) {
+        if (model_has_contender(pending, 4, mask.prefix, mask.len)) {
             TEST_ASSERT_EQUAL_UINT8(order[served], r.winner);
             served++;
             for (i = 0; i < r.n_masks; i++) {
@@ -118,12 +133,28 @@ static void test_spec_example_full_burst(void)
     TEST_ASSERT_EQUAL_UINT(4, polls);
 }
 
-static void test_no_contender(void)
+static void test_lone_contender_with_all_open_bits_zero(void)
 {
     hubus_arb_result_t r;
+    const uint8_t pending[] = {40}; /* 101000 */
+    uint16_t slots = model_slots(pending, 1, 0x28, 5);
 
-    TEST_ASSERT_TRUE(hubus_arb_decode(0, 0, 0, &r));
-    TEST_ASSERT_FALSE(r.contender);
+    /* request 10100x: 2 slots, both high; the contender shows only by its response */
+    TEST_ASSERT_EQUAL_HEX16(0, slots);
+    TEST_ASSERT_TRUE(hubus_arb_decode(slots, 0x28, 5, &r));
+    TEST_ASSERT_TRUE(r.contender);
+    TEST_ASSERT_EQUAL_UINT8(40, r.winner);
+    TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
+}
+
+static void test_exact_request_has_no_slots(void)
+{
+    hubus_arb_result_t r;
+    const uint8_t pending[] = {40};
+
+    TEST_ASSERT_EQUAL_HEX16(0, model_slots(pending, 1, 40, 6));
+    TEST_ASSERT_TRUE(hubus_arb_decode(0, 40, 6, &r));
+    TEST_ASSERT_EQUAL_UINT8(40, r.winner);
     TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
 }
 
@@ -180,7 +211,7 @@ static void test_random_bursts(void)
             } else {
                 unsigned i;
                 TEST_ASSERT_TRUE(hubus_arb_decode(model_slots(pending, n, mask.prefix, mask.len), mask.prefix, mask.len, &r));
-                if (r.contender) {
+                if (model_has_contender(pending, n, mask.prefix, mask.len)) {
                     TEST_ASSERT_TRUE((int)r.winner < last);
                     last = r.winner;
                     served++;
@@ -218,17 +249,17 @@ static void test_noise_handoff_without_arbitration(void)
 {
     hubus_arb_result_t r;
 
-    /* handoff slot 3 low, no arbitration bit low */
+    /* handoff slot 3 low, no arbitration bit low: the winner bit 3 is 0, so the handoff is noise */
     TEST_ASSERT_FALSE(hubus_arb_decode((uint16_t)(1u << 7), 0, 0, &r));
-    TEST_ASSERT_FALSE(r.contender);
+    TEST_ASSERT_EQUAL_UINT8(0, r.n_masks);
 }
 
-static void test_noise_winner_outside_prefix(void)
+static void test_noise_slot_inside_prefix_is_ignored(void)
 {
     hubus_arb_result_t r;
-    /* polled group 0xxxxx but the sampled winner is 100000 */
+    /* requested group 0xxxxx: slot 0 (bit 5) is not on the wire and cannot be low */
     TEST_ASSERT_FALSE(hubus_arb_decode(1u << 0, 0, 1, &r));
-    TEST_ASSERT_FALSE(r.contender);
+    TEST_ASSERT_EQUAL_UINT8(0x00, r.winner); /* the winner stays inside the prefix */
 }
 
 static void test_noise_handoff_in_prefix_ignored(void)
@@ -281,12 +312,13 @@ int main(void)
     RUN_TEST(test_spec_example_first_poll);
     RUN_TEST(test_spec_example_slot_pattern);
     RUN_TEST(test_spec_example_full_burst);
-    RUN_TEST(test_no_contender);
+    RUN_TEST(test_lone_contender_with_all_open_bits_zero);
+    RUN_TEST(test_exact_request_has_no_slots);
     RUN_TEST(test_single_slave_every_mcid);
     RUN_TEST(test_random_bursts);
     RUN_TEST(test_prefix_poll_only_group_contends);
     RUN_TEST(test_noise_handoff_without_arbitration);
-    RUN_TEST(test_noise_winner_outside_prefix);
+    RUN_TEST(test_noise_slot_inside_prefix_is_ignored);
     RUN_TEST(test_noise_handoff_in_prefix_ignored);
     RUN_TEST(test_noise_handoff_where_winner_bit_is_zero);
     RUN_TEST(test_mask_stack);

@@ -17,11 +17,12 @@
 #define HUBUS_HEADER_BYTES 2u
 #define HUBUS_MAX_FRAME_BYTES (HUBUS_HEADER_BYTES + HUBUS_MAX_PAYLOAD + 1u)
 
-/* Arbitration: one arbitration bit plus one handoff slot per MCID bit. */
+/* Arbitration pattern: one arbitration bit plus one handoff slot per MCID bit. A request with TARGET_LEN = L
+ * skips the first 2 * L slots (the shared prefix); the winner answers in the same transaction. */
 #define HUBUS_ARB_SLOTS (2u * HUBUS_MCID_BITS)
 
 /* Master -> slave message types (2 bit). */
-#define HUBUS_M_POLL_PENDING 0u
+#define HUBUS_M_RESERVED 0u /* slaves ignore this type */
 #define HUBUS_M_REQUEST_INFO 1u
 #define HUBUS_M_REQUEST_DATA 2u
 #define HUBUS_M_SEND_COMMAND 3u

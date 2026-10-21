@@ -311,21 +311,25 @@ static int lost_start_filter(hubus_sim_t *sim, unsigned slave, uint8_t *clk, uin
     return 1;
 }
 
-static void test_slave_that_misses_a_start_ignores_the_frame_and_the_master_retries(void)
+static void test_slave_that_misses_a_start_ignores_the_frame_and_is_collected_by_the_next_burst(void)
 {
     hubus_burst_stats_t st;
     unsigned a = fx_add(&fx, 10);
 
     fx_startup(&fx);
     fx_write(&fx, a, 0x42);
-    /* burst: POLL (START #1), REQUEST_DATA (START #2): the slave misses the second START */
+    /* burst: one group REQUEST_DATA (START #1); the slave misses the START and ignores the frame */
     stf.victim = a;
-    stf.target_start = fx.sim.n_start + 2;
+    stf.target_start = fx.sim.n_start + 1;
     fx.sim.filter = lost_start_filter;
     fx.sim.filter_ctx = &stf;
     TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
     fx.sim.filter = NULL;
-    TEST_ASSERT_EQUAL_UINT(1, st.retries); /* silence after the poll winner: RESET and retry */
+    TEST_ASSERT_EQUAL_UINT(0, st.served); /* nobody contended: the burst ends */
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&fx.core[a])); /* the data stays buffered */
+
+    /* the slave announces itself again and the next burst collects the data */
+    TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
     TEST_ASSERT_EQUAL_UINT(1, st.served);
     TEST_ASSERT_EQUAL_UINT8(0x42, fx.log[0].first);
     TEST_ASSERT_FALSE(hubus_core_is_pending(&fx.core[a]));
@@ -564,9 +568,9 @@ static void test_lost_stop_leads_to_a_duplicate_that_is_discarded(void)
 
     fx_startup(&fx);
     fx_write(&fx, a, 0x42);
-    /* burst: POLL (STOP #1), REQUEST_DATA (STOP #2) - the slave misses the second one */
+    /* burst: one group REQUEST_DATA (STOP #1) - the slave misses it */
     sf.victim = a;
-    sf.target_stop = fx.sim.n_stop + 2;
+    sf.target_stop = fx.sim.n_stop + 1;
     fx.sim.filter = lost_stop_filter;
     fx.sim.filter_ctx = &sf;
     TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
@@ -744,7 +748,7 @@ int main(void)
     RUN_TEST(test_bit_flip_in_poll_leaves_slave_out_of_burst_but_not_forgotten);
     RUN_TEST(test_lost_clock_pulse_in_command_frame);
     RUN_TEST(test_extra_clock_pulse_in_command_frame);
-    RUN_TEST(test_slave_that_misses_a_start_ignores_the_frame_and_the_master_retries);
+    RUN_TEST(test_slave_that_misses_a_start_ignores_the_frame_and_is_collected_by_the_next_burst);
     RUN_TEST(test_transient_crc_error_inside_a_burst_is_retried);
     RUN_TEST(test_persistent_corruption_exhausts_the_retry_budget_without_losing_data);
     RUN_TEST(test_transient_crc_error_is_retried);

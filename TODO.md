@@ -63,7 +63,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Burst scheduling with pending mask stack and retry budget.
 - [x] Idle event handshake detection.
 - [x] `GEN` duplicate/gap handling, fragment reassembly hooks for applications.
-- [x] Commissioning scan and duplicate MCID heuristic.
+- [x] Commissioning scan (group `REQUEST_INFO`, full scan as fallback) and duplicate MCID heuristic.
 - [x] Configurable timing minimums (for the slowest slave on the bus).
 - [x] Real-time priority option for the clock thread.
 

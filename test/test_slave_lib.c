@@ -277,25 +277,31 @@ static void test_application_command(void)
     TEST_ASSERT_EQUAL_UINT8(2, last_len);
 }
 
-static void test_poll_arbitration_with_mcid_7(void)
+static void test_group_request_arbitration_with_mcid_7(void)
 {
     hubus_slave_config_t cfg = config(7); /* 000111 */
     const uint8_t v = 1;
     unsigned i;
     unsigned slots = 0;
+    uint8_t buf[40];
+    size_t n;
 
     TEST_ASSERT_TRUE(hubus_slave_init(&cfg));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_slave_write(&v, 1, 0));
     start();
-    send_frame(HUBUS_M_POLL_PENDING, 0, 0, NULL, 0);
+    send_frame(HUBUS_M_REQUEST_DATA, 0, 0, NULL, 0);
     turnaround();
     for (i = 0; i < HUBUS_ARB_SLOTS; i++) {
         slots |= (unsigned)recv_bit() << i;
     }
+    /* the winner answers in the same transaction */
+    n = recv_frame(buf);
     stop();
     /* arbitration bits 0,0,0,1,1,1 -> slots 6, 8, 10; no handoff */
     TEST_ASSERT_EQUAL_HEX16((1u << 6) | (1u << 8) | (1u << 10), slots);
-    TEST_ASSERT_TRUE(hubus_slave_is_pending());
+    TEST_ASSERT_EQUAL_UINT(4, n);
+    TEST_ASSERT_EQUAL_UINT8(1, buf[2]);
+    TEST_ASSERT_FALSE(hubus_slave_is_pending());
 }
 
 static void test_write_limits_and_busy(void)
@@ -331,7 +337,7 @@ int main(void)
     RUN_TEST(test_request_info);
     RUN_TEST(test_status_capture_callback_writes_the_buffer_from_the_isr);
     RUN_TEST(test_application_command);
-    RUN_TEST(test_poll_arbitration_with_mcid_7);
+    RUN_TEST(test_group_request_arbitration_with_mcid_7);
     RUN_TEST(test_write_limits_and_busy);
     return UNITY_END();
 }

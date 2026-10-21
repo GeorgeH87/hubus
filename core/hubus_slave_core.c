@@ -13,6 +13,8 @@ static void go_ignore(hubus_slave_core_t *c)
     c->state = HUBUS_ST_IGNORE;
 }
 
+static void tx_start(hubus_slave_core_t *c);
+
 /* ---- line conditions ------------------------------------------------ */
 
 static void on_start(hubus_slave_core_t *c)
@@ -64,17 +66,19 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
             }
         }
         break;
-    case HUBUS_M_POLL_PENDING:
     case HUBUS_M_REQUEST_DATA:
         if (!c->pending) {
             go_ignore(c);
             break;
         }
         /* fall through */
-    default: /* HUBUS_M_REQUEST_INFO */
+    case HUBUS_M_REQUEST_INFO:
         c->action = c->rx_type;
         c->phase = 0;
         c->state = HUBUS_ST_TURN;
+        break;
+    default: /* reserved type */
+        go_ignore(c);
         break;
     }
 }
@@ -88,8 +92,7 @@ static void rx_header(hubus_slave_core_t *c)
 
     c->rx_type = type;
     c->rx_len = (uint8_t)(c->hdr[1] & 0x1Fu);
-    if (!hubus_mcid_match(c->mcid, mcid, tlen) ||
-        ((type == HUBUS_M_REQUEST_INFO || type == HUBUS_M_REQUEST_DATA) && tlen != HUBUS_TARGET_LEN_EXACT)) {
+    if (!hubus_mcid_match(c->mcid, mcid, tlen)) {
         go_ignore(c);
     }
 }
@@ -146,7 +149,12 @@ static void arb_drive(hubus_slave_core_t *c)
     uint8_t k;
 
     if (c->slot >= HUBUS_ARB_SLOTS) {
-        go_ignore(c);
+        /* After the last handoff slot the winner answers in the same transaction. */
+        if (c->arb_active) {
+            tx_start(c);
+        } else {
+            go_ignore(c);
+        }
         return;
     }
     k = (uint8_t)(HUBUS_MCID_BITS - 1u - (c->slot >> 1));
@@ -235,6 +243,13 @@ static void tx_drive(hubus_slave_core_t *c)
     c->tx_nbits--;
 }
 
+static void tx_start(hubus_slave_core_t *c)
+{
+    tx_init(c);
+    c->state = HUBUS_ST_TX;
+    tx_drive(c);
+}
+
 /* ---- clock edges ---------------------------------------------------- */
 
 static void turn_fall(hubus_slave_core_t *c)
@@ -242,17 +257,13 @@ static void turn_fall(hubus_slave_core_t *c)
     if (c->phase == 0u) {
         c->phase = 1u; /* falling edge that opens the turnaround slot */
     } else if (c->phase == 2u) { /* falling edge after the turnaround slot */
-        if (c->action == HUBUS_M_POLL_PENDING) {
-            c->slot = 0;
-            c->arb_active = 1;
-            c->lost = LOST_NONE;
-            c->state = HUBUS_ST_ARB;
-            arb_drive(c);
-        } else {
-            tx_init(c);
-            c->state = HUBUS_ST_TX;
-            tx_drive(c);
-        }
+        /* The MCID bits of the request prefix are not arbitrated: start at slot 2 * TARGET_LEN.
+         * With an exact request (TARGET_LEN 6) that is the end of the pattern and the slave answers at once. */
+        c->slot = (uint8_t)(((c->hdr[0] >> 3) & 7u) << 1);
+        c->arb_active = 1;
+        c->lost = LOST_NONE;
+        c->state = HUBUS_ST_ARB;
+        arb_drive(c);
     }
 }
 

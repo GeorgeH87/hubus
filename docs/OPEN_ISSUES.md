@@ -128,7 +128,7 @@ Rewritten against the specification (R18); the old implementation has been remov
 
 ### R19: Response in the Arbitration Transaction (replaces `POLL_PENDING`)
 
-- **Status:** resolved in the specification (2026-10-21); implementation follows
+- **Status:** resolved and implemented (2026-10-21): `core/hubus_slave_core.c`, `core/hubus_arb.c`, `master/hubus_master.c` (`hubus_master_request_group`, `hubus_master_scan`, `hubus_master_scan_full`, burst); tests in `test_arb`, `test_slave_core`, `test_slave_lib`, `test_master`, `test_faults`
 - **Problem:** a burst needed two transactions per pending slave (`POLL_PENDING`, then `REQUEST_DATA` to the winner), although the winner is unambiguous after the arbitration. The commissioning scan sent `REQUEST_INFO` to all 63 MCIDs. The arbitration always used 12 slots, although the bits of the request prefix are identical for all contenders.
 - **Resolution:**
   - `REQUEST_INFO` and `REQUEST_DATA` accept any `TARGET_LEN`. With `TARGET_LEN < 6` the matching slaves arbitrate (for `REQUEST_DATA` only those with pending data) and the **winner sends its response frame in the same transaction**. `POLL_PENDING` is removed; type `00` is reserved.

@@ -415,34 +415,62 @@ hubus_status_t hubus_master_status_capture(hubus_master_t *m, uint8_t target_len
     return hubus_master_send_command(m, target_len, prefix, HUBUS_OP_STATUS_CAPTURE, NULL, 0);
 }
 
-static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t mcid,
-                              hubus_slave_frame_t *out)
+/*
+ * One REQUEST_INFO / REQUEST_DATA transaction. With target_len < 6 the matching slaves arbitrate and the winner
+ * answers in the same transaction (docs/ARBITRATION.md); `res` then tells winner and derived masks, also when the
+ * response is invalid. With target_len == 6 the addressed slave answers directly.
+ */
+static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t target_len,
+                                   uint8_t prefix, hubus_arb_result_t *res, hubus_slave_frame_t *out)
 {
     uint8_t buf[HUBUS_MAX_FRAME_BYTES];
     hubus_header_t h;
     uint8_t cur;
     uint16_t nbits;
     uint16_t total_bits;
+    uint16_t slots = 0;
+    uint8_t nslots = (uint8_t)(2u * (HUBUS_MCID_BITS - target_len));
+    uint8_t i;
     hubus_status_t r;
     uint8_t ok;
+    uint8_t attempts;
 
-    if (mcid < HUBUS_MCID_MIN || mcid > HUBUS_MCID_MAX) {
+    res->contender = 0;
+    res->winner = 0;
+    res->n_masks = 0;
+    if (target_len > HUBUS_TARGET_LEN_EXACT || prefix > HUBUS_MCID_MAX ||
+        (target_len == HUBUS_TARGET_LEN_EXACT && prefix < HUBUS_MCID_MIN)) {
         return HUBUS_ERR_ARG;
     }
-    r = begin_transaction(m, req_type, HUBUS_TARGET_LEN_EXACT, mcid, NULL, 0);
-    if (r != HUBUS_OK) {
-        return r;
+    prefix &= hubus_prefix_mask(target_len);
+    for (attempts = 0;; attempts++) {
+        r = begin_transaction(m, req_type, target_len, prefix, NULL, 0);
+        if (r == HUBUS_OK) {
+            break;
+        }
+        /* a group request is repeated on line errors; an exact one is left to the caller */
+        if (target_len == HUBUS_TARGET_LEN_EXACT || r != HUBUS_ERR_LINE || attempts >= m->cfg.retry_budget) {
+            return r;
+        }
     }
     turnaround(m);
 
-    /* Slave type codes start with 1: a released first bit means no response. */
-    if (!recv_bit(m, m->cfg.t_turnaround_ns)) {
+    /* Arbitration slots of the open MCID bits, placed at their position of the 12-slot pattern. */
+    for (i = 0; i < nslots; i++) {
+        if (recv_bit(m, i == 0 ? m->cfg.t_turnaround_ns : m->cfg.t_clk_low_ns)) {
+            slots |= (uint16_t)(1u << (2u * target_len + i));
+        }
+    }
+
+    /* Slave type codes start with 1: a released first bit means no response / no contender. */
+    if (!recv_bit(m, nslots == 0u ? m->cfg.t_turnaround_ns : m->cfg.t_clk_low_ns)) {
         /* RESET instead of STOP: a slave that sent a partial response keeps its buffer. */
         if (cond_reset(m) != HUBUS_OK) {
             (void)recover(m);
         }
         return HUBUS_ERR_NO_RESPONSE;
     }
+    (void)hubus_arb_decode(slots, prefix, target_len, res);
     cur = 1;
     nbits = 1;
     total_bits = (HUBUS_HEADER_BYTES + 1u) * 8u;
@@ -461,7 +489,7 @@ static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t 
     ok = hubus_frame_decode(buf, total_bits / 8u, &h);
     if (!ok) {
         r = HUBUS_ERR_CRC;
-    } else if (h.type != resp_type || h.mcid != mcid) {
+    } else if (h.type != resp_type || h.mcid != res->winner) {
         r = HUBUS_ERR_MISMATCH;
     } else {
         r = HUBUS_OK;
@@ -489,20 +517,30 @@ static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t 
     return r;
 }
 
-static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t mcid,
-                              hubus_slave_frame_t *out)
+static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t target_len,
+                              uint8_t prefix, hubus_arb_result_t *res, hubus_slave_frame_t *out)
 {
+    hubus_arb_result_t local;
     hubus_status_t r;
+    uint8_t mcid;
 
-    if (mcid > HUBUS_MCID_MAX) {
-        return HUBUS_ERR_ARG;
+    if (!res) {
+        res = &local;
     }
     if (req_type == HUBUS_M_REQUEST_INFO) {
         m->counters.info_requests++;
     } else {
         m->counters.data_requests++;
     }
-    r = request_impl(m, req_type, resp_type, mcid, out);
+    if (target_len < HUBUS_TARGET_LEN_EXACT) {
+        m->counters.polls++;
+    }
+    r = request_impl(m, req_type, resp_type, target_len, prefix, res, out);
+    /* A group request that nobody answers is an empty group, not an error. */
+    if (r == HUBUS_ERR_NO_RESPONSE && target_len < HUBUS_TARGET_LEN_EXACT) {
+        return HUBUS_OK;
+    }
+    mcid = res->contender ? res->winner : (uint8_t)(prefix & HUBUS_MCID_MAX);
     switch (r) {
     case HUBUS_OK:
         m->mcid_counters[mcid].frames++;
@@ -527,47 +565,23 @@ static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_
 
 hubus_status_t hubus_master_request_info(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out)
 {
-    return request(m, HUBUS_M_REQUEST_INFO, HUBUS_S_INFO, mcid, out);
+    return request(m, HUBUS_M_REQUEST_INFO, HUBUS_S_INFO, HUBUS_TARGET_LEN_EXACT, mcid, NULL, out);
 }
 
 hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out)
 {
-    return request(m, HUBUS_M_REQUEST_DATA, HUBUS_S_DATA, mcid, out);
+    return request(m, HUBUS_M_REQUEST_DATA, HUBUS_S_DATA, HUBUS_TARGET_LEN_EXACT, mcid, NULL, out);
 }
 
-hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t target_len, hubus_arb_result_t *res)
+hubus_status_t hubus_master_request_group(hubus_master_t *m, uint8_t req_type, uint8_t prefix, uint8_t target_len,
+                                          hubus_arb_result_t *res, hubus_slave_frame_t *out)
 {
-    uint16_t slots = 0;
-    hubus_status_t r;
-    unsigned i;
-    uint8_t attempts;
-
-    if (target_len > HUBUS_TARGET_LEN_EXACT || prefix > HUBUS_MCID_MAX) {
+    if ((req_type != HUBUS_M_REQUEST_INFO && req_type != HUBUS_M_REQUEST_DATA) ||
+        target_len >= HUBUS_TARGET_LEN_EXACT || !res) {
         return HUBUS_ERR_ARG;
     }
-    prefix &= hubus_prefix_mask(target_len);
-    m->counters.polls++;
-    for (attempts = 0;; attempts++) {
-        r = begin_transaction(m, HUBUS_M_POLL_PENDING, target_len, prefix, NULL, 0);
-        if (r == HUBUS_OK) {
-            break;
-        }
-        if (r != HUBUS_ERR_LINE || attempts >= m->cfg.retry_budget) {
-            return r;
-        }
-    }
-    turnaround(m);
-    for (i = 0; i < HUBUS_ARB_SLOTS; i++) {
-        if (recv_bit(m, i == 0 ? m->cfg.t_turnaround_ns : m->cfg.t_clk_low_ns)) {
-            slots |= (uint16_t)(1u << i);
-        }
-    }
-    r = cond_stop(m);
-    if (r != HUBUS_OK) {
-        (void)recover(m);
-    }
-    (void)hubus_arb_decode(slots, prefix, target_len, res);
-    return HUBUS_OK;
+    return request(m, req_type, req_type == HUBUS_M_REQUEST_INFO ? HUBUS_S_INFO : HUBUS_S_DATA, target_len, prefix,
+                   res, out);
 }
 
 /* ---- burst ------------------------------------------------------------ */
@@ -579,16 +593,30 @@ static void note_failure(hubus_master_t *m, uint8_t mcid, hubus_status_t r)
     }
 }
 
-/* Requests data from `mcid` (with retries). Returns an error only for conditions that abort the burst. */
-static hubus_status_t serve(hubus_master_t *m, uint8_t mcid, uint8_t polled, hubus_data_fn on_data, void *ctx,
-                            hubus_burst_stats_t *st)
+/*
+ * Handles the response of `mcid` (with retries). `pre` is the response that already arrived in the group request
+ * that selected `mcid`, with its status `pre_r`; NULL if there is none (exact request). Returns an error only for
+ * conditions that abort the burst.
+ */
+static hubus_status_t serve(hubus_master_t *m, uint8_t mcid, uint8_t polled, const hubus_slave_frame_t *pre,
+                            hubus_status_t pre_r, hubus_data_fn on_data, void *ctx, hubus_burst_stats_t *st)
 {
     uint8_t attempts = 0;
     uint8_t fragments = 0;
 
     for (;;) {
         hubus_slave_frame_t f;
-        hubus_status_t r = hubus_master_request_data(m, mcid, &f);
+        hubus_status_t r;
+
+        if (pre) {
+            r = pre_r;
+            if (r == HUBUS_OK) {
+                f = *pre;
+            }
+            pre = NULL;
+        } else {
+            r = hubus_master_request_data(m, mcid, &f);
+        }
 
         if (r == HUBUS_OK) {
             hubus_gen_tracker_t *t = &m->gen[mcid];
@@ -647,41 +675,37 @@ hubus_status_t hubus_master_burst(hubus_master_t *m, hubus_data_fn on_data, void
     m->hold = 1;
 
     for (;;) {
-        uint8_t winner = 0;
-        uint8_t have = 0;
-
         if (mask.len == HUBUS_TARGET_LEN_EXACT) {
-            /* One MCID exactly: no poll needed. */
-            hubus_status_t r = serve(m, mask.prefix, 0, on_data, ctx, st);
+            /* One MCID exactly: a plain exactly addressed request. */
+            hubus_status_t r = serve(m, mask.prefix, 0, NULL, HUBUS_OK, on_data, ctx, st);
             if (r != HUBUS_OK) {
                 result = r;
                 break;
             }
         } else {
             hubus_arb_result_t res;
-            hubus_status_t r = hubus_master_poll(m, mask.prefix, mask.len, &res);
+            hubus_slave_frame_t f;
+            hubus_status_t r = hubus_master_request_group(m, HUBUS_M_REQUEST_DATA, mask.prefix, mask.len, &res, &f);
+            uint8_t i;
 
             st->polls++;
-            if (r != HUBUS_OK) {
-                result = r;
-                break;
-            }
-            if (res.contender) {
-                uint8_t i;
+            if (!res.contender) {
+                if (r != HUBUS_OK) {
+                    result = r;
+                    break;
+                }
+            } else {
+                /* The masks are valid even if the winner's frame was not. */
                 for (i = 0; i < res.n_masks; i++) {
                     if (!hubus_mask_stack_push(&m->stack, res.masks[i])) {
                         result = HUBUS_ERR_STACK;
                         break;
                     }
                 }
-                winner = res.winner;
-                have = 1;
-            }
-            if (result != HUBUS_OK) {
-                break;
-            }
-            if (have) {
-                r = serve(m, winner, 1, on_data, ctx, st);
+                if (result != HUBUS_OK) {
+                    break;
+                }
+                r = serve(m, res.winner, 1, &f, r, on_data, ctx, st);
                 if (r != HUBUS_OK) {
                     result = r;
                     break;
@@ -719,35 +743,112 @@ hubus_status_t hubus_master_service(hubus_master_t *m, hubus_data_fn on_data, vo
 
 /* ---- commissioning --------------------------------------------------- */
 
+/* REQUEST_INFO to one MCID with retries on CRC failures. */
+static hubus_status_t verify_mcid(hubus_master_t *m, hubus_scan_t *scan, unsigned mcid)
+{
+    uint8_t attempts;
+    uint8_t crc_fail = 0;
+    uint8_t present = 0;
+
+    for (attempts = 0; attempts <= m->cfg.retry_budget && !present; attempts++) {
+        hubus_status_t r = hubus_master_request_info(m, (uint8_t)mcid, &scan->info[mcid]);
+
+        if (r == HUBUS_OK) {
+            present = 1;
+            m->fail[mcid] = 0;
+        } else if (r == HUBUS_ERR_CRC || r == HUBUS_ERR_MISMATCH) {
+            crc_fail = 1;
+            note_failure(m, (uint8_t)mcid, r);
+        } else if (r == HUBUS_ERR_LINE_FAULT) {
+            return r;
+        } else if (r == HUBUS_ERR_NO_RESPONSE && !crc_fail) {
+            break; /* silence on the first attempt: MCID unused */
+        }
+    }
+    if (present) {
+        scan->state[mcid] = HUBUS_SCAN_PRESENT;
+    } else if (crc_fail) {
+        scan->state[mcid] = HUBUS_SCAN_SUSPECT;
+    }
+    return HUBUS_OK;
+}
+
 hubus_status_t hubus_master_scan(hubus_master_t *m, hubus_scan_t *scan)
+{
+    hubus_mask_t mask = {0, 0};
+    hubus_status_t result = HUBUS_OK;
+
+    memset(scan, 0, sizeof *scan);
+    hubus_mask_stack_clear(&m->stack);
+    m->hold = 1;
+
+    for (;;) {
+        if (mask.len == HUBUS_TARGET_LEN_EXACT) {
+            /* A slave lost at bit 0 against this MCID, so it exists: read its info exactly. */
+            result = verify_mcid(m, scan, mask.prefix);
+            if (result != HUBUS_OK) {
+                break;
+            }
+        } else {
+            hubus_arb_result_t res;
+            hubus_slave_frame_t f;
+            hubus_status_t r = hubus_master_request_group(m, HUBUS_M_REQUEST_INFO, mask.prefix, mask.len, &res, &f);
+            uint8_t i;
+
+            if (!res.contender) {
+                if (r != HUBUS_OK) {
+                    result = r;
+                    break;
+                }
+            } else {
+                for (i = 0; i < res.n_masks; i++) {
+                    if (!hubus_mask_stack_push(&m->stack, res.masks[i])) {
+                        result = HUBUS_ERR_STACK;
+                        break;
+                    }
+                }
+                if (result != HUBUS_OK) {
+                    break;
+                }
+                if (r == HUBUS_OK) {
+                    scan->info[res.winner] = f;
+                    scan->state[res.winner] = HUBUS_SCAN_PRESENT;
+                    m->fail[res.winner] = 0;
+                } else {
+                    /* CRC failure: a duplicate MCID answers like this. Ask the winner exactly, with retries. */
+                    note_failure(m, res.winner, r);
+                    result = verify_mcid(m, scan, res.winner);
+                    if (result != HUBUS_OK) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (!hubus_mask_stack_pop(&m->stack, &mask)) {
+            break;
+        }
+    }
+
+    m->hold = 0;
+    if (result == HUBUS_OK || result == HUBUS_ERR_STACK) {
+        finish_idle(m, 0);
+    }
+    if (result == HUBUS_ERR_STACK) {
+        (void)recover(m);
+    }
+    return result;
+}
+
+hubus_status_t hubus_master_scan_full(hubus_master_t *m, hubus_scan_t *scan)
 {
     unsigned mcid;
 
     memset(scan, 0, sizeof *scan);
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
-        uint8_t attempts;
-        uint8_t crc_fail = 0;
-        uint8_t present = 0;
+        hubus_status_t r = verify_mcid(m, scan, mcid);
 
-        for (attempts = 0; attempts <= m->cfg.retry_budget && !present; attempts++) {
-            hubus_status_t r = hubus_master_request_info(m, (uint8_t)mcid, &scan->info[mcid]);
-
-            if (r == HUBUS_OK) {
-                present = 1;
-                m->fail[mcid] = 0;
-            } else if (r == HUBUS_ERR_CRC || r == HUBUS_ERR_MISMATCH) {
-                crc_fail = 1;
-                note_failure(m, (uint8_t)mcid, r);
-            } else if (r == HUBUS_ERR_LINE_FAULT) {
-                return r;
-            } else if (r == HUBUS_ERR_NO_RESPONSE && !crc_fail) {
-                break; /* silence on the first attempt: MCID unused */
-            }
-        }
-        if (present) {
-            scan->state[mcid] = HUBUS_SCAN_PRESENT;
-        } else if (crc_fail) {
-            scan->state[mcid] = HUBUS_SCAN_SUSPECT;
+        if (r != HUBUS_OK) {
+            return r;
         }
     }
     return HUBUS_OK;

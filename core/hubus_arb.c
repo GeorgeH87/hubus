@@ -4,33 +4,31 @@
 
 uint8_t hubus_arb_decode(uint16_t slots, uint8_t base_prefix, uint8_t base_len, hubus_arb_result_t *r)
 {
-    uint8_t winner = 0;
-    uint8_t any = 0;
+    uint8_t winner;
     uint8_t ok = 1;
     uint8_t k;
 
     r->contender = 0;
     r->winner = 0;
     r->n_masks = 0;
+    if (base_len > HUBUS_TARGET_LEN_EXACT) {
+        return 0;
+    }
 
-    for (k = HUBUS_MCID_BITS; k-- > 0;) {
+    /* The prefix slots are not on the wire: the winner shares the prefix with the request. */
+    winner = (uint8_t)(base_prefix & hubus_prefix_mask(base_len));
+    if (slots & (uint16_t)((1u << (2u * base_len)) - 1u)) {
+        ok = 0; /* a slot inside the prefix cannot exist: noise, ignored below */
+        slots &= (uint16_t)~((1u << (2u * base_len)) - 1u);
+    }
+    for (k = (uint8_t)(HUBUS_MCID_BITS - base_len); k-- > 0;) {
         uint8_t slot = (uint8_t)(2u * (HUBUS_MCID_BITS - 1u - k));
         if (slots & (1u << slot)) {
             winner |= (uint8_t)(1u << k);
-            any = 1;
         }
     }
 
-    if (!any) {
-        /* No contender. Low handoff slots without arbitration bits are noise. */
-        return (uint8_t)(slots == 0);
-    }
-    if (base_len > HUBUS_TARGET_LEN_EXACT ||
-        ((winner ^ base_prefix) & hubus_prefix_mask(base_len)) != 0) {
-        return 0; /* winner outside the polled group: noise */
-    }
-
-    for (k = HUBUS_MCID_BITS; k-- > 0;) {
+    for (k = (uint8_t)(HUBUS_MCID_BITS - base_len); k-- > 0;) {
         uint8_t slot = (uint8_t)(2u * (HUBUS_MCID_BITS - 1u - k) + 1u);
         uint8_t tlen;
 
@@ -38,8 +36,8 @@ uint8_t hubus_arb_decode(uint16_t slots, uint8_t base_prefix, uint8_t base_len, 
             continue;
         }
         tlen = (uint8_t)(HUBUS_MCID_BITS - k);
-        if (tlen <= base_len || !(winner & (1u << k))) {
-            ok = 0; /* handoff inside the prefix, or loser bit not dominated */
+        if (!(winner & (1u << k))) {
+            ok = 0; /* loser bit not dominated by the winner */
             continue;
         }
         r->masks[r->n_masks].prefix = (uint8_t)(winner & hubus_prefix_mask(tlen) & ~(1u << k));
