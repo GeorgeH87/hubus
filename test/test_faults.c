@@ -427,6 +427,8 @@ static void test_corrupted_data_stops_being_retried_and_flags_the_mcid(void)
     fx.sim.read_filter_ctx = &rf;
     TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
     TEST_ASSERT_EQUAL_UINT(1 + fx.cfg.retry_budget, fx.master.fail[10]);
+    TEST_ASSERT_EQUAL_UINT(1 + fx.cfg.retry_budget, fx.master.mcid_counters[10].crc_errors);
+    TEST_ASSERT_EQUAL_UINT(1 + fx.cfg.retry_budget, fx.master.counters.crc_errors);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_DIAG_DUPLICATE, hubus_master_diagnose(&fx.master, &suspects));
     TEST_ASSERT_TRUE(suspects & ((uint64_t)1 << 10));
 }
@@ -579,6 +581,7 @@ static void test_lost_stop_leads_to_a_duplicate_that_is_discarded(void)
     TEST_ASSERT_EQUAL_UINT(1, st.duplicates);
     TEST_ASSERT_EQUAL_UINT(0, st.served);
     TEST_ASSERT_FALSE(hubus_core_is_pending(&fx.core[a])); /* this time the STOP arrived */
+    TEST_ASSERT_EQUAL_UINT(1, fx.master.mcid_counters[10].duplicates);
 }
 
 /* ---- stuck line / master restart ------------------------------------------------ */

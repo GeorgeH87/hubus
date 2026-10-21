@@ -1,0 +1,69 @@
+# hubusd configuration. Copy to /etc/hubus/hubusd.yaml and adjust.
+# Validate with: hubusd --check -c hubusd.yaml
+# Reload the slave list and the profiles with: kill -HUP $(pidof hubusd)
+
+gpio:
+  chip: pinctrl-rp1      # chip label: pinctrl-rp1 (Pi 5), pinctrl-bcm2711 (Pi 4); empty = auto-detect
+  clk: 17                # GPIO offset of CLK (push-pull output)
+  data: 27               # GPIO offset of DATA (open drain, needs an external pull-up to 3.3 V)
+  realtime: 0            # SCHED_FIFO priority (1..99), 0 = off; needs CAP_SYS_NICE
+
+# All timing values are minimums. Frozen after hardware measurements (docs/OPEN_ISSUES.md H3).
+timing:
+  clk_low_us: 50
+  clk_high_us: 50
+  sample_us: 25
+  cond_us: 50
+  turnaround_us: 200
+  retry_budget: 2
+
+mqtt:
+  host: localhost
+  port: 1883
+  # username: hubus
+  # password: secret                 # or password_file, or the environment variable HUBUSD_MQTT_PASSWORD
+  # password_file: /etc/hubus/mqtt.password
+  tls: false
+  # cafile: /etc/ssl/certs/ca.pem
+  base_topic: hubus
+  discovery_prefix: homeassistant
+  discovery: true                    # Home Assistant MQTT discovery
+  discovery_cleanup: false           # at start, remove discovery entries of unconfigured MCIDs
+  client_id: hubusd
+  stats_interval_s: 60               # 0 = only on request
+
+bus:
+  readback: true          # after a command, read the state back with STATUS_CAPTURE
+  ping_interval_s: 30     # availability check per slave, 0 = off
+  ping_failures: 3        # missed checks before a slave is offline
+  scan_interval_s: 300    # look for unconfigured slaves, 0 = only at start
+  startup_retry_s: 10     # retry after a line fault
+
+slaves:
+  - mcid: 3
+    name: Garden relay
+    profile: relay        # optional: recognised from SLAVE_INFO if the firmware reports its device type
+  - mcid: 5
+    name: Door button
+  - mcid: 7
+    name: Cellar temperature
+    readback: true        # per-slave override of bus.readback
+
+# Profiles for custom firmware. Built in: relay (type 0x01), switch (0x02), temperature (0x03).
+# profiles:
+#   dimmer:
+#     component: switch               # switch | binary_sensor | sensor
+#     device_type: 0x20               # first application byte of SLAVE_INFO (automatic recognition)
+#     on:  {opcode: 0x30, args: [255]}
+#     off: {opcode: 0x30, args: [0]}
+#   pressure:
+#     component: sensor
+#     byte_offset: 0
+#     byte_length: 2                  # 1 or 2
+#     byte_order: big                 # big | little
+#     signed: false
+#     scale: 0.1                      # value = raw * scale + offset
+#     offset: 900
+#     decimals: 1
+#     unit: hPa
+#     device_class: pressure

@@ -1,0 +1,24 @@
+[Unit]
+Description=HUBUS master daemon (MQTT)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hubusd -c /etc/hubus/hubusd.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# Unprivileged user with access to /dev/gpiochip*: sudo useradd -r -G gpio hubus
+User=hubus
+Group=gpio
+# Real-time scheduling for the bus thread (gpio.realtime) without running as root
+AmbientCapabilities=CAP_SYS_NICE
+CapabilityBoundingSet=CAP_SYS_NICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

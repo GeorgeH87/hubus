@@ -8,4 +8,4 @@ apt-get update
 apt-get install -y \
     build-essential cmake ninja-build pkg-config git gdb clang-format \
     gcc-avr binutils-avr avr-libc avrdude simavr \
-    libgpiod-dev gpiod
+    libgpiod-dev gpiod libyaml-dev libmosquitto-dev mosquitto mosquitto-clients

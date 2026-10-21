@@ -1,6 +1,6 @@
 # Master Daemon (`hubusd`) Requirements
 
-Status: requirements only, not implemented. Tracked in `TODO.md` section 10.
+Status: implemented (`daemon/`), see `DAEMON.md` for operation. Not yet run on real hardware. Decisions taken: configuration in YAML (`libyaml`), slaves that are on the bus but not configured are ignored and listed in `hubus/master/state`. Implementation notes: slave availability is tracked with periodic `REQUEST_INFO` (`bus.ping_interval_s`), because slaves only answer when asked; discovery entries are removed on reload (and optionally at start with `mqtt.discovery_cleanup`).
 
 ## 1. Purpose
 

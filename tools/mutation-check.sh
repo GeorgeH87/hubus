@@ -1,7 +1,7 @@
 #!/bin/sh
 # Sanity check of the test suite: applies small deliberate bugs ("mutants") to a
 # scratch copy of the sources and verifies that the tests notice each of them.
-# Usage: sh tools/mutation-check.sh
+# Usage: sh tools/mutation-check.sh        (ONLY=text runs the mutants whose name contains the text)
 set -u
 src="$(cd "$(dirname "$0")/.." && pwd)"
 work="${TMPDIR:-/tmp}/hubus-mutation"
@@ -10,6 +10,7 @@ total=0
 
 run_mutant() { # name file sed-expression
     name="$1"; file="$2"; expr="$3"
+    case "$name" in *"${ONLY:-}"*) ;; *) return ;; esac
     rm -rf "$work"; mkdir -p "$work"
     (cd "$src" && tar --exclude=./build --exclude=./.git -cf - .) | (cd "$work" && tar xf -)
     sed -i "$expr" "$work/$file"
@@ -20,7 +21,7 @@ run_mutant() { # name file sed-expression
     if ! (cd "$work" && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug >/dev/null 2>&1 && cmake --build build >/dev/null 2>&1); then
         echo "INVALID (does not build): $name"; survived=$((survived + 1)); return
     fi
-    if (cd "$work" && ctest --test-dir build -j4 --timeout 60 >/dev/null 2>&1); then
+    if (cd "$work" && ctest --test-dir build -j4 --timeout 60 -E hubusd_e2e >/dev/null 2>&1); then
         echo "SURVIVED: $name"; survived=$((survived + 1))
     else
         echo "killed:   $name"
@@ -48,6 +49,15 @@ run_mutant "master ends bad response with STOP"    master/hubus_master.c 's/    
 run_mutant "master never retries"                  master/hubus_master.c 's/if (attempts >= m->cfg.retry_budget) {/if (1) {/'
 run_mutant "master ignores readback"               master/hubus_master.c 's/return (high == (bit ? 0u : 1u)) ? HUBUS_OK : HUBUS_ERR_LINE;/return HUBUS_OK;/'
 run_mutant "serve order not descending"            master/hubus_master.c 's/hubus_mask_stack_clear(\&m->stack);/hubus_mask_stack_clear(\&m->stack); (void)0;/;s/if (!hubus_mask_stack_pop(\&m->stack, \&mask)) {/if (m->stack.n == 0 || (mask = m->stack.item[0], 0)) {/'
+
+run_mutant "daemon: no republish after reconnect"     daemon/hubusd_core.c 's/    d->republish = 1;/    d->republish = 0;/'
+run_mutant "daemon: slave never goes offline"          daemon/hubusd_core.c 's/if (++s->ping_failures >= threshold) {/if (0) {/'
+run_mutant "daemon: wrong discovery payload"           daemon/hubusd_core.c 's/"payload_on", "ON"/"payload_on", "on"/'
+run_mutant "daemon: set without profile accepted"         daemon/hubusd_core.c 's/} else if (!s->profile) {/} else if (0) {/'
+run_mutant "daemon: queue never reports overflow"      daemon/hubusd_core.c 's/        d->stats.queue_full++;/        (void)0;/'
+run_mutant "daemon: state published without readback"  daemon/hubusd_core.c 's/    if (slave_readback(d, mcid) && info_can_capture(s)) {/    if (0) {/'
+run_mutant "config: duplicate MCID accepted"           daemon/hubusd_config.c 's/if (cfg->slaves\[j\].mcid == mcid) {/if (0) {/'
+run_mutant "profile: byte order ignored"               daemon/hubusd_profile.c 's/uint16_t hi = p->big_endian ? /uint16_t hi = 1 ? /'
 
 echo "$survived of $total mutants survived"
 [ "$survived" -eq 0 ]

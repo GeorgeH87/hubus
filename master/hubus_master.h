@@ -72,6 +72,32 @@ typedef struct {
     uint8_t payload[HUBUS_MAX_PAYLOAD];
 } hubus_slave_frame_t;
 
+/* ---- counters ------------------------------------------------------------- */
+
+/* Transaction and error counters of the whole master (monotonic, for diagnostics). */
+typedef struct {
+    uint32_t polls;
+    uint32_t info_requests;
+    uint32_t data_requests;
+    uint32_t commands;
+    uint32_t no_response;
+    uint32_t crc_errors;
+    uint32_t mismatches;
+    uint32_t line_errors;      /* readback mismatch while transmitting (recovered) */
+    uint32_t line_faults;      /* DATA stuck low */
+    uint32_t recoveries;       /* recovery sequences (clock until DATA high, RESET) */
+} hubus_master_counters_t;
+
+/* Counters per MCID. */
+typedef struct {
+    uint32_t frames;           /* valid responses */
+    uint32_t crc_errors;       /* invalid responses (CRC, wrong type or source MCID) */
+    uint32_t no_response;
+    uint32_t duplicates;       /* SLAVE_DATA discarded through GEN */
+    uint32_t gaps;             /* SLAVE_DATA frames after which buffer contents were lost */
+    uint32_t lost;             /* buffer contents overwritten unread (sum over all gaps) */
+} hubus_mcid_counters_t;
+
 /* ---- master state --------------------------------------------------- */
 
 typedef struct {
@@ -82,6 +108,8 @@ typedef struct {
     hubus_mask_stack_t stack;
     hubus_gen_tracker_t gen[HUBUS_MCID_MAX + 1u];
     uint8_t fail[HUBUS_MCID_MAX + 1u]; /* consecutive CRC/mismatch failures per MCID */
+    hubus_master_counters_t counters;
+    hubus_mcid_counters_t mcid_counters[HUBUS_MCID_MAX + 1u];
 } hubus_master_t;
 
 void hubus_master_init(hubus_master_t *m, const hubus_master_hal_t *hal, const hubus_master_cfg_t *cfg);

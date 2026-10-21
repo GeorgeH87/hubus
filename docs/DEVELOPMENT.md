@@ -92,3 +92,10 @@ The same build is available through CMake presets (`host`, `avr`; see `CMakePres
 - `test_small_buffers`: the core compiled with small compile-time buffers.
 
 The simulation checks two invariants in every master/fault test: a slave never changes `DATA` while `CLK` is high, and the master never undercuts its configured timing minimums.
+
+### Daemon Tests
+
+- `test_daemon_config`: YAML tree, configuration (defaults, every error class with line numbers, unknown keys, secrets), custom and built-in profiles, JSON writer.
+- `test_daemon_core`: `hubusd` against the bus simulation and a fake MQTT client: startup, discovery, events, commands and their validation, read-back, availability, statistics, line faults, reconnect, reload, shutdown, messages from a second thread.
+- `hubusd_example_config`: `hubusd --check` on `daemon/hubusd.example.yaml`.
+- `hubusd_e2e` (`test/tools/e2e.sh`): a real mosquitto broker, `hubusd_sim` (the daemon on a simulated relay, button, and temperature sensor), and `mosquitto_pub`/`mosquitto_sub` as clients. Skipped if mosquitto is not installed. `build/host/test/hubusd_sim` can also be run by hand for experiments (`docs/DAEMON.md`).

@@ -9,6 +9,7 @@ The protocol is specified in `docs/` and implemented in C: a hardware-independen
 - `core/`: protocol code without hardware access (CRC, frame codec, arbitration, slave state machine).
 - `slave/`: slave library with one HAL per device family (`slave/README.md`).
 - `master/`: master logic on a HAL, plus the libgpiod HAL for the Raspberry Pi.
+- `daemon/`: `hubusd`, the master as a service with MQTT and Home Assistant integration (`docs/DAEMON.md`).
 - `test/`: unit tests, bus simulation, fault injection.
 - `examples/`: slave firmware examples (relay, switch, temperature sensor), a master command line tool, and the documented protocol sessions.
 - `docs/`: specification and development environment (`docs/DEVELOPMENT.md` explains how to build and test).

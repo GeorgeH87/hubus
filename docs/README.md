@@ -11,7 +11,8 @@ This directory contains the normative documentation for HUBUS.
 - `SLAVE_PROPERTIES.md`: minimal slave capabilities and example device categories.
 - `ITERATIVE_CONCEPT.md`: open decisions, roadmap, and deferred topics.
 - `OPEN_ISSUES.md`: tracking list of known gaps, inconsistencies, and defects.
-- `DAEMON_REQUIREMENTS.md`: requirements for the MQTT master daemon (not implemented yet).
+- `DAEMON_REQUIREMENTS.md`: requirements for the MQTT master daemon.
+- `DAEMON.md`: operating the bus from MQTT / Home Assistant (hubusd).
 
 ## Development
 

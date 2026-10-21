@@ -43,3 +43,29 @@ target_compile_options(test_small_buffers PRIVATE ${HUBUS_TEST_WARNINGS})
 add_test(NAME test_small_buffers COMMAND test_small_buffers)
 set_tests_properties(test_small_buffers PROPERTIES TIMEOUT 120)
 endif()
+
+if(HUBUSD_LIB_AVAILABLE)
+    hubus_test(test_daemon_config hubusd_lib)
+    hubus_test(test_daemon_core hubusd_lib)
+endif()
+
+# Manual end-to-end tool: hubusd on a simulated bus with a relay, a button, and a temperature sensor.
+if(TARGET hubusd_run)
+    add_executable(hubusd_sim tools/hubusd_sim.c)
+    target_link_libraries(hubusd_sim PRIVATE hubusd_run hubus_sim)
+endif()
+
+# The example configuration must stay valid.
+if(TARGET hubusd)
+    add_test(NAME hubusd_example_config COMMAND hubusd --check -c ${PROJECT_SOURCE_DIR}/daemon/hubusd.example.yaml)
+endif()
+
+# End-to-end test with a real MQTT broker (skipped if mosquitto is not installed).
+find_program(MOSQUITTO_BROKER mosquitto)
+find_program(MOSQUITTO_PUB mosquitto_pub)
+find_program(MOSQUITTO_SUB mosquitto_sub)
+if(TARGET hubusd_sim AND MOSQUITTO_BROKER AND MOSQUITTO_PUB AND MOSQUITTO_SUB)
+    add_test(NAME hubusd_e2e COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/e2e.sh ${CMAKE_BINARY_DIR}
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(hubusd_e2e PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+endif()

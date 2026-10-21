@@ -160,6 +160,8 @@ static void finish_idle(hubus_master_t *m, uint8_t keep_high)
     }
 }
 
+static hubus_status_t recover(hubus_master_t *m);
+
 static hubus_status_t cond_start(hubus_master_t *m)
 {
     hubus_status_t r = prepare_condition(m);
@@ -229,7 +231,7 @@ static hubus_status_t cond_reset(hubus_master_t *m)
 }
 
 /* Startup steps 1-3, also the error recovery sequence. Leaves CLK low. */
-static hubus_status_t recover(hubus_master_t *m)
+static hubus_status_t recover_impl(hubus_master_t *m)
 {
     uint16_t ticks = 0;
     uint8_t saved_hold = m->hold;
@@ -258,6 +260,18 @@ static hubus_status_t recover(hubus_master_t *m)
     }
     m->hold = saved_hold;
     return r == HUBUS_ERR_LINE ? HUBUS_ERR_LINE_FAULT : r;
+}
+
+static hubus_status_t recover(hubus_master_t *m)
+{
+    hubus_status_t r;
+
+    m->counters.recoveries++;
+    r = recover_impl(m);
+    if (r == HUBUS_ERR_LINE_FAULT) {
+        m->counters.line_faults++;
+    }
+    return r;
 }
 
 hubus_status_t hubus_master_startup(hubus_master_t *m)
@@ -352,6 +366,9 @@ static hubus_status_t begin_transaction(hubus_master_t *m, uint8_t type, uint8_t
         r = send_frame(m, type, target_len, prefix, payload, len);
     }
     if (r != HUBUS_OK) {
+        if (r == HUBUS_ERR_LINE) {
+            m->counters.line_errors++;
+        }
         hubus_status_t rec = recover(m);
         return rec == HUBUS_OK ? r : rec;
     }
@@ -371,6 +388,7 @@ hubus_status_t hubus_master_send_command(hubus_master_t *m, uint8_t target_len, 
         prefix > HUBUS_MCID_MAX) {
         return HUBUS_ERR_ARG;
     }
+    m->counters.commands++;
     payload[0] = opcode;
     if (args_len) {
         memcpy(&payload[1], args, args_len);
@@ -397,7 +415,7 @@ hubus_status_t hubus_master_status_capture(hubus_master_t *m, uint8_t target_len
     return hubus_master_send_command(m, target_len, prefix, HUBUS_OP_STATUS_CAPTURE, NULL, 0);
 }
 
-static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t mcid,
+static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t mcid,
                               hubus_slave_frame_t *out)
 {
     uint8_t buf[HUBUS_MAX_FRAME_BYTES];
@@ -471,6 +489,42 @@ static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_
     return r;
 }
 
+static hubus_status_t request(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t mcid,
+                              hubus_slave_frame_t *out)
+{
+    hubus_status_t r;
+
+    if (mcid > HUBUS_MCID_MAX) {
+        return HUBUS_ERR_ARG;
+    }
+    if (req_type == HUBUS_M_REQUEST_INFO) {
+        m->counters.info_requests++;
+    } else {
+        m->counters.data_requests++;
+    }
+    r = request_impl(m, req_type, resp_type, mcid, out);
+    switch (r) {
+    case HUBUS_OK:
+        m->mcid_counters[mcid].frames++;
+        break;
+    case HUBUS_ERR_NO_RESPONSE:
+        m->counters.no_response++;
+        m->mcid_counters[mcid].no_response++;
+        break;
+    case HUBUS_ERR_CRC:
+        m->counters.crc_errors++;
+        m->mcid_counters[mcid].crc_errors++;
+        break;
+    case HUBUS_ERR_MISMATCH:
+        m->counters.mismatches++;
+        m->mcid_counters[mcid].crc_errors++;
+        break;
+    default:
+        break;
+    }
+    return r;
+}
+
 hubus_status_t hubus_master_request_info(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out)
 {
     return request(m, HUBUS_M_REQUEST_INFO, HUBUS_S_INFO, mcid, out);
@@ -492,6 +546,7 @@ hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t targ
         return HUBUS_ERR_ARG;
     }
     prefix &= hubus_prefix_mask(target_len);
+    m->counters.polls++;
     for (attempts = 0;; attempts++) {
         r = begin_transaction(m, HUBUS_M_POLL_PENDING, target_len, prefix, NULL, 0);
         if (r == HUBUS_OK) {
@@ -543,11 +598,14 @@ static hubus_status_t serve(hubus_master_t *m, uint8_t mcid, uint8_t polled, hub
             m->fail[mcid] = 0;
             attempts = 0;
             if (g == HUBUS_GEN_DUPLICATE) {
+                m->mcid_counters[mcid].duplicates++;
                 st->duplicates++;
             } else {
                 uint8_t lost = 0;
                 if (g == HUBUS_GEN_GAP) {
                     st->gaps++;
+                    m->mcid_counters[mcid].gaps++;
+                    m->mcid_counters[mcid].lost += hubus_gen_lost(last, f.gen);
                     lost = hubus_gen_lost(last, f.gen);
                 }
                 st->served++;

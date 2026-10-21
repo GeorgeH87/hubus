@@ -93,11 +93,12 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 
 ## 10. Master Daemon (`hubusd`, MQTT)
 
-Requirements: `docs/DAEMON_REQUIREMENTS.md`. Not started.
+Requirements: `docs/DAEMON_REQUIREMENTS.md`, operation: `docs/DAEMON.md`.
 
-- [ ] Confirm the open decisions (configuration format, unknown slaves).
-- [ ] Daemon core: bus thread, command queue, statistics, availability tracking, tested against the bus simulation with a fake MQTT client.
-- [ ] Device profiles (relay, switch, temperature) and Home Assistant discovery.
-- [ ] Configuration file parser with validation.
-- [ ] `libmosquitto` binding, reconnect, last will, retained state.
-- [ ] systemd unit, installation notes, end-to-end test on hardware.
+- [x] Confirm the open decisions (YAML, unknown slaves are ignored and reported in the master state).
+- [x] Daemon core: bus thread, command queue, statistics, availability tracking, tested against the bus simulation with a fake MQTT client.
+- [x] Device profiles (relay, switch, temperature, custom) and Home Assistant discovery.
+- [x] Configuration file parser with validation (line numbers, unknown keys, secrets).
+- [x] `libmosquitto` binding, reconnect, last will, retained state; end-to-end test with a real broker on the simulated bus.
+- [x] systemd unit, installation notes.
+- [ ] End-to-end test on hardware (Raspberry Pi, relay ATtiny, button ATtiny) and Home Assistant.

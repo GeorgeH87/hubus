@@ -708,6 +708,31 @@ static void test_diagnose_many_failing_mcids_is_a_line_problem(void)
     TEST_ASSERT_EQUAL_UINT8(HUBUS_DIAG_DUPLICATE, hubus_master_diagnose(&fx.master, &suspects));
 }
 
+static void test_counters_track_transactions_and_errors(void)
+{
+    hubus_slave_frame_t f;
+    hubus_burst_stats_t st;
+    unsigned s = fx_add(&fx, 3);
+
+    fx_startup(&fx);
+    memset(&fx.master.counters, 0, sizeof fx.master.counters);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, 6, 3, 0x20, NULL, 0));
+    TEST_ASSERT_EQUAL(HUBUS_ERR_NO_RESPONSE, hubus_master_request_info(&fx.master, 4, &f));
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&fx.master, 3, &f));
+    fx_write(&fx, s, 1);
+    fx_write(&fx, s, 2);
+    TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
+    TEST_ASSERT_EQUAL_UINT(1, fx.master.counters.commands);
+    TEST_ASSERT_EQUAL_UINT(2, fx.master.counters.info_requests);
+    TEST_ASSERT_EQUAL_UINT(1, fx.master.counters.data_requests);
+    TEST_ASSERT_EQUAL_UINT(1, fx.master.counters.polls);
+    TEST_ASSERT_EQUAL_UINT(1, fx.master.counters.no_response);
+    TEST_ASSERT_EQUAL_UINT(0, fx.master.counters.crc_errors);
+    TEST_ASSERT_EQUAL_UINT(2, fx.master.mcid_counters[3].frames);
+    TEST_ASSERT_EQUAL_UINT(1, fx.master.mcid_counters[4].no_response);
+    TEST_ASSERT_EQUAL_UINT(0, fx.master.mcid_counters[3].gaps);
+}
+
 /* ---- timing ----------------------------------------------------------------- */
 
 static void test_configured_minimum_timing_is_respected(void)
@@ -775,6 +800,7 @@ int main(void)
     RUN_TEST(test_scan_blind_spot_for_identical_duplicates);
     RUN_TEST(test_runtime_heuristic_flags_duplicate_mcid);
     RUN_TEST(test_diagnose_many_failing_mcids_is_a_line_problem);
+    RUN_TEST(test_counters_track_transactions_and_errors);
     RUN_TEST(test_configured_minimum_timing_is_respected);
     return UNITY_END();
 }
