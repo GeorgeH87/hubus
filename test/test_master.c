@@ -672,6 +672,107 @@ static void test_scan_blind_spot_for_identical_duplicates(void)
     TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[9]);
 }
 
+/* ---- discovery ------------------------------------------------------------- */
+
+static void test_poll_discover_finds_idle_slaves_and_clears_nothing(void)
+{
+    hubus_arb_result_t r;
+    unsigned a = fx_add(&fx, 42);
+    unsigned b = fx_add(&fx, 40);
+
+    fx_startup(&fx);
+    fx_write(&fx, b, 1);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_poll_discover(&fx.master, 0, 0, &r));
+    TEST_ASSERT_TRUE(r.contender);
+    TEST_ASSERT_EQUAL_UINT8(42, r.winner); /* not pending, but contends */
+    TEST_ASSERT_EQUAL_UINT8(1, r.n_masks);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&fx.core[a]));
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&fx.core[b]));
+}
+
+static void test_scan_uses_far_fewer_transactions_than_full_scan(void)
+{
+    static hubus_scan_t scan;
+    uint16_t discover_info;
+
+    fx_add_ex(&fx, 5, 1, 0x05);
+    fx_add_ex(&fx, 17, 0, 0x11);
+    fx_add_ex(&fx, 63, 1, 0x3F);
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan(&fx.master, &scan));
+    discover_info = fx.master.counters.info_requests;
+    TEST_ASSERT_EQUAL_UINT16(3, discover_info); /* one REQUEST_INFO per slave found */
+    TEST_ASSERT_TRUE(fx.master.counters.polls <= 6u);
+    TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[5]);
+    TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[17]);
+    TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[63]);
+    TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_ABSENT, scan.state[6]);
+    assert_bus_idle();
+}
+
+static void test_scan_finds_every_possible_mcid(void)
+{
+    static hubus_scan_t scan;
+    unsigned mcid;
+
+    for (mcid = 1; mcid <= 63; mcid++) {
+        fx_add_ex(&fx, mcid, 1, mcid);
+    }
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan(&fx.master, &scan));
+    for (mcid = 1; mcid <= 63; mcid++) {
+        TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[mcid]);
+        TEST_ASSERT_EQUAL_UINT8(mcid, scan.info[mcid].payload[HUBUS_INFO_APP + 3]);
+    }
+}
+
+static void test_scan_does_not_disturb_pending_data(void)
+{
+    static hubus_scan_t scan;
+    hubus_burst_stats_t st;
+    unsigned a = fx_add_ex(&fx, 5, 1, 0x05);
+
+    fx_add_ex(&fx, 17, 1, 0x11);
+    fx_startup(&fx);
+    fx_write(&fx, a, 1);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan(&fx.master, &scan));
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&fx.core[a]));
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_burst(&fx.master, NULL, NULL, &st));
+    TEST_ASSERT_EQUAL_UINT16(1, st.served);
+}
+
+static void test_full_scan_still_finds_all_present_slaves(void)
+{
+    static hubus_scan_t scan;
+    unsigned mcid;
+
+    fx_add_ex(&fx, 5, 1, 0x05);
+    fx_add_ex(&fx, 17, 0, 0x11);
+    fx_add_ex(&fx, 63, 1, 0x3F);
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan_full(&fx.master, &scan));
+    for (mcid = 1; mcid <= 63; mcid++) {
+        unsigned expect = (mcid == 5 || mcid == 17 || mcid == 63) ? HUBUS_SCAN_PRESENT : HUBUS_SCAN_ABSENT;
+        TEST_ASSERT_EQUAL_UINT(expect, scan.state[mcid]);
+    }
+    TEST_ASSERT_EQUAL_UINT16(63, fx.master.counters.info_requests);
+}
+
+static void test_scan_without_slaves_finds_nothing(void)
+{
+    static hubus_scan_t scan;
+    unsigned mcid;
+
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan(&fx.master, &scan));
+    for (mcid = 1; mcid <= 63; mcid++) {
+        TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_ABSENT, scan.state[mcid]);
+    }
+    TEST_ASSERT_EQUAL_UINT16(1, fx.master.counters.polls);
+    TEST_ASSERT_EQUAL_UINT16(0, fx.master.counters.info_requests);
+}
+
+
 static void test_runtime_heuristic_flags_duplicate_mcid(void)
 {
     hubus_burst_stats_t st;
@@ -798,6 +899,12 @@ int main(void)
     RUN_TEST(test_scan_finds_all_present_slaves);
     RUN_TEST(test_scan_flags_duplicate_mcid_with_unique_serials);
     RUN_TEST(test_scan_blind_spot_for_identical_duplicates);
+    RUN_TEST(test_poll_discover_finds_idle_slaves_and_clears_nothing);
+    RUN_TEST(test_scan_uses_far_fewer_transactions_than_full_scan);
+    RUN_TEST(test_scan_finds_every_possible_mcid);
+    RUN_TEST(test_scan_does_not_disturb_pending_data);
+    RUN_TEST(test_full_scan_still_finds_all_present_slaves);
+    RUN_TEST(test_scan_without_slaves_finds_nothing);
     RUN_TEST(test_runtime_heuristic_flags_duplicate_mcid);
     RUN_TEST(test_diagnose_many_failing_mcids_is_a_line_problem);
     RUN_TEST(test_counters_track_transactions_and_errors);

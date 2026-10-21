@@ -125,7 +125,7 @@ Rewritten against the specification (R18); the old implementation has been remov
 
 ### R19: Slave Discovery by Arbitration
 
-- **Status:** resolved in the specification (2026-10-21); implementation in `core/`, `master/`, `daemon/`, and the tests is open
+- **Status:** resolved (2026-10-21), implemented in `core/`, `master/` (`hubus_master_poll_discover`, `hubus_master_scan`, `hubus_master_scan_full`) and tested in `test_slave_core` and `test_master`; `hubusd` uses it through `hubus_master_scan`
 - **Problem:** the commissioning scan sent `REQUEST_INFO` to all 63 MCIDs, although the arbitration with handoff slots already shows the master where further slaves are located. It only skipped slaves without pending data.
 - **Resolution:** `POLL_PENDING` with `LEN = 1` is a discovery poll: every addressed slave contends, pending or not, and changes no state. The master runs the burst algorithm (mask stack) on it and finds all slaves in about one poll per slave. The slave change is the participation condition only. `REQUEST_INFO` to each MCID found verifies presence and still exposes duplicate MCIDs, which arbitration cannot distinguish. The full `REQUEST_INFO` scan stays allowed. See `MESSAGE_FORMAT.md` §3.0a, `ARBITRATION.md` §6.4, `PROTOCOL.md` §3.5.
 - **Rejected:** a new master type code (all four are in use) and a payload-free flag in `LEN` (would change the slave's length handling).

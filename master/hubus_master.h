@@ -149,6 +149,10 @@ hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_
 /* POLL_PENDING with a prefix mask; fills the arbitration result. */
 hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t target_len, hubus_arb_result_t *res);
 
+/* Discovery poll (POLL_PENDING, LEN=1): every slave matching the mask contends, pending or not. */
+hubus_status_t hubus_master_poll_discover(hubus_master_t *m, uint8_t prefix, uint8_t target_len,
+                                          hubus_arb_result_t *res);
+
 /* ---- burst ---------------------------------------------------------- */
 
 typedef struct {
@@ -184,8 +188,14 @@ typedef struct {
     hubus_slave_frame_t info[HUBUS_MCID_MAX + 1u];
 } hubus_scan_t;
 
-/* REQUEST_INFO to every MCID 1..63. */
+/*
+ * Commissioning scan: discovery polls find the slaves, then REQUEST_INFO to every MCID
+ * found fills `scan` and exposes duplicate MCIDs (docs/PROTOCOL.md section 3.5).
+ */
 hubus_status_t hubus_master_scan(hubus_master_t *m, hubus_scan_t *scan);
+
+/* Full scan: REQUEST_INFO to every MCID 1..63 (also finds slaves without discovery poll support). */
+hubus_status_t hubus_master_scan_full(hubus_master_t *m, hubus_scan_t *scan);
 
 #define HUBUS_DIAG_OK 0u
 #define HUBUS_DIAG_DUPLICATE 1u    /* a few MCIDs fail repeatedly: suspected duplicate MCID */

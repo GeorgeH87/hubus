@@ -821,6 +821,70 @@ static void test_poll_with_bad_crc_does_not_arbitrate(void)
     raw_stop(&rm, 0);
 }
 
+/* ---- discovery poll ------------------------------------------------------ */
+
+static uint16_t poll_len(uint8_t tlen, uint8_t prefix, uint8_t len)
+{
+    static const uint8_t payload[4] = {0, 0, 0, 0};
+    uint16_t slots;
+
+    raw_start(&rm);
+    raw_send_frame(&rm, HUBUS_M_POLL_PENDING, tlen, prefix, payload, len);
+    raw_turnaround(&rm);
+    slots = raw_recv_arb(&rm);
+    raw_stop(&rm, 0);
+    return slots;
+}
+
+static void test_discovery_poll_lets_idle_slaves_contend(void)
+{
+    hubus_arb_result_t r;
+
+    add_slave(0, 42, 1); /* nothing buffered */
+    add_slave(1, 40, 1);
+    TEST_ASSERT_EQUAL_HEX16(0, poll(0, 0));
+    TEST_ASSERT_TRUE(hubus_arb_decode(poll_len(0, 0, HUBUS_POLL_DISCOVER), 0, 0, &r));
+    TEST_ASSERT_EQUAL_UINT8(42, r.winner);
+    TEST_ASSERT_EQUAL_UINT8(1, r.n_masks);
+    TEST_ASSERT_EQUAL_UINT8(40, r.masks[0].prefix);
+    TEST_ASSERT_EQUAL_UINT8(5, r.masks[0].len);
+}
+
+static void test_discovery_poll_changes_no_slave_state(void)
+{
+    uint8_t v = 7;
+
+    add_slave(0, 42, 1);
+    add_slave(1, 40, 1);
+    buf_write(1, &v, 1, 0);
+    raw_tick(&rm);
+    (void)poll_len(0, 0, HUBUS_POLL_DISCOVER);
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&core[0]));
+    TEST_ASSERT_TRUE(hubus_core_is_pending(&core[1])); /* the STOP after a poll clears nothing */
+    TEST_ASSERT_EQUAL_UINT8(1, core[1].buf_len);
+}
+
+static void test_discovery_poll_respects_prefix_mask(void)
+{
+    hubus_arb_result_t r;
+
+    add_slave(0, 42, 1); /* 101010 */
+    add_slave(1, 21, 1); /* 010101 */
+    TEST_ASSERT_TRUE(hubus_arb_decode(poll_len(1, 0, HUBUS_POLL_DISCOVER), 0, 1, &r));
+    TEST_ASSERT_EQUAL_UINT8(21, r.winner);
+    TEST_ASSERT_EQUAL_HEX16(0, poll_len(2, 0x30, HUBUS_POLL_DISCOVER)); /* 11xxxx: nobody */
+}
+
+static void test_poll_with_reserved_len_is_ignored(void)
+{
+    add_slave(0, 42, 1);
+    make_pending(0);
+    TEST_ASSERT_EQUAL_HEX16(0, poll_len(0, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16(0, poll_len(0, 0, 4));
+    TEST_ASSERT_TRUE(poll_len(0, 0, 0) != 0);
+}
+
+
 /* ---- idle event signaling ------------------------------------------------ */
 
 static void test_write_while_idle_signals_event(void)
@@ -1134,6 +1198,10 @@ int main(void)
     RUN_TEST(test_prefix_mask_selects_contenders);
     RUN_TEST(test_arbitration_slaves_are_passive_afterwards);
     RUN_TEST(test_poll_with_bad_crc_does_not_arbitrate);
+    RUN_TEST(test_discovery_poll_lets_idle_slaves_contend);
+    RUN_TEST(test_discovery_poll_changes_no_slave_state);
+    RUN_TEST(test_discovery_poll_respects_prefix_mask);
+    RUN_TEST(test_poll_with_reserved_len_is_ignored);
     RUN_TEST(test_write_while_idle_signals_event);
     RUN_TEST(test_event_is_released_after_one_complete_clock_pulse);
     RUN_TEST(test_event_without_a_running_master_stays_low);

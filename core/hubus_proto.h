@@ -23,6 +23,8 @@
 /* Master -> slave message types (2 bit). */
 #define HUBUS_M_POLL_PENDING 0u
 #define HUBUS_M_REQUEST_INFO 1u
+/* POLL_PENDING with LEN = 1 (one ignored payload byte) is a discovery poll: every addressed slave contends. */
+#define HUBUS_POLL_DISCOVER 1u
 #define HUBUS_M_REQUEST_DATA 2u
 #define HUBUS_M_SEND_COMMAND 3u
 

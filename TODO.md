@@ -64,6 +64,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Idle event handshake detection.
 - [x] `GEN` duplicate/gap handling, fragment reassembly hooks for applications.
 - [x] Commissioning scan and duplicate MCID heuristic.
+- [x] Discovery poll (`POLL_PENDING` `LEN=1`): slave participation condition, `hubus_master_poll_discover()`, scan via discovery plus `REQUEST_INFO`, `hubus_master_scan_full()` (OPEN_ISSUES R19).
 - [x] Configurable timing minimums (for the slowest slave on the bus).
 - [x] Real-time priority option for the clock thread.
 

@@ -65,6 +65,15 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
         }
         break;
     case HUBUS_M_POLL_PENDING:
+        /* LEN 0: pending poll; LEN 1: discovery poll, every addressed slave contends; other LEN: reserved */
+        if (c->rx_len > HUBUS_POLL_DISCOVER || (c->rx_len == 0u && !c->pending)) {
+            go_ignore(c);
+            break;
+        }
+        c->action = c->rx_type;
+        c->phase = 0;
+        c->state = HUBUS_ST_TURN;
+        break;
     case HUBUS_M_REQUEST_DATA:
         if (!c->pending) {
             go_ignore(c);

@@ -535,8 +535,10 @@ hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_
     return request(m, HUBUS_M_REQUEST_DATA, HUBUS_S_DATA, mcid, out);
 }
 
-hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t target_len, hubus_arb_result_t *res)
+static hubus_status_t poll_impl(hubus_master_t *m, uint8_t prefix, uint8_t target_len, uint8_t discover,
+                                hubus_arb_result_t *res)
 {
+    static const uint8_t discover_payload[HUBUS_POLL_DISCOVER] = {0x00};
     uint16_t slots = 0;
     hubus_status_t r;
     unsigned i;
@@ -548,7 +550,8 @@ hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t targ
     prefix &= hubus_prefix_mask(target_len);
     m->counters.polls++;
     for (attempts = 0;; attempts++) {
-        r = begin_transaction(m, HUBUS_M_POLL_PENDING, target_len, prefix, NULL, 0);
+        r = begin_transaction(m, HUBUS_M_POLL_PENDING, target_len, prefix, discover ? discover_payload : NULL,
+                              discover ? HUBUS_POLL_DISCOVER : 0u);
         if (r == HUBUS_OK) {
             break;
         }
@@ -568,6 +571,17 @@ hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t targ
     }
     (void)hubus_arb_decode(slots, prefix, target_len, res);
     return HUBUS_OK;
+}
+
+hubus_status_t hubus_master_poll(hubus_master_t *m, uint8_t prefix, uint8_t target_len, hubus_arb_result_t *res)
+{
+    return poll_impl(m, prefix, target_len, 0, res);
+}
+
+hubus_status_t hubus_master_poll_discover(hubus_master_t *m, uint8_t prefix, uint8_t target_len,
+                                          hubus_arb_result_t *res)
+{
+    return poll_impl(m, prefix, target_len, 1, res);
 }
 
 /* ---- burst ------------------------------------------------------------ */
@@ -719,38 +733,120 @@ hubus_status_t hubus_master_service(hubus_master_t *m, hubus_data_fn on_data, vo
 
 /* ---- commissioning --------------------------------------------------- */
 
-hubus_status_t hubus_master_scan(hubus_master_t *m, hubus_scan_t *scan)
+/* Enumerates the slaves with discovery polls (docs/ARBITRATION.md section 6.4). */
+static hubus_status_t discover(hubus_master_t *m, uint64_t *found)
+{
+    hubus_mask_t mask = {0, 0};
+    hubus_status_t result = HUBUS_OK;
+
+    *found = 0;
+    hubus_mask_stack_clear(&m->stack);
+    m->hold = 1;
+
+    for (;;) {
+        if (mask.len == HUBUS_TARGET_LEN_EXACT) {
+            /* One MCID exactly: a slave lost at bit 0 against it, so it exists. No poll needed. */
+            *found |= (uint64_t)1 << mask.prefix;
+        } else {
+            hubus_arb_result_t res;
+            hubus_status_t r = hubus_master_poll_discover(m, mask.prefix, mask.len, &res);
+            uint8_t i;
+
+            if (r != HUBUS_OK) {
+                result = r;
+                break;
+            }
+            if (res.contender) {
+                for (i = 0; i < res.n_masks; i++) {
+                    if (!hubus_mask_stack_push(&m->stack, res.masks[i])) {
+                        result = HUBUS_ERR_STACK;
+                        break;
+                    }
+                }
+                *found |= (uint64_t)1 << res.winner;
+            }
+            if (result != HUBUS_OK) {
+                break;
+            }
+        }
+        if (!hubus_mask_stack_pop(&m->stack, &mask)) {
+            break;
+        }
+    }
+
+    m->hold = 0;
+    if (result == HUBUS_OK || result == HUBUS_ERR_STACK) {
+        finish_idle(m, 0);
+    }
+    if (result == HUBUS_ERR_STACK) {
+        (void)recover(m);
+    }
+    return result;
+}
+
+/* REQUEST_INFO to one MCID with retries on CRC failures. */
+static hubus_status_t verify_mcid(hubus_master_t *m, hubus_scan_t *scan, unsigned mcid)
+{
+    uint8_t attempts;
+    uint8_t crc_fail = 0;
+    uint8_t present = 0;
+
+    for (attempts = 0; attempts <= m->cfg.retry_budget && !present; attempts++) {
+        hubus_status_t r = hubus_master_request_info(m, (uint8_t)mcid, &scan->info[mcid]);
+
+        if (r == HUBUS_OK) {
+            present = 1;
+            m->fail[mcid] = 0;
+        } else if (r == HUBUS_ERR_CRC || r == HUBUS_ERR_MISMATCH) {
+            crc_fail = 1;
+            note_failure(m, (uint8_t)mcid, r);
+        } else if (r == HUBUS_ERR_LINE_FAULT) {
+            return r;
+        } else if (r == HUBUS_ERR_NO_RESPONSE && !crc_fail) {
+            break; /* silence on the first attempt: MCID unused */
+        }
+    }
+    if (present) {
+        scan->state[mcid] = HUBUS_SCAN_PRESENT;
+    } else if (crc_fail) {
+        scan->state[mcid] = HUBUS_SCAN_SUSPECT;
+    }
+    return HUBUS_OK;
+}
+
+static hubus_status_t verify(hubus_master_t *m, hubus_scan_t *scan, uint64_t candidates)
 {
     unsigned mcid;
 
     memset(scan, 0, sizeof *scan);
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
-        uint8_t attempts;
-        uint8_t crc_fail = 0;
-        uint8_t present = 0;
+        if ((candidates >> mcid) & 1u) {
+            hubus_status_t r = verify_mcid(m, scan, mcid);
 
-        for (attempts = 0; attempts <= m->cfg.retry_budget && !present; attempts++) {
-            hubus_status_t r = hubus_master_request_info(m, (uint8_t)mcid, &scan->info[mcid]);
-
-            if (r == HUBUS_OK) {
-                present = 1;
-                m->fail[mcid] = 0;
-            } else if (r == HUBUS_ERR_CRC || r == HUBUS_ERR_MISMATCH) {
-                crc_fail = 1;
-                note_failure(m, (uint8_t)mcid, r);
-            } else if (r == HUBUS_ERR_LINE_FAULT) {
+            if (r != HUBUS_OK) {
                 return r;
-            } else if (r == HUBUS_ERR_NO_RESPONSE && !crc_fail) {
-                break; /* silence on the first attempt: MCID unused */
             }
-        }
-        if (present) {
-            scan->state[mcid] = HUBUS_SCAN_PRESENT;
-        } else if (crc_fail) {
-            scan->state[mcid] = HUBUS_SCAN_SUSPECT;
         }
     }
     return HUBUS_OK;
+}
+
+hubus_status_t hubus_master_scan(hubus_master_t *m, hubus_scan_t *scan)
+{
+    uint64_t found;
+    hubus_status_t r = discover(m, &found);
+
+    if (r != HUBUS_OK) {
+        memset(scan, 0, sizeof *scan);
+        return r;
+    }
+    return verify(m, scan, found);
+}
+
+hubus_status_t hubus_master_scan_full(hubus_master_t *m, hubus_scan_t *scan)
+{
+    /* bits 1..63 */
+    return verify(m, scan, ~(uint64_t)1);
 }
 
 uint8_t hubus_master_diagnose(const hubus_master_t *m, uint64_t *suspects)

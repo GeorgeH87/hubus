@@ -11,7 +11,7 @@
  *   --pullup       enable the SoC pull-up on DATA (bench tests only)
  *
  * Commands:
- *   scan                       REQUEST_INFO to every MCID 1..63
+ *   scan                       discovery polls, then REQUEST_INFO to each slave found
  *   burst                      startup sequence, then collect all pending data
  *   monitor                    startup, then serve idle events forever
  *   capture <mcid>             STATUS_CAPTURE to one slave (0 = all), then burst
