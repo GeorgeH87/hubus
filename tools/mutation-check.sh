@@ -55,7 +55,7 @@ run_mutant "daemon: slave never goes offline"          daemon/hubusd_core.c 's/i
 run_mutant "daemon: wrong discovery payload"           daemon/hubusd_core.c 's/"payload_on", "ON"/"payload_on", "on"/'
 run_mutant "daemon: set without profile accepted"         daemon/hubusd_core.c 's/} else if (!s->profile) {/} else if (0) {/'
 run_mutant "daemon: queue never reports overflow"      daemon/hubusd_core.c 's/        d->stats.queue_full++;/        (void)0;/'
-run_mutant "daemon: state published without readback"  daemon/hubusd_core.c 's/    if (slave_readback(d, mcid) && info_can_capture(s)) {/    if (0) {/'
+run_mutant "daemon: state published without readback"  daemon/hubusd_core.c 's/} else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE \&\& info_can_capture(s)) {/} else if (0) {/'
 run_mutant "config: duplicate MCID accepted"           daemon/hubusd_config.c 's/if (cfg->slaves\[j\].mcid == mcid) {/if (0) {/'
 run_mutant "profile: byte order ignored"               daemon/hubusd_profile.c 's/uint16_t hi = p->big_endian ? /uint16_t hi = 1 ? /'
 

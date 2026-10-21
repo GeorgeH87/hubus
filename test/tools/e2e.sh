@@ -21,6 +21,7 @@ trap cleanup EXIT
 printf 'listener %s 127.0.0.1\nallow_anonymous true\n' "$port" > "$tmp/broker.conf"
 cat > "$tmp/hubusd.yaml" <<YAML
 mqtt:
+  host: 127.0.0.1
   port: $port
   stats_interval_s: 2
 bus:
