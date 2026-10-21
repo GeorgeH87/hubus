@@ -8,7 +8,7 @@
  *   0x10 <0|1>   switch the output off / on
  *   0x11         toggle the output
  * The state can be read back at any time with REQUEST_STATE: the slave
- * exposes the PORTB register directly (bit 0 = relay, 1 = on); no copy is made.
+ * exposes its output state (one byte, 0 = off, 1 = on); no copy is made.
  * STATUS_CAPTURE followed by a burst still works. Commands are never
  * acknowledged.
  *
@@ -29,8 +29,11 @@
 #define DEVICE_TYPE_RELAY 0x01
 static const uint8_t info[] PROGMEM = {DEVICE_TYPE_RELAY, 0x01, 0x00, 0x00, 0x00, 0x01};
 
+static volatile uint8_t relay_state; /* live state exposed to REQUEST_STATE */
+
 static void relay_set(uint8_t on)
 {
+    relay_state = on ? 1u : 0u;
     if (on) {
         PORTB |= _BV(RELAY_BIT);
     } else {
@@ -52,7 +55,7 @@ static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t l
     if (opcode == OP_SET && len >= 1) {
         relay_set(args[0] != 0);
     } else if (opcode == OP_TOGGLE) {
-        PORTB ^= _BV(RELAY_BIT);
+        relay_set((PORTB & _BV(RELAY_BIT)) ? 0u : 1u);
     }
 }
 
@@ -62,7 +65,7 @@ int main(void)
         .mcid = 0x03,
         .info = info,
         .info_len = sizeof info,
-        .state = &PORTB,
+        .state = &relay_state,
         .state_len = 1,
         .on_status_capture = on_status_capture,
         .on_command = on_command,

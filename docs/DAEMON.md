@@ -53,8 +53,10 @@ Slaves are recognised from the first application byte of their `SLAVE_INFO` (dev
 | `hubus/slave/<n>/set` | `ON` / `OFF` | Command according to the profile (relay: opcode `0x10`). Afterwards the state is read back from the slave and published (configurable, see `readback` below). |
 | `hubus/slave/<n>/cmd` | `0x10 1 2` | Raw command: opcode, then argument bytes (numbers, spaces or commas). Opcode `0x00` (status capture) or `0x10..0xFF`. |
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon publishes it. |
+| `hubus/slave/<n>/read` | any | `REQUEST_STATE`: reads the live state of a slave that has one (`state: true` in its info) in one bus transaction and publishes it. Rejected for slaves without a state. |
 | `hubus/group/<prefix>/<len>/cmd` | as `cmd` | Group (`len` 0..5) or broadcast (`0/0`) command. Slaves never answer group commands; use opcode `0` to make a group publish its states. |
 | `hubus/master/cmd/scan` | any | Commissioning scan; result on `hubus/master/scan`. |
+| `hubus/master/cmd/probe` | MCID `1..63` | One `REQUEST_INFO` to a single MCID, configured or not; result on `hubus/master/probe`. This is how a single address is checked on request; there is no function that polls all 63 MCIDs. |
 | `hubus/master/cmd/stats` | any | Publish statistics now. |
 
 Commands are never acknowledged by slaves. By default the published state is therefore a value that was read from the slave, not the command that was sent; with `readback: cache` it is the state the command establishes (see below). If a command was invalid or could not be executed, `hubus/master/log` says why and `commands_rejected` counts it.
@@ -68,11 +70,12 @@ Commands are never acknowledged by slaves. By default the published state is the
 | `hubus/master/stats` | no | uptime, bursts, polls, requests, frames, duplicates, gaps, retries, skipped slaves, commands sent/rejected, errors by kind, recoveries, queue depth, publish errors |
 | `hubus/master/diagnosis` | yes | `ok`, `suspected_duplicate_mcid` with the MCIDs, or `line_problem` |
 | `hubus/master/scan` | no | result of the last scan |
+| `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
 | `hubus/slave/<n>/info` | yes | protocol version, capabilities, accepted command size, application bytes, device type, firmware, serial number, profile |
 | `hubus/slave/<n>/state` | yes | interpreted value (`ON`/`OFF`, number) |
-| `hubus/slave/<n>/data` | no | every received frame: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `gap`, ...), `lost` buffer contents, timestamp |
+| `hubus/slave/<n>/data` | no | every received frame: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `gap`, ... for events; `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |
 
 Try it:
@@ -80,7 +83,9 @@ Try it:
 ```sh
 mosquitto_sub -v -t 'hubus/#'
 mosquitto_pub -t hubus/slave/3/set -m ON          # relay on; state ON follows once read back
-mosquitto_pub -t hubus/slave/5/capture -n         # read the button state now
+mosquitto_pub -t hubus/slave/5/capture -n         # read the button state now (STATUS_CAPTURE)
+mosquitto_pub -t hubus/slave/7/read -n            # read the live state of the sensor (REQUEST_STATE)
+mosquitto_pub -t hubus/master/cmd/probe -m 12     # is anybody at MCID 12?
 mosquitto_pub -t hubus/master/cmd/stats -n
 ```
 
@@ -92,7 +97,7 @@ What `hubus/slave/<n>/state` shows after a `set` command is configurable, global
 
 | Mode | Behavior |
 |---|---|
-| `slave` (default) | The daemon sends `STATUS_CAPTURE` and reads the answer. The published state is what the slave reports, so a defective or unreachable slave shows its real state. Costs two more bus transactions per command. |
+| `slave` (default) | The daemon reads the answer from the slave: with `REQUEST_STATE` in one transaction if the slave exposes a state, otherwise with `STATUS_CAPTURE` and a burst (two more transactions). The published state is what the slave reports, so a defective or unreachable slave shows its real state. |
 | `cache` | The slave is not contacted again. The daemon publishes the state the command establishes (`ON` after `ON`, `OFF` after `OFF`) from its own cache. Fast and free of extra bus traffic, but optimistic: it cannot notice a command that did not arrive or was not executed. The next event, ping-triggered refresh after an outage, or an explicit `capture` corrects it. |
 | `none` | Nothing is published after the command; the state changes only through events and captures. |
 
@@ -136,8 +141,9 @@ A slave without a profile stays fully usable through the raw topics (`data`, `cm
 ## 6. How the Daemon Works
 
 - **Bus thread:** the only thread that touches GPIO. It handles queued commands (at most four per loop), then waits for idle events (a slave announcing data), collects them in a burst, and publishes. The MQTT thread only validates messages and puts them in a bounded queue (32 entries); a full queue is counted in `queue_full` and never blocks the bus.
-- **Availability:** slaves do not speak unless asked, so the daemon checks every configured slave with `REQUEST_INFO` every `bus.ping_interval_s` (one slave per loop). After `bus.ping_failures` misses a slave is `offline`; when it answers again it is `online` and its state is read with `STATUS_CAPTURE`. Valid data frames also count as proof of life.
-- **Startup:** startup sequence with RESET, probe of all configured slaves, scan for unconfigured ones, a burst for data that was pending, and a state read of every online slave.
+- **Availability:** slaves do not speak unless asked, so the daemon checks every configured slave with `REQUEST_INFO` every `bus.ping_interval_s` (one slave per loop). After `bus.ping_failures` misses a slave is `offline`; when it answers again it is `online` and its state is read (`REQUEST_STATE`, or `STATUS_CAPTURE` for slaves without a state). Valid data frames also count as proof of life.
+- **Startup:** startup sequence with RESET, probe of all configured slaves, scan for unconfigured ones (group `REQUEST_INFO`, about one transaction per slave on the bus), a burst for data that was pending, and a state read of every online slave.
+- **State and events:** a slave can expose a live state that is read at any time (`REQUEST_STATE`, `read` topic, readback after commands, refresh after an outage) next to the events that it announces itself (`REQUEST_DATA`, collected in bursts). Only slaves with an event take part in a burst.
 - **Faults:** a stuck `DATA` line puts the bus in `line_fault` (published with the error); commands are rejected meanwhile and the startup sequence is retried every `bus.startup_retry_s`. CRC failures are retried within the retry budget; repeated failures of one MCID raise `suspected_duplicate_mcid` in the diagnosis.
 - **Reconnect:** the MQTT client reconnects by itself; on every connection the retained messages (status, state, info, discovery) are published again.
 - **Shutdown:** `SIGTERM`/`SIGINT` publish `offline`, generate a RESET on the bus, and release the GPIO lines.

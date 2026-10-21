@@ -63,7 +63,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Burst scheduling with pending mask stack and retry budget.
 - [x] Idle event handshake detection.
 - [x] `GEN` duplicate/gap handling, fragment reassembly hooks for applications.
-- [x] Commissioning scan (group `REQUEST_INFO`, full scan as fallback) and duplicate MCID heuristic.
+- [x] Commissioning scan (group `REQUEST_INFO`) and duplicate MCID heuristic.
 - [x] Configurable timing minimums (for the slowest slave on the bus).
 - [x] Real-time priority option for the clock thread.
 
@@ -71,7 +71,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 
 - [x] Rewrite slave examples against the new API: relay/LED, switch, temperature sensor [E1–E3]. Compile-tested for the ATtiny85, not run on hardware.
 - [x] Remove the superseded example files `slave-relay/relay_isr_only.c` and `relay_pcint_example.c` [E4].
-- [x] Master example application (scan, burst, commands). Compiles; not run on a Raspberry Pi yet.
+- [x] Master example application (scan, burst, state, info, commands). Compiles; not run on a Raspberry Pi yet.
 - [x] Update `examples/*.md` if behavior details change during implementation.
 
 ## 8. Continuous Integration

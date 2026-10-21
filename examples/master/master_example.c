@@ -15,6 +15,8 @@
  *   burst                      startup sequence, then collect all pending data
  *   monitor                    startup, then serve idle events forever
  *   capture <mcid>             STATUS_CAPTURE to one slave (0 = all), then burst
+ *   state <mcid>               REQUEST_STATE: the live state of one slave (0 = every slave that has one)
+ *   info <mcid>                REQUEST_INFO to a single MCID
  *   send <mcid> <opcode> [b..] SEND_COMMAND to one slave (0 = all), numbers in C syntax
  */
 #include <stdio.h>
@@ -23,6 +25,18 @@
 #include <time.h>
 
 #include "hubus_master_gpiod.h"
+
+static void print_state(void *ctx, const hubus_slave_frame_t *f)
+{
+    unsigned i;
+
+    (void)ctx;
+    printf("mcid %2u state:", f->mcid);
+    for (i = 0; i < f->len; i++) {
+        printf(" %02X", f->payload[i]);
+    }
+    putchar('\n');
+}
 
 static void print_frame(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t gen, uint8_t lost)
 {
@@ -99,7 +113,7 @@ int main(int argc, char **argv)
         }
     }
     if (i >= argc) {
-        fprintf(stderr, "usage: %s [options] scan|burst|monitor|capture <mcid>|send <mcid> <opcode> [bytes]\n", argv[0]);
+        fprintf(stderr, "usage: %s [options] scan|burst|monitor|capture <mcid>|state <mcid>|info <mcid>|send <mcid> <opcode> [bytes]\n", argv[0]);
         return 2;
     }
 
@@ -169,6 +183,37 @@ int main(int argc, char **argv)
         } else {
             rc = run_burst(&master);
         }
+    } else if (strcmp(argv[i], "state") == 0 && i + 1 < argc) {
+        unsigned mcid = (unsigned)number(argv[i + 1]);
+
+        if (mcid == 0) {
+            uint16_t n = 0;
+
+            s = hubus_master_read_states(&master, print_state, NULL, &n);
+            printf("%u slave(s) with a state\n", n);
+        } else {
+            hubus_slave_frame_t f;
+
+            s = hubus_master_request_state(&master, (uint8_t)mcid, &f);
+            if (s == HUBUS_OK) {
+                print_state(NULL, &f);
+            }
+        }
+        rc = s == HUBUS_OK ? 0 : fail("state", s);
+    } else if (strcmp(argv[i], "info") == 0 && i + 1 < argc) {
+        hubus_slave_frame_t f;
+        unsigned k;
+
+        s = hubus_master_request_info(&master, (uint8_t)number(argv[i + 1]), &f);
+        if (s == HUBUS_OK) {
+            printf("mcid %2u: version %u caps 0x%02X max command %u app:", f.mcid, f.payload[HUBUS_INFO_VERSION],
+                   f.payload[HUBUS_INFO_CAPS], f.payload[HUBUS_INFO_MAX_CMD]);
+            for (k = HUBUS_INFO_APP; k < f.len; k++) {
+                printf(" %02X", f.payload[k]);
+            }
+            putchar('\n');
+        }
+        rc = s == HUBUS_OK ? 0 : fail("info", s);
     } else if (strcmp(argv[i], "send") == 0 && i + 2 < argc) {
         uint8_t args[HUBUS_MAX_PAYLOAD];
         unsigned mcid = (unsigned)number(argv[i + 1]);

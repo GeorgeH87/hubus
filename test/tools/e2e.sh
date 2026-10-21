@@ -76,6 +76,15 @@ expect "button release"              '^hubus/slave/5/state OFF$'
 echo "temp 303" >&3
 pub hubus/slave/7/capture ""
 expect "temperature capture"         '^hubus/slave/7/state 30$'
+echo "temp 311" >&3
+pub hubus/slave/7/read ""
+expect "temperature read (REQUEST_STATE)" '^hubus/slave/7/state 38$'
+pub hubus/slave/5/read ""
+expect "read of a slave without a state is rejected" '^hubus/master/log .*has no state'
+pub hubus/master/cmd/probe 9
+expect "probe of an unconfigured slave" '^hubus/master/probe .*"mcid":9,"state":"present","configured":false'
+pub hubus/master/cmd/probe 40
+expect "probe of an empty MCID" '^hubus/master/probe .*"mcid":40,"state":"absent"'
 pub hubus/slave/3/set TOGGLE
 expect "invalid command rejected"    '^hubus/master/log .*command rejected'
 pub hubus/master/cmd/stats ""

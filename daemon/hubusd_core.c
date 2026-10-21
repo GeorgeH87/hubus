@@ -127,6 +127,12 @@ static int info_can_capture(const hubusd_slave_t *s)
     return !s->have_info || (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATUS_CAPTURE);
 }
 
+/* The slave exposes a live state: REQUEST_STATE reads it in one transaction. */
+static int info_has_state(const hubusd_slave_t *s)
+{
+    return s->have_info && (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
+}
+
 static void sanitize_id(const char *in, char *out, size_t size)
 {
     size_t i;
@@ -314,6 +320,7 @@ static void publish_stats(hubusd_t *d)
     jw_uint(&w, "polls", c->polls);
     jw_uint(&w, "info_requests", c->info_requests);
     jw_uint(&w, "data_requests", c->data_requests);
+    jw_uint(&w, "state_requests", c->state_requests);
     jw_uint(&w, "frames", d->stats.frames);
     jw_uint(&w, "duplicates", d->stats.duplicates);
     jw_uint(&w, "gaps", d->stats.gaps);
@@ -389,6 +396,7 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
     jw_uint(&w, "protocol", s->info.payload[HUBUS_INFO_VERSION]);
     jw_uint(&w, "capabilities", s->info.payload[HUBUS_INFO_CAPS]);
     jw_bool(&w, "status_capture", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATUS_CAPTURE) != 0);
+    jw_bool(&w, "state", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE) != 0);
     jw_uint(&w, "max_command", s->info.payload[HUBUS_INFO_MAX_CMD]);
     hex(&s->info.payload[HUBUS_INFO_APP], s->info.len > HUBUS_INFO_APP ? (unsigned)s->info.len - HUBUS_INFO_APP : 0u, app);
     jw_str(&w, "app_data", app);
@@ -722,10 +730,9 @@ static void set_online(hubusd_t *d, unsigned mcid, int online)
     publish_availability(d, mcid);
 }
 
-static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t gen, uint8_t lost)
+/* Publishes a frame of a configured slave (event data or a state read) and its interpretation by the profile. */
+static void deliver(hubusd_t *d, const hubus_slave_frame_t *f, const char *result, uint8_t lost)
 {
-    static const char *const results[] = {"baseline", "normal", "duplicate", "wrapped", "gap"};
-    hubusd_t *d = ctx;
     hubusd_slave_t *s = &d->slave[f->mcid];
     char buf[400], data[2 * HUBUS_MAX_PAYLOAD + 1], text[32], t[160];
     jw_t w;
@@ -742,9 +749,6 @@ static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t 
     s->last_seen_ms = now_ms(d);
     s->ping_failures = 0;
     set_online(d, f->mcid, 1);
-    if (gen == HUBUS_GEN_GAP) {
-        d->stats.gaps++;
-    }
 
     hex(f->payload, f->len, data);
     jw_init(&w, buf, sizeof buf);
@@ -754,7 +758,7 @@ static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t 
     jw_uint(&w, "len", f->len);
     jw_uint(&w, "gen", f->gen);
     jw_bool(&w, "more", f->more);
-    jw_str(&w, "result", results[gen <= HUBUS_GEN_GAP ? gen : 0]);
+    jw_str(&w, "result", result);
     jw_uint(&w, "lost", lost);
     jw_uint(&w, "ts", wall_s(d));
     jw_obj_end(&w);
@@ -765,6 +769,17 @@ static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t 
         snprintf(s->last_state, sizeof s->last_state, "%s", text);
         pub_topic(d, 1, text, "slave/%u/state", f->mcid);
     }
+}
+
+static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t gen, uint8_t lost)
+{
+    static const char *const results[] = {"baseline", "normal", "duplicate", "wrapped", "gap"};
+    hubusd_t *d = ctx;
+
+    if (gen == HUBUS_GEN_GAP && d->slave[f->mcid].configured) {
+        d->stats.gaps++;
+    }
+    deliver(d, f, results[gen <= HUBUS_GEN_GAP ? gen : 0], lost);
 }
 
 static void account_burst(hubusd_t *d, const hubus_burst_stats_t *st)
@@ -848,6 +863,31 @@ static void ping(hubusd_t *d, unsigned mcid, unsigned threshold)
     }
 }
 
+/* Reads the live state of `mcid` with REQUEST_STATE (repeated on CRC failures) and publishes it. */
+static hubus_status_t read_state(hubusd_t *d, unsigned mcid)
+{
+    hubus_slave_frame_t f;
+    hubus_status_t r;
+    unsigned attempts;
+
+    for (attempts = 0;; attempts++) {
+        r = hubus_master_request_state(&d->master, (uint8_t)mcid, &f);
+        if ((r != HUBUS_ERR_CRC && r != HUBUS_ERR_MISMATCH) || attempts >= d->cfg.master.retry_budget) {
+            break;
+        }
+    }
+    if (r == HUBUS_OK) {
+        deliver(d, &f, "state", 0);
+    } else if (r == HUBUS_ERR_LINE_FAULT) {
+        bus_fault(d, r);
+    } else {
+        log_event(d, 2, "state read of slave %u failed: %s", mcid, hubus_status_str(r));
+    }
+    return r;
+}
+
+/* Brings the published state of the slaves that came online up to date: REQUEST_STATE where the slave has a state
+ * (one transaction each), otherwise STATUS_CAPTURE and one burst for all of them. */
 static void refresh_states(hubusd_t *d)
 {
     unsigned mcid;
@@ -860,7 +900,12 @@ static void refresh_states(hubusd_t *d)
             continue;
         }
         s->needs_refresh = 0;
-        if (s->online == 1 && info_can_capture(s)) {
+        if (s->online != 1) {
+            continue;
+        }
+        if (info_has_state(s)) {
+            (void)read_state(d, mcid);
+        } else if (info_can_capture(s)) {
             hubus_status_t r = hubus_master_status_capture(&d->master, 6, (uint8_t)mcid);
 
             if (r == HUBUS_ERR_LINE_FAULT) {
@@ -872,6 +917,77 @@ static void refresh_states(hubusd_t *d)
     }
     if (any && d->bus == HUBUSD_BUS_OK) {
         run_burst(d);
+    }
+}
+
+/* Individual REQUEST_INFO to one MCID on request (MQTT), configured or not. Publishes the outcome on master/probe. */
+static void do_probe(hubusd_t *d, unsigned mcid)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+    hubus_slave_frame_t info;
+    hubus_status_t r;
+    unsigned attempts;
+    char buf[200], t[160];
+    const char *state;
+    jw_t w;
+
+    for (attempts = 0;; attempts++) {
+        r = hubus_master_request_info(&d->master, (uint8_t)mcid, &info);
+        if ((r != HUBUS_ERR_CRC && r != HUBUS_ERR_MISMATCH) || attempts >= d->cfg.master.retry_budget) {
+            break;
+        }
+    }
+    if (r == HUBUS_ERR_LINE_FAULT) {
+        bus_fault(d, r);
+        return;
+    }
+    d->stats.commands_executed++;
+    if (r == HUBUS_OK) {
+        state = "present";
+        s->last_seen_ms = now_ms(d);
+        s->ping_failures = 0;
+        if (s->configured) {
+            int was_online = s->online == 1;
+
+            store_info(d, mcid, &info);
+            set_online(d, mcid, 1);
+            if (!was_online) {
+                s->needs_refresh = 1;
+            }
+        } else {
+            s->info = info;
+            s->have_info = 1;
+            if (!s->unknown_seen) {
+                s->unknown_seen = 1;
+                log_event(d, 1, "unconfigured slave found at MCID %u (device type %d)", mcid, info_device_type(s));
+                publish_state(d, 0);
+            }
+        }
+    } else if (r == HUBUS_ERR_NO_RESPONSE) {
+        state = "absent";
+        if (!s->configured && s->unknown_seen) {
+            s->unknown_seen = 0;
+            publish_state(d, 0);
+        }
+    } else {
+        state = "suspect"; /* repeated CRC failures: duplicate MCID or line problem */
+    }
+    jw_init(&w, buf, sizeof buf);
+    jw_obj_begin(&w, NULL);
+    jw_uint(&w, "mcid", mcid);
+    jw_str(&w, "state", state);
+    jw_bool(&w, "configured", s->configured);
+    if (r == HUBUS_OK && info.len > HUBUS_INFO_APP) {
+        jw_uint(&w, "device_type", info.payload[HUBUS_INFO_APP]);
+        jw_bool(&w, "state_capable", (info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE) != 0);
+    }
+    jw_uint(&w, "ts", wall_s(d));
+    jw_obj_end(&w);
+    topic(d, t, sizeof t, "master/probe");
+    pub_json(d, &w, 0, t);
+    publish_diagnosis(d, 0);
+    if (s->needs_refresh) {
+        refresh_states(d);
     }
 }
 
@@ -986,6 +1102,20 @@ static void reject(hubusd_t *d, const char *fmt, ...)
     log_event(d, 1, "command rejected: %s", msg);
 }
 
+/* `read` topic: REQUEST_STATE for one slave. */
+static void read_exact(hubusd_t *d, unsigned mcid)
+{
+    const hubusd_slave_t *s = &d->slave[mcid];
+
+    if (!s->configured) {
+        reject(d, "slave %u is not configured", mcid);
+    } else if (!info_has_state(s)) {
+        reject(d, "slave %u has no state (use the capture topic)", mcid);
+    } else if (read_state(d, mcid) == HUBUS_OK) {
+        d->stats.commands_executed++;
+    }
+}
+
 static void capture_exact(hubusd_t *d, unsigned mcid)
 {
     hubus_status_t r;
@@ -1033,8 +1163,11 @@ static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t
             snprintf(w->last_state, sizeof w->last_state, "%s", expected);
             pub_topic(d, 1, expected, "slave/%u/state", mcid);
         }
+    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_has_state(s)) {
+        /* commands are never acknowledged: read the state back, in one transaction */
+        (void)read_state(d, mcid);
     } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_can_capture(s)) {
-        /* commands are never acknowledged: read the state back */
+        /* a slave without a state captures it into the buffer, which the burst collects */
         r = hubus_master_status_capture(&d->master, 6, (uint8_t)mcid);
         if (r == HUBUS_OK) {
             run_burst(d);
@@ -1071,6 +1204,12 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
         break;
     case HUBUSD_REQ_CAPTURE:
         capture_exact(d, q->prefix);
+        break;
+    case HUBUSD_REQ_READ:
+        read_exact(d, q->prefix);
+        break;
+    case HUBUSD_REQ_PROBE:
+        do_probe(d, q->prefix);
         break;
     case HUBUSD_REQ_SET: {
         const hubusd_slave_t *s = &d->slave[q->prefix];
@@ -1197,6 +1336,17 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
     if (strcmp(p, "master/cmd/scan") == 0) {
         r.kind = HUBUSD_REQ_SCAN;
         enqueue(d, &r);
+    } else if (strcmp(p, "master/cmd/probe") == 0) {
+        const char *end;
+
+        if (!parse_uint(text, 63, &a, &end) || *end || a < HUBUS_MCID_MIN) {
+            enqueue_reject(d, "invalid MCID '%s' for probe (1..63)", text);
+            return;
+        }
+        r.kind = HUBUSD_REQ_PROBE;
+        r.target_len = HUBUS_TARGET_LEN_EXACT;
+        r.prefix = (uint8_t)a;
+        enqueue(d, &r);
     } else if (strcmp(p, "master/cmd/stats") == 0) {
         r.kind = HUBUSD_REQ_STATS;
         enqueue(d, &r);
@@ -1223,6 +1373,8 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
             memcpy(r.text, text, strlen(text) + 1u);
         } else if (strcmp(end, "capture") == 0) {
             r.kind = HUBUSD_REQ_CAPTURE;
+        } else if (strcmp(end, "read") == 0) {
+            r.kind = HUBUSD_REQ_READ;
         } else if (strcmp(end, "cmd") == 0) {
             r.kind = HUBUSD_REQ_RAW;
             if (parse_raw(text, &r) != 0 || (r.opcode != HUBUS_OP_STATUS_CAPTURE && r.opcode < HUBUS_OP_APP_MIN) ||
@@ -1272,7 +1424,7 @@ void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg)
 
 void hubusd_subscriptions(const hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx)
 {
-    static const char *const filters[] = {"master/cmd/+", "slave/+/set", "slave/+/cmd", "slave/+/capture",
+    static const char *const filters[] = {"master/cmd/+", "slave/+/set", "slave/+/cmd", "slave/+/capture", "slave/+/read",
                                           "group/+/+/cmd"};
     char t[160];
     unsigned i;

@@ -40,8 +40,9 @@ Example setup: one Raspberry Pi, one ATtiny as relay controller, one ATtiny as p
 - F6: Send an application command to one slave, a prefix group, or all slaves (`TARGET_LEN` 0..6) with opcode and argument bytes.
 - F7: Trigger `STATUS_CAPTURE` for one slave, a group, or all.
 - F8: After a command that changes state, the daemon reports the state according to the configurable `readback` mode (global and per slave): `slave` (default) triggers `STATUS_CAPTURE` and publishes the value read from the slave; `cache` publishes the state the command establishes without contacting the slave again; `none` publishes nothing. Commands are never acknowledged by slaves, so only `slave` mode proves that the state was established.
-- F9: Commissioning scan on request (`REQUEST_INFO` to all MCIDs), including the suspected-duplicate-MCID result.
-- F10: Raw request of `SLAVE_INFO` and of the buffer of one slave on request.
+- F9: Commissioning scan on request (group `REQUEST_INFO`, one transaction per slave), including the suspected-duplicate-MCID result.
+- F10: Raw request of `SLAVE_INFO` of a single MCID (probe) and of the live state of one slave (`REQUEST_STATE`) on request. There is no function that polls all 63 MCIDs one by one.
+- F10a: Where a slave exposes a state, the daemon reads it with `REQUEST_STATE` for the readback after commands and for the refresh after startup or an outage; slaves without a state use `STATUS_CAPTURE`.
 
 ### 4.3 Slave details
 
@@ -71,6 +72,7 @@ Base topic `hubus` (configurable). Payloads are UTF-8 JSON unless stated otherwi
 | `hubus/master/diagnosis` | publish | yes | result of the duplicate / line problem heuristic |
 | `hubus/master/log` | publish | no | notable events (recovery, unknown slave, rejected command) |
 | `hubus/master/cmd/scan` | subscribe | | start a commissioning scan; result on `hubus/master/scan` |
+| `hubus/master/cmd/probe` | subscribe | | `REQUEST_INFO` to one MCID (payload `1..63`); result on `hubus/master/probe` |
 | `hubus/master/cmd/stats` | subscribe | | publish statistics now |
 | `hubus/slave/<mcid>/availability` | publish | yes | `online` / `offline` |
 | `hubus/slave/<mcid>/info` | publish | yes | SLAVE_INFO fields and interpreted device type |
@@ -80,6 +82,7 @@ Base topic `hubus` (configurable). Payloads are UTF-8 JSON unless stated otherwi
 | `hubus/slave/<mcid>/set` | subscribe | | command according to the device profile, for example `ON` / `OFF` |
 | `hubus/slave/<mcid>/cmd` | subscribe | | raw command: opcode and argument bytes |
 | `hubus/slave/<mcid>/capture` | subscribe | | trigger `STATUS_CAPTURE` |
+| `hubus/slave/<mcid>/read` | subscribe | | `REQUEST_STATE`: read the live state of the slave |
 | `hubus/group/<prefix>/<len>/cmd` | subscribe | | group or broadcast command (`len` 0..5); one-way, no responses |
 
 Requirements:

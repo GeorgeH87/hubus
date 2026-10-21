@@ -27,6 +27,7 @@ typedef struct {
     uint8_t type;
     uint8_t state;
     uint16_t raw_temp;
+    volatile uint8_t temp_be[2]; /* live state of the temperature sensor */
     uint8_t info[6];
 } device_t;
 
@@ -65,6 +66,8 @@ static device_t *add(uint8_t mcid, uint8_t type)
 
     v->type = type;
     v->raw_temp = 298;
+    v->temp_be[0] = (uint8_t)(298 >> 8);
+    v->temp_be[1] = (uint8_t)298;
     v->info[0] = type;
     v->info[1] = 1;
     v->info[5] = mcid;
@@ -74,6 +77,13 @@ static device_t *add(uint8_t mcid, uint8_t type)
     c.info_len = sizeof v->info;
     c.on_status_capture = capture;
     c.on_command = command;
+    if (type == 1) { /* the relay and the sensor expose their state (REQUEST_STATE), the button does not */
+        c.state = &v->state;
+        c.state_len = 1;
+    } else if (type == 3) {
+        c.state = v->temp_be;
+        c.state_len = 2;
+    }
     c.ctx = v;
     hubus_core_init(&v->core, &c, sim.clk, sim.data);
     hubus_sim_add(&sim, &v->core);
@@ -115,6 +125,8 @@ static void hook(void *ctx, hubusd_t *d)
         hubus_sim_slave_write(&sim, (unsigned)(b - devices), &pressed, 1, 0);
     } else if (sscanf(line, "temp %u", &raw) == 1) {
         by_mcid(7)->raw_temp = (uint16_t)raw;
+        by_mcid(7)->temp_be[0] = (uint8_t)(raw >> 8);
+        by_mcid(7)->temp_be[1] = (uint8_t)raw;
     } else if (sscanf(line, "unplug %u", &mcid) == 1 && by_mcid(mcid)) {
         by_mcid(mcid)->core.enabled = 0;
     } else if (sscanf(line, "plug %u", &mcid) == 1 && by_mcid(mcid)) {

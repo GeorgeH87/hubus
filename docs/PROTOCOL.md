@@ -326,7 +326,7 @@ The master enumerates the slaves with group `REQUEST_INFO`, using the same mask 
 
 Two slaves with the same MCID win the arbitration together and both send their `SLAVE_INFO`. The responses overlap on the wired-AND line. If their content differs, the CRC fails, so the scan flags the duplicate right away. Slaves SHOULD therefore include a device-unique value (for example a serial number set at programming time) in the application bytes of `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1); then the scan detects duplicates reliably.
 
-A master MAY instead send an exactly addressed `REQUEST_INFO` to every MCID `1..63` (full scan).
+A master can also ask for a single MCID with an exactly addressed `REQUEST_INFO` at any time (for example `hubusd` on request over MQTT); there is no function that polls all 63 MCIDs one by one.
 
 ### Runtime Heuristic
 

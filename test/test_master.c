@@ -745,23 +745,6 @@ static void test_scan_does_not_disturb_pending_data(void)
     TEST_ASSERT_EQUAL_UINT16(1, st.served);
 }
 
-static void test_full_scan_still_finds_all_present_slaves(void)
-{
-    static hubus_scan_t scan;
-    unsigned mcid;
-
-    fx_add_ex(&fx, 5, 1, 0x05);
-    fx_add_ex(&fx, 17, 0, 0x11);
-    fx_add_ex(&fx, 63, 1, 0x3F);
-    fx_startup(&fx);
-    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan_full(&fx.master, &scan));
-    for (mcid = 1; mcid <= 63; mcid++) {
-        unsigned expect = (mcid == 5 || mcid == 17 || mcid == 63) ? HUBUS_SCAN_PRESENT : HUBUS_SCAN_ABSENT;
-        TEST_ASSERT_EQUAL_UINT(expect, scan.state[mcid]);
-    }
-    TEST_ASSERT_EQUAL_UINT16(63, fx.master.counters.info_requests);
-}
-
 static void test_scan_without_slaves_is_a_single_transaction(void)
 {
     static hubus_scan_t scan;
@@ -1030,7 +1013,6 @@ int main(void)
     RUN_TEST(test_scan_finds_every_possible_mcid);
     RUN_TEST(test_scan_finds_a_lone_slave_whose_open_bits_are_all_zero);
     RUN_TEST(test_scan_does_not_disturb_pending_data);
-    RUN_TEST(test_full_scan_still_finds_all_present_slaves);
     RUN_TEST(test_scan_without_slaves_is_a_single_transaction);
     RUN_TEST(test_burst_needs_one_transaction_per_pending_slave);
     RUN_TEST(test_request_state_reads_the_live_state_and_clears_nothing);

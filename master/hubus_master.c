@@ -933,21 +933,6 @@ hubus_status_t hubus_master_scan(hubus_master_t *m, hubus_scan_t *scan)
     return result;
 }
 
-hubus_status_t hubus_master_scan_full(hubus_master_t *m, hubus_scan_t *scan)
-{
-    unsigned mcid;
-
-    memset(scan, 0, sizeof *scan);
-    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
-        hubus_status_t r = verify_mcid(m, scan, mcid);
-
-        if (r != HUBUS_OK) {
-            return r;
-        }
-    }
-    return HUBUS_OK;
-}
-
 uint8_t hubus_master_diagnose(const hubus_master_t *m, uint64_t *suspects)
 {
     unsigned mcid;

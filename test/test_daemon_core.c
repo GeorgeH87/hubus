@@ -105,12 +105,14 @@ typedef struct {
     uint8_t type;
     uint8_t state;      /* relay: 0/1, switch: pressed, temperature: unused */
     uint16_t raw_temp;
+    volatile uint8_t temp_be[2]; /* raw_temp as exposed state (big endian) */
     uint8_t info[6];
     unsigned commands;
     unsigned captures;
 } sim_dev_t;
 
 static hubus_sim_t sim;
+static int dev_with_state; /* relay and temperature sensor expose a live state (REQUEST_STATE) */
 static sim_dev_t dev[8];
 static unsigned n_dev;
 static hubusd_t *dmn;
@@ -142,6 +144,13 @@ static void dev_command(void *ctx, uint8_t op, const uint8_t *args, uint8_t len)
     }
 }
 
+static void set_temp(sim_dev_t *v, uint16_t raw)
+{
+    v->raw_temp = raw;
+    v->temp_be[0] = (uint8_t)(raw >> 8);
+    v->temp_be[1] = (uint8_t)raw;
+}
+
 static sim_dev_t *add_dev(uint8_t mcid, uint8_t type)
 {
     sim_dev_t *v = &dev[n_dev++];
@@ -160,6 +169,14 @@ static sim_dev_t *add_dev(uint8_t mcid, uint8_t type)
     c.info_len = sizeof v->info;
     c.on_status_capture = dev_capture;
     c.on_command = dev_command;
+    if (dev_with_state && type == DEV_RELAY) {
+        c.state = &v->state;
+        c.state_len = 1;
+    } else if (dev_with_state && type == DEV_TEMP) {
+        set_temp(v, 298);
+        c.state = v->temp_be;
+        c.state_len = 2;
+    }
     c.ctx = v;
     TEST_ASSERT_TRUE(hubus_core_init(&v->core, &c, sim.clk, sim.data));
     hubus_sim_add(&sim, &v->core);
@@ -251,6 +268,7 @@ void setUp(void)
     hubus_sim_check_timing(&sim, 50000, 50000, 50000);
     n_msgs = 0;
     n_dev = 0;
+    dev_with_state = 0;
     clock_ms = 100000;
     fail_publish = 0;
     dmn = NULL;
@@ -800,6 +818,163 @@ static void test_error_counters_appear_in_the_statistics(void)
     assert_contains("hubus/master/stats", "\"errors_total\":6");
 }
 
+/* ---- live state (REQUEST_STATE) and individual probes ------------------------------------------- */
+
+static void test_startup_reads_the_state_of_slaves_that_have_one(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+
+    assert_contains("hubus/slave/3/info", "\"state\":true");
+    assert_contains("hubus/slave/5/info", "\"state\":false");
+    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/7/state", "25");
+    assert_last("hubus/slave/5/state", "OFF");
+    TEST_ASSERT_EQUAL_UINT(0, dev[0].captures); /* relay and sensor were read directly ... */
+    TEST_ASSERT_EQUAL_UINT(0, dev[2].captures);
+    TEST_ASSERT_EQUAL_UINT(1, dev[1].captures); /* ... the button has no state and still captures */
+    TEST_ASSERT_EQUAL_UINT(2, dmn->master.counters.state_requests);
+    assert_contains("hubus/slave/3/data", "\"result\":\"state\"");
+}
+
+static void test_readback_after_set_uses_one_state_read(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/slave/3/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+    TEST_ASSERT_EQUAL_UINT(0, dev[0].captures); /* no STATUS_CAPTURE, no burst */
+    assert_last("hubus/slave/3/state", "ON");
+    assert_contains("hubus/slave/3/data", "\"result\":\"state\"");
+    TEST_ASSERT_EQUAL_UINT(1, count("hubus/slave/3/data"));
+}
+
+static void test_published_state_is_still_the_real_state_with_a_state_read(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    dev[0].core.on_command = NULL; /* the relay ignores commands (defective) */
+    n_msgs = 0;
+    say("hubus/slave/3/set", "ON");
+    settle();
+    assert_last("hubus/slave/3/state", "OFF");
+}
+
+static void test_read_topic_reads_the_live_state_at_any_time(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    set_temp(&dev[2], 303);
+    n_msgs = 0;
+    say("hubus/slave/7/read", "");
+    settle();
+    assert_last("hubus/slave/7/state", "30");
+    TEST_ASSERT_EQUAL_UINT(0, dev[2].captures);
+    /* the event buffer is not involved: nothing pending, no burst */
+    TEST_ASSERT_EQUAL_UINT(0, count("hubus/slave/5/data"));
+}
+
+static void test_read_topic_rejects_slaves_without_a_state_or_configuration(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/slave/5/read", ""); /* a button without a state */
+    say("hubus/slave/9/read", ""); /* not configured */
+    settle();
+    TEST_ASSERT_EQUAL_UINT(2, count_containing("hubus/master/log", "command rejected"));
+}
+
+static void test_state_read_does_not_disturb_a_pending_event(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    dev[0].state = 1;
+    (void)hubus_sim_slave_write(&sim, 0, (const uint8_t *)&dev[0].state, 1, 0); /* an event is pending */
+    say("hubus/slave/3/read", "");
+    settle();
+    /* the read came first or the burst did: either way the event is delivered exactly once */
+    TEST_ASSERT_FALSE(hubus_core_is_pending(&dev[0].core));
+    assert_last("hubus/slave/3/state", "ON");
+}
+
+static void test_probe_reports_a_single_mcid(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/master/cmd/probe", "3");
+    settle();
+    assert_contains("hubus/master/probe", "\"mcid\":3");
+    assert_contains("hubus/master/probe", "\"state\":\"present\"");
+    assert_contains("hubus/master/probe", "\"configured\":true");
+    assert_contains("hubus/master/probe", "\"state_capable\":true");
+
+    say("hubus/master/cmd/probe", "9"); /* not configured */
+    settle();
+    assert_contains("hubus/master/probe", "\"mcid\":9");
+    assert_contains("hubus/master/probe", "\"state\":\"present\"");
+    assert_contains("hubus/master/probe", "\"configured\":false");
+
+    say("hubus/master/cmd/probe", "20"); /* nobody there */
+    settle();
+    assert_contains("hubus/master/probe", "\"mcid\":20");
+    assert_contains("hubus/master/probe", "\"state\":\"absent\"");
+}
+
+static void test_probe_of_a_duplicate_mcid_is_suspect(void)
+{
+    standard_setup(base_yaml);
+    add_dev(11, DEV_UNKNOWN);
+    add_dev(11, DEV_UNKNOWN);
+    dev[n_dev - 1].info[5] = 0x99; /* different serial number: the responses cannot overlap into a valid frame */
+    n_msgs = 0;
+    say("hubus/master/cmd/probe", "11");
+    settle();
+    assert_contains("hubus/master/probe", "\"state\":\"suspect\"");
+}
+
+static void test_probe_brings_an_offline_slave_back(void)
+{
+    standard_setup(base_yaml);
+    dev[2].core.enabled = 0; /* the sensor is unplugged */
+    advance(20);
+    assert_last("hubus/slave/7/availability", "offline");
+    dev[2].core.enabled = 1;
+    n_msgs = 0;
+    say("hubus/master/cmd/probe", "7");
+    settle();
+    assert_last("hubus/slave/7/availability", "online");
+    assert_contains("hubus/master/probe", "\"state\":\"present\"");
+    assert_last("hubus/slave/7/state", "25"); /* its state is refreshed */
+}
+
+static void test_probe_payload_is_validated(void)
+{
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/master/cmd/probe", "0");
+    say("hubus/master/cmd/probe", "64");
+    say("hubus/master/cmd/probe", "abc");
+    say("hubus/master/cmd/probe", "");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(4, count_containing("hubus/master/log", "command rejected"));
+    TEST_ASSERT_NULL(last("hubus/master/probe"));
+}
+
+static void test_statistics_count_state_requests(void)
+{
+    dev_with_state = 1;
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/master/cmd/stats", "");
+    settle();
+    assert_contains("hubus/master/stats", "\"state_requests\":2");
+}
+
 /* ---- faults ----------------------------------------------------------------------------------------- */
 
 static void test_line_fault_is_reported_and_recovers(void)
@@ -952,10 +1127,11 @@ static void test_subscriptions_and_status_topic(void)
     standard_setup(base_yaml);
     sub_n = 0;
     hubusd_subscriptions(dmn, collect_sub, NULL);
-    TEST_ASSERT_EQUAL_UINT(5, sub_n);
+    TEST_ASSERT_EQUAL_UINT(6, sub_n);
     TEST_ASSERT_EQUAL_STRING("hubus/master/cmd/+", sub_topics[0]);
     TEST_ASSERT_EQUAL_STRING("hubus/slave/+/set", sub_topics[1]);
-    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[4]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[4]);
+    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[5]);
     TEST_ASSERT_EQUAL_UINT(strlen("hubus/master/status"), hubusd_status_topic(dmn, status, sizeof status));
     TEST_ASSERT_EQUAL_STRING("hubus/master/status", status);
 }
@@ -1042,6 +1218,17 @@ int main(void)
     RUN_TEST(test_capture_topic);
     RUN_TEST(test_capture_of_a_slave_without_support_is_rejected);
     RUN_TEST(test_scan_command);
+    RUN_TEST(test_startup_reads_the_state_of_slaves_that_have_one);
+    RUN_TEST(test_readback_after_set_uses_one_state_read);
+    RUN_TEST(test_published_state_is_still_the_real_state_with_a_state_read);
+    RUN_TEST(test_read_topic_reads_the_live_state_at_any_time);
+    RUN_TEST(test_read_topic_rejects_slaves_without_a_state_or_configuration);
+    RUN_TEST(test_state_read_does_not_disturb_a_pending_event);
+    RUN_TEST(test_probe_reports_a_single_mcid);
+    RUN_TEST(test_probe_of_a_duplicate_mcid_is_suspect);
+    RUN_TEST(test_probe_brings_an_offline_slave_back);
+    RUN_TEST(test_probe_payload_is_validated);
+    RUN_TEST(test_statistics_count_state_requests);
     RUN_TEST(test_queue_overflow_is_counted_and_harmless);
     RUN_TEST(test_slave_goes_offline_and_comes_back);
     RUN_TEST(test_a_single_missed_ping_does_not_mark_the_slave_offline);

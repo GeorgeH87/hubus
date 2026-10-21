@@ -46,6 +46,8 @@ typedef enum {
     HUBUSD_REQ_SET,      /* text from a `set` topic, interpreted with the slave profile */
     HUBUSD_REQ_RAW,      /* opcode and arguments */
     HUBUSD_REQ_CAPTURE,  /* STATUS_CAPTURE */
+    HUBUSD_REQ_READ,     /* REQUEST_STATE: read the live state of one slave */
+    HUBUSD_REQ_PROBE,    /* REQUEST_INFO to one MCID (prefix), configured or not */
     HUBUSD_REQ_SCAN,
     HUBUSD_REQ_STATS,
     HUBUSD_REQ_REJECT    /* message that was invalid in the MQTT thread; reported by the bus thread */
@@ -90,7 +92,7 @@ typedef struct {
     char last_state[32];
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;
-    uint8_t needs_refresh;           /* came online: read its state with STATUS_CAPTURE */
+    uint8_t needs_refresh;           /* came online: read its state (REQUEST_STATE, or STATUS_CAPTURE without a state) */
 } hubusd_slave_t;
 
 typedef struct hubusd {
