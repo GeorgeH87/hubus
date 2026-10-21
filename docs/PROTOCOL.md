@@ -333,12 +333,7 @@ Without a device-unique value in `SLAVE_INFO`, a duplicate MCID can remain unnot
 
 ## 4. Protocol State Names
 
-- `IDLE`
-- `MASTER_INTENT`
-- `SLAVE_INTENT`
-- `ARBITRATION`
-- `TRANSFER`
-- `RECOVERY` (master only; slaves have no recovery state, they are reset by START/RESET)
+The slave states are defined in `SLAVE_PROPERTIES.md` section 2 (`IDLE`, `EVENT`, `RX`, `TURN`, `ARB`, `TX`, `IGNORE`). The master has no state variable for the protocol phases; it runs them as sequential functions: event check, transaction, burst, and `recover()` (clock until `DATA` is high, then RESET). The daemon keeps one bus state with the values `STARTING`, `OK`, and `LINE_FAULT`.
 
 ## 5. Design Constraints for ATtiny85
 

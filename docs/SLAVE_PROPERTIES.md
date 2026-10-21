@@ -19,15 +19,15 @@ A compliant HUBUS slave must provide:
 
 ## 2. Slave State Machine
 
-- `IDLE_LISTEN`: Wait for START. The pending flag indicates unread outgoing data.
-- `IDLE_EVENT_SIGNAL`: Hold `DATA` low to announce a pending event.
-- `RX_FRAME`: Receive the master frame after START; stop evaluating once the address does not match.
-- `TURNAROUND`: Release `DATA` for one slot; evaluate CRC, address, and buffer state.
-- `ARBITRATION_ACTIVE`: Contend with MCID bits (only if pending and addressed by the `POLL_PENDING` mask).
-- `ARBITRATION_HANDOFF`: Lost at the current bit; drive `DATA` low for the following handoff slot.
-- `ARBITRATION_DROPPED`: Passive until the transaction ends.
-- `SELECTED_TRANSFER`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request.
-- `IGNORE`: Not addressed, invalid frame, or nothing to send; passive until the next START, STOP, or RESET.
+State names are the `HUBUS_ST_*` constants in `core/hubus_slave_core.h`.
+
+- `IDLE`: Wait for START. The pending flag indicates unread outgoing data.
+- `EVENT`: Hold `DATA` low to announce a pending event, until the first falling `CLK` edge.
+- `RX`: Receive the master frame after START; stop evaluating once the address does not match (`IGNORE`).
+- `TURN`: Frame complete and valid for an answer. Release `DATA` for one slot; the CRC, address, and buffer checks were made when the last frame bit arrived, so only the slot itself remains.
+- `ARB`: Arbitration with handoff slots (12 slots). Only a pending slave addressed by the `POLL_PENDING` mask contends. A slave that loses at bit `k` leaves contention, drives `DATA` low in handoff slot `k`, and stays passive for the remaining slots. The phase is tracked with `slot`, `arb_active`, and `lost`, not with separate states.
+- `TX`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request.
+- `IGNORE`: Not addressed, invalid frame, command executed, nothing to send, or arbitration/transmission finished; passive until the next START, STOP, or RESET.
 
 ### Arbitration Rules
 
@@ -39,7 +39,7 @@ A compliant HUBUS slave must provide:
 
 ### Response Rules
 
-- Only `REQUEST_INFO` and `REQUEST_DATA`, exactly addressed and with valid CRC, lead to `SELECTED_TRANSFER`.
+- Only `REQUEST_INFO` and `REQUEST_DATA`, exactly addressed and with valid CRC, lead to `TX`.
 - The response starts in the slot directly after the turnaround slot.
 - With an empty buffer, a `REQUEST_DATA` leads to `IGNORE` (the line stays released, which the master reads as "no response").
 
@@ -50,13 +50,13 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 | Condition | Slave action (from any state) |
 |---|---|
 | START | Release `DATA`, discard partial frame/arbitration/transmit state, start receiving at bit 0. |
-| STOP | Release `DATA`, go to `IDLE_LISTEN`. If a complete `SLAVE_DATA` response was transmitted in this transaction, clear the buffer and the pending flag (`PROTOCOL.md` section 3.4). |
-| RESET | Release `DATA`, reset communication stack, go to `IDLE_LISTEN`. Buffer, `GEN` counter, and pending flag are preserved (see `PROTOCOL.md` section 3.3). |
+| STOP | Release `DATA`, go to `IDLE`. If a complete `SLAVE_DATA` response was transmitted in this transaction, clear the buffer and the pending flag (`PROTOCOL.md` section 3.4). |
+| RESET | Release `DATA`, reset communication stack, go to `IDLE`. Buffer, `GEN` counter, and pending flag are preserved (see `PROTOCOL.md` section 3.3). |
 
 ### Idle Event Signal Rules
 
-- The slave enters `IDLE_EVENT_SIGNAL` and pulls `DATA` low in exactly two cases: (1) the buffer is written while no data was pending and the bus is idle with `CLK` low; (2) at the first falling `CLK` edge after a STOP or RESET, if data is still pending (the slave is "armed" by the STOP/RESET and disarmed by signaling or by a START). A slave therefore signals at most once per STOP (`PROTOCOL.md` section 3.1).
-- After the first falling `CLK` edge (one complete clock pulse), the slave releases `DATA` and returns to `IDLE_LISTEN`. Releasing while `CLK` is high is not allowed, since it would look like a STOP.
+- The slave enters `EVENT` and pulls `DATA` low in exactly two cases: (1) the buffer is written while no data was pending and the bus is idle with `CLK` low; (2) at the first falling `CLK` edge after a STOP or RESET, if data is still pending (the slave is "armed" by the STOP/RESET and disarmed by signaling or by a START). A slave therefore signals at most once per STOP (`PROTOCOL.md` section 3.1).
+- After the first falling `CLK` edge (one complete clock pulse), the slave releases `DATA` and returns to `IDLE`. Releasing while `CLK` is high is not allowed, since it would look like a STOP.
 - There is no local timeout: the slave holds `DATA` low until that clock pulse arrives.
 
 ## 3. MCID Requirements

@@ -4,6 +4,7 @@ This directory contains the normative documentation for HUBUS.
 
 ## Core Specs
 
+- `ARCHITECTURE.md`: stack design with sequence, activity, state, and timing diagrams, plus a possible hardware setup.
 - `PROTOCOL.md`: system model, communication lifecycle, and master/slave behavior.
 - `ARBITRATION.md`: MCID arbitration, pending masks, and handoff behavior.
 - `MESSAGE_FORMAT.md`: frame layout, message types, unified target-mask addressing, and payload rules.
@@ -11,6 +12,7 @@ This directory contains the normative documentation for HUBUS.
 - `SLAVE_PROPERTIES.md`: minimal slave capabilities and example device categories.
 - `ITERATIVE_CONCEPT.md`: open decisions, roadmap, and deferred topics.
 - `OPEN_ISSUES.md`: tracking list of known gaps, inconsistencies, and defects.
+- `SPEC_CODE_DEVIATIONS.md`: functional differences found between the specs and the implementation.
 - `DAEMON_REQUIREMENTS.md`: requirements for the MQTT master daemon.
 - `DAEMON.md`: operating the bus from MQTT / Home Assistant (hubusd).
 
