@@ -60,7 +60,9 @@ All commands run inside WSL from the repository root (from Windows: `wsl -d hubu
 | Size reference firmware for the whole device matrix | `sh tools/build-avr-matrix.sh [mcu ...]` |
 | Largest symbols of the reference firmware | `sh tools/sizes.sh [mcu]` |
 | Sanity check of the test suite (deliberate bugs must be caught) | `sh tools/mutation-check.sh` |
+| Only some mutants of the sanity check | `sh tools/run-mutants.sh "<name pattern>" ...` |
 | One test with the bus trace on stderr | `HUBUS_SIM_TRACE=1 ./build/host/test/test_master` |
+| The same, rebuilt, showing only the context of the first matches | `sh tools/run-trace.sh test_master [pattern] [lines]` |
 | Render the timing diagrams and check the documentation | `sh tools/build-docs.sh` |
 
 ### Repository Layout
