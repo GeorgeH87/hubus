@@ -526,6 +526,56 @@ static void test_readback_mode_per_slave_overrides_the_bus_default(void)
     assert_last("hubus/slave/3/state", "ON");
 }
 
+/* A relay with neither a state nor STATUS_CAPTURE (built without both): readback `slave` falls back to the cache. */
+static void test_slave_that_cannot_be_read_back_reports_the_cached_state(void)
+{
+    load("bus:\n  readback: slave\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    add_dev(3, DEV_RELAY);
+    dev[0].core.on_status_capture = NULL;
+    start_daemon();
+    settle();
+    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* nothing to read at startup */
+    say("hubus/slave/3/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+    assert_last("hubus/slave/3/state", "ON");
+    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/state")->retain);
+    TEST_ASSERT_EQUAL_UINT(0, dev[0].captures);
+    TEST_ASSERT_EQUAL_UINT(0, dmn->master.counters.state_requests);
+}
+
+/* A sensor that never announces changes: poll_interval_s reads its state periodically. */
+static void test_poll_interval_reads_the_state_periodically(void)
+{
+    dev_with_state = 1;
+    standard_setup("bus:\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n  - mcid: 7\n"
+                   "    poll_interval_s: 10\n");
+    set_temp(&dev[2], 311);
+    n_msgs = 0;
+    advance(9);
+    TEST_ASSERT_NULL(last("hubus/slave/7/state")); /* not yet due */
+    advance(1);
+    assert_last("hubus/slave/7/state", "38");
+    TEST_ASSERT_EQUAL_UINT(0, dev[2].captures); /* REQUEST_STATE, no capture */
+    set_temp(&dev[2], 301);
+    advance(10);
+    assert_last("hubus/slave/7/state", "28");
+    TEST_ASSERT_EQUAL_UINT(2, count("hubus/slave/7/state"));
+    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* only the slave with the option is polled */
+}
+
+/* Polling a slave without a state uses STATUS_CAPTURE and a burst. */
+static void test_poll_interval_captures_a_slave_without_a_state(void)
+{
+    standard_setup("bus:\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 7\n    poll_interval_s: 5\n");
+    TEST_ASSERT_EQUAL_UINT(1, dev[2].captures); /* the initial state read at startup */
+    dev[2].raw_temp = 303;
+    n_msgs = 0;
+    advance(5);
+    TEST_ASSERT_EQUAL_UINT(2, dev[2].captures);
+    assert_last("hubus/slave/7/state", "30");
+}
+
 static void test_invalid_set_commands_are_rejected(void)
 {
     standard_setup(base_yaml);
@@ -1205,6 +1255,9 @@ int main(void)
     RUN_TEST(test_cache_readback_reports_the_command_without_contacting_the_slave);
     RUN_TEST(test_cache_readback_does_not_know_about_a_defective_slave);
     RUN_TEST(test_cache_readback_leaves_raw_commands_alone);
+    RUN_TEST(test_slave_that_cannot_be_read_back_reports_the_cached_state);
+    RUN_TEST(test_poll_interval_reads_the_state_periodically);
+    RUN_TEST(test_poll_interval_captures_a_slave_without_a_state);
     RUN_TEST(test_readback_mode_per_slave_overrides_the_bus_default);
     RUN_TEST(test_invalid_set_commands_are_rejected);
     RUN_TEST(test_malformed_topics_and_payloads_are_rejected);

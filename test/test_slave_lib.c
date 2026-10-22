@@ -235,7 +235,7 @@ static void test_request_info(void)
     stop();
     TEST_ASSERT_EQUAL_UINT(3 + 3 + sizeof info, n);
     TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, NULL));
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, buf[2 + HUBUS_INFO_MAX_CMD]);
     TEST_ASSERT_EQUAL_MEMORY(info, &buf[2 + HUBUS_INFO_APP], sizeof info);
 }

@@ -590,6 +590,7 @@ static void load_slaves(ctx_t *c, yn_t *root)
             rb = b;
         }
         sl->readback = (int)rb;
+        read_unsigned(c, e, "poll_interval_s", 0, 86400, &sl->poll_interval_s);
         warn_unknown(c, e, "slaves");
         cfg->n_slaves++;
     }

@@ -1,6 +1,7 @@
 # Example slave firmware for the ATtiny85 (CLK = PB2, DATA = PB3). The CI
 # device matrix builds the size reference firmware for the other devices.
-if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
+# The examples use the event buffer (status capture, announced changes).
+if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85" AND HUBUS_ENABLE_EVENTS)
     foreach(example relay switch sensor)
         if(example STREQUAL "relay")
             set(source slave-relay/relay_example.c)

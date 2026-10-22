@@ -140,13 +140,13 @@ Static metadata, typically a constant in flash.
 | Byte | Content |
 |---|---|
 | 0 | HUBUS protocol version |
-| 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; other bits reserved (0) |
+| 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); other bits reserved (0). Bit 0 requires bit 2. |
 | 2 | Maximum command payload the slave accepts, in bytes (`1..31`; ATtiny85 reference build: 31) |
 | 3.. | Application-defined (for example device type, firmware version). SHOULD include a device-unique value (for example a serial number) so the master's commissioning scan reliably detects duplicate MCIDs (`PROTOCOL.md` section 3.5). |
 
 ### 4.2 Slave Buffer and `SLAVE_DATA`
 
-Each slave has exactly one buffer for outgoing data.
+A slave with an event buffer has exactly one buffer for outgoing data. The event buffer is optional (`SLAVE_PROPERTIES.md` section 4.2): a slave without it never announces anything, never answers `REQUEST_DATA` (like a slave whose buffer is empty), and does not support `STATUS_CAPTURE`. It clears capability bits 0 and 2.
 
 - The application writes event data into it (for example a switch change), or the slave fills it on `STATUS_CAPTURE` with the current status provided by the application.
 - Writing the buffer sets the pending flag.

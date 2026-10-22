@@ -49,6 +49,7 @@ slaves:
   - mcid: 7
     name: Cellar temperature
     readback: cache       # per-slave override of bus.readback (slave | cache | none)
+    poll_interval_s: 60   # read the state periodically (for slaves that never announce changes), 0 = off
 
 # Profiles for custom firmware. Built in: relay (type 0x01), switch (0x02), temperature (0x03).
 # profiles:

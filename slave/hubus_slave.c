@@ -32,6 +32,7 @@ uint8_t hubus_slave_init(const hubus_slave_config_t *cfg)
     return ok;
 }
 
+#if HUBUS_ENABLE_EVENTS
 uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more)
 {
     uint8_t r;
@@ -47,3 +48,4 @@ uint8_t hubus_slave_is_pending(void)
 {
     return hubus_core_is_pending(&g_core);
 }
+#endif

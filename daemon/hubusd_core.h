@@ -89,6 +89,7 @@ typedef struct {
     hubus_slave_frame_t info;
     uint64_t last_seen_ms;
     uint64_t next_ping_ms;
+    uint64_t next_poll_ms;           /* next periodic state read (slave option poll_interval_s) */
     char last_state[32];
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;

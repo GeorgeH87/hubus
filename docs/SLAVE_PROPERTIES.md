@@ -9,7 +9,7 @@ A compliant HUBUS slave must provide:
 - `DATA` line sensing at defined sample points (rising `CLK` edge).
 - `DATA` line drive-low and release behavior; `DATA` is only changed while `CLK` is low.
 - Detection of START, STOP, and RESET line conditions (`DATA` change while `CLK` is high).
-- Idle event announce behavior by pulling `DATA` low until the first complete master clock pulse.
+- With an event buffer (section 4.2): idle event announce behavior by pulling `DATA` low until the first complete master clock pulse.
 - Arbitration participation logic, including driving the handoff slot directly after losing.
 - Target-mask match logic (`MCID` prefix + `TARGET_LEN`) for all master commands.
 - Early target filtering based on `TARGET_LEN` before full command processing.
@@ -23,7 +23,7 @@ A compliant HUBUS slave must provide:
 The names are those of the slave library (`HUBUS_ST_*` in `core/hubus_slave_core.h`).
 
 - `IDLE`: Wait for START. The pending flag indicates unread outgoing data.
-- `EVENT`: Hold `DATA` low to announce a pending event (idle event signaling).
+- `EVENT`: Hold `DATA` low to announce a pending event (idle event signaling; only with the event buffer).
 - `RX`: Receive the master frame after START. A prefix mismatch is detected as soon as the bits arrive (`IGNORE`). With the CRC8 byte the frame is evaluated: CRC result, command execution for `SEND_COMMAND`, and whether the slave can answer a request (any slave for `REQUEST_INFO`, a slave with a state for `REQUEST_STATE`, a pending slave for `REQUEST_DATA`).
 - `TURN`: Turnaround slot with `DATA` released. Only a slave that answers or contends gets here.
 - `ARB`: Arbitration with the open MCID bits, starting at slot `2·TARGET_LEN` of the 12-slot pattern. A slave that loses at bit `k` remembers `k`, drives `DATA` low in handoff slot `k`, and then stays passive for the rest of the pattern. After the last slot the winner goes to `TX`, the losers to `IGNORE`. With `TARGET_LEN = 6` there are no slots and the slave goes to `TX` at once.
@@ -71,7 +71,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 ## 4. Buffer and Payload Constraints
 
 - Design for low RAM footprint.
-- Exactly one outgoing buffer (`MESSAGE_FORMAT.md` section 4.2) and a receive buffer for command payloads.
+- A receive buffer for command payloads and, with the event buffer (section 4.2), exactly one outgoing buffer (`MESSAGE_FORMAT.md` section 4.2).
 - Both buffer sizes are compile-time options (maximum 31 bytes each). The ATtiny85 reference build uses the full 31 bytes; smaller devices may use shorter buffers (`HARDWARE_REQUIREMENTS.md` section 4.1).
 - The accepted command payload size is announced in `SLAVE_INFO` byte 2. Longer commands are received to the end (to stay synchronized) and then ignored.
 - Writing the outgoing buffer (event data or `STATUS_CAPTURE`) sets the pending flag.
@@ -79,7 +79,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Every buffer write increments the 2-bit `GEN` counter, which is transmitted in the `SLAVE_DATA` header (`MESSAGE_FORMAT.md` section 4.3).
 - The application passes the `MORE` flag with each buffer write (fragmented transfers) and writes the next fragment only when the buffer is empty (`MESSAGE_FORMAT.md` section 6.1).
 - Static device info for `REQUEST_INFO` (`MESSAGE_FORMAT.md` section 4.1) can be a constant in flash and needs no RAM.
-- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM. State support is a compile-time option of the slave library (`HUBUS_ENABLE_STATE`, about 100 bytes of flash and 3 bytes of RAM). The build leaves it out by default for the ATtiny24/25, which then never answer `REQUEST_STATE`; on other devices it can be switched off the same way.
+- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM.
 
 ## 4.1 Responses
 
@@ -87,6 +87,21 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Commands are executed without acknowledgement. No error frames exist; application errors are reported through the buffer.
 - Unknown reserved opcodes (`0x01..0x0F`) are ignored.
 - After transmitting a complete `SLAVE_DATA` response to `REQUEST_DATA`, the slave remembers this (one flag) until the transaction ends: STOP clears buffer and pending flag, RESET keeps both. A state frame (`REQUEST_STATE`) clears nothing.
+
+## 4.2 Optional Parts
+
+The event buffer and the state are independent, optional parts of a slave. The application chooses them per device type; the slave library makes both compile-time options (`HUBUS_ENABLE_EVENTS`, `HUBUS_ENABLE_STATE`, both on by default). Every combination is valid, and `SLAVE_INFO` byte 1 tells the master which parts a slave has (`MESSAGE_FORMAT.md` section 4.1).
+
+| Event buffer | State | Typical device | How the master learns the state |
+|---|---|---|---|
+| yes | yes | push button, multi-button panel | events in bursts, `REQUEST_STATE` at any time |
+| yes | no | simple event source | events in bursts, `STATUS_CAPTURE` |
+| no | yes | sensor that is only read, relay | `REQUEST_STATE` (the master polls if it needs current values) |
+| no | no | relay without feedback | not at all: the master keeps the state it commanded in a cache |
+
+- **Without the event buffer** the slave never speaks on its own: no idle event signaling, no `REQUEST_DATA` response (it behaves like a slave with an empty buffer), no `STATUS_CAPTURE` (the opcode is ignored). The library leaves out the outgoing buffer, `GEN`, `MORE`, and the pending flag, and the application has no write function. On the ATtiny85 this saves about 500 bytes of flash and 39 bytes of RAM (reference firmware, including its capture and write code).
+- **Without the state** the slave ignores `REQUEST_STATE` (about 100 bytes of flash and 3 bytes of RAM).
+- **Without both** the slave only executes commands and answers `REQUEST_INFO`. The master cannot read anything back; the state it reports is the one it commanded. A command that did not arrive or was not executed stays unnoticed; this is accepted for such devices.
 
 ## 5. No Timeouts on the Slave
 

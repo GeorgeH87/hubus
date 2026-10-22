@@ -42,7 +42,8 @@ Example setup: one Raspberry Pi, one ATtiny as relay controller, one ATtiny as p
 - F8: After a command that changes state, the daemon reports the state according to the configurable `readback` mode (global and per slave): `slave` (default) triggers `STATUS_CAPTURE` and publishes the value read from the slave; `cache` publishes the state the command establishes without contacting the slave again; `none` publishes nothing. Commands are never acknowledged by slaves, so only `slave` mode proves that the state was established.
 - F9: Commissioning scan on request (group `REQUEST_INFO`, one transaction per slave), including the suspected-duplicate-MCID result.
 - F10: Raw request of `SLAVE_INFO` of a single MCID (probe) and of the live state of one slave (`REQUEST_STATE`) on request. There is no function that polls all 63 MCIDs one by one.
-- F10a: Where a slave exposes a state, the daemon reads it with `REQUEST_STATE` for the readback after commands and for the refresh after startup or an outage; slaves without a state use `STATUS_CAPTURE`.
+- F10a: Where a slave exposes a state, the daemon reads it with `REQUEST_STATE` for the readback after commands and for the refresh after startup or an outage; slaves without a state use `STATUS_CAPTURE`. A slave with neither (`SLAVE_PROPERTIES.md` section 4.2) cannot be read back: `slave` readback falls back to `cache` for it.
+- F10b: Per slave, `poll_interval_s` reads the state periodically, for slaves that never announce changes (built without the event buffer).
 
 ### 4.3 Slave details
 

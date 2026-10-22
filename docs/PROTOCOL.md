@@ -139,7 +139,7 @@ So that one turnaround slot is sufficient, no slave step may require bulk proces
 ### Slave
 
 - Listens for master intents.
-- Signals pending communication on `DATA`.
+- Signals pending communication on `DATA` (slaves with an event buffer).
 - Participates in arbitration when needed.
 - Responds only when selected by master.
 - Reacts only to `CLK` edges and master line conditions; never waits on its own timer.
@@ -159,9 +159,9 @@ So that one turnaround slot is sufficient, no slave step may require bulk proces
   - read the event buffer (`REQUEST_DATA`)
   - send a command (`SEND_COMMAND`, including `STATUS_CAPTURE`)
 
-Each slave has exactly one outgoing buffer. A slave with an empty buffer ignores `REQUEST_DATA` completely and remains silent. New buffer content may overwrite unread old content.
+A slave with an event buffer has exactly one outgoing buffer. A slave with an empty buffer, or without an event buffer, ignores `REQUEST_DATA` completely and remains silent. New buffer content may overwrite unread old content. Event buffer and state are optional parts of a slave (`SLAVE_PROPERTIES.md` section 4.2).
 
-Commands are never acknowledged. If the master needs to confirm that a state was established, it reads the state back explicitly with `REQUEST_STATE`.
+Commands are never acknowledged. If the master needs to confirm that a state was established, it reads the state back explicitly with `REQUEST_STATE`. A slave with neither a state nor an event buffer cannot be read back; the master keeps the state it commanded in a cache.
 
 All addressed master commands use unified target-mask addressing.
 
@@ -364,9 +364,9 @@ Phases of the bus as a whole, used in this document. They are not implementation
 
 The protocol is generic, but the following examples define intended behavior classes:
 
-- Relay and LED slaves: receive application commands (`SEND_COMMAND`) to switch outputs on or off. To verify, the master reads the state with `REQUEST_STATE`.
+- Relay and LED slaves: receive application commands (`SEND_COMMAND`) to switch outputs on or off. To verify, the master reads the state with `REQUEST_STATE`. They need no event buffer. A relay without a state either (the smallest build) cannot be read back; the master keeps the commanded state in its cache.
 - Switch slaves: write state changes into the buffer and announce them via idle event signaling; the master collects them in a burst. The slave also exposes the current level of all its inputs as state, which the master may read at any time with `REQUEST_STATE`.
-- Temperature sensor slaves: expose the measured value as state (`REQUEST_STATE`, single slave or group). `STATUS_CAPTURE` still lets the master collect values through a burst.
+- Temperature sensor slaves: expose the measured value as state (`REQUEST_STATE`, single slave or group). A sensor that is only read needs no event buffer; the master polls it. With an event buffer, `STATUS_CAPTURE` also lets the master collect values through a burst, and the sensor can announce threshold crossings itself.
 
 These are usage examples only. The protocol does not require these exact device types.
 

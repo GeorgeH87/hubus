@@ -212,6 +212,7 @@ hubus_master_hal_t hubus_sim_master_hal(hubus_sim_t *sim)
     return hal;
 }
 
+#if HUBUS_ENABLE_EVENTS
 uint8_t hubus_sim_slave_write(hubus_sim_t *sim, unsigned slave, const uint8_t *data, uint8_t len, uint8_t more)
 {
     uint8_t r = hubus_core_write(sim->slave[slave], data, len, more);
@@ -219,6 +220,7 @@ uint8_t hubus_sim_slave_write(hubus_sim_t *sim, unsigned slave, const uint8_t *d
     hubus_sim_settle(sim);
     return r;
 }
+#endif
 
 void hubus_sim_unplug(hubus_sim_t *sim, unsigned slave, int unplugged)
 {

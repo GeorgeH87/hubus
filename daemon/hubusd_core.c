@@ -109,13 +109,6 @@ static const char *slave_name(const hubusd_t *d, unsigned mcid)
     return d->slave[mcid].configured ? d->cfg.slaves[d->slave[mcid].cfg_index].name : "unconfigured";
 }
 
-static int slave_readback(const hubusd_t *d, unsigned mcid)
-{
-    int rb = d->slave[mcid].configured ? d->cfg.slaves[d->slave[mcid].cfg_index].readback : -1;
-
-    return rb < 0 ? d->cfg.bus.readback : rb;
-}
-
 /* Application bytes of SLAVE_INFO: [0] device type, [1] firmware version, [2..] serial number. */
 static int info_device_type(const hubusd_slave_t *s)
 {
@@ -131,6 +124,21 @@ static int info_can_capture(const hubusd_slave_t *s)
 static int info_has_state(const hubusd_slave_t *s)
 {
     return s->have_info && (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
+}
+
+static int slave_readback(const hubusd_t *d, unsigned mcid)
+{
+    const hubusd_slave_t *s = &d->slave[mcid];
+    int rb = s->configured ? d->cfg.slaves[s->cfg_index].readback : -1;
+
+    if (rb < 0) {
+        rb = d->cfg.bus.readback;
+    }
+    /* A slave with neither a state nor STATUS_CAPTURE cannot be read back: its state exists only in the cache. */
+    if (rb == HUBUSD_READBACK_SLAVE && !info_has_state(s) && !info_can_capture(s)) {
+        rb = HUBUSD_READBACK_CACHE;
+    }
+    return rb;
 }
 
 static void sanitize_id(const char *in, char *out, size_t size)
@@ -395,6 +403,7 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
     jw_str(&w, "name", slave_name(d, mcid));
     jw_uint(&w, "protocol", s->info.payload[HUBUS_INFO_VERSION]);
     jw_uint(&w, "capabilities", s->info.payload[HUBUS_INFO_CAPS]);
+    jw_bool(&w, "events", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_EVENTS) != 0);
     jw_bool(&w, "status_capture", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATUS_CAPTURE) != 0);
     jw_bool(&w, "state", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE) != 0);
     jw_uint(&w, "max_command", s->info.payload[HUBUS_INFO_MAX_CMD]);
@@ -676,6 +685,7 @@ static void bind_config(hubusd_t *d)
         s->configured = 1;
         s->cfg_index = (uint8_t)i;
         s->next_ping_ms = now + (uint64_t)i * interval * 1000u / (d->cfg.n_slaves ? d->cfg.n_slaves : 1u);
+        s->next_poll_ms = now + (uint64_t)d->cfg.slaves[i].poll_interval_s * 1000u;
         s->unknown_seen = 0;
         resolve_profile(d, d->cfg.slaves[i].mcid);
     }
@@ -1598,6 +1608,22 @@ int hubusd_step(hubusd_t *d)
             publish_state(d, 0);
             busy = 1;
             break; /* one probe per step keeps the latency for commands low */
+        }
+    }
+    /* Periodic state read for slaves that never announce changes (poll_interval_s): REQUEST_STATE, or STATUS_CAPTURE
+     * and a burst for a slave without a state. */
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->bus == HUBUSD_BUS_OK; mcid++) {
+        hubusd_slave_t *s = &d->slave[mcid];
+        unsigned interval = s->configured ? d->cfg.slaves[s->cfg_index].poll_interval_s : 0u;
+
+        if (interval && now >= s->next_poll_ms) {
+            s->next_poll_ms = now + (uint64_t)interval * 1000u;
+            if (s->online == 1) {
+                s->needs_refresh = 1;
+                refresh_states(d);
+                busy = 1;
+                break; /* one read per step, like the pings */
+            }
         }
     }
     if (d->bus == HUBUSD_BUS_OK && d->cfg.bus.scan_interval_s && now >= d->next_scan_ms) {

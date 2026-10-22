@@ -63,3 +63,9 @@ jobs:
         run: |
           cmake --preset avr -B build/avr-${{ matrix.mcu }} -DHUBUS_AVR_MCU=${{ matrix.mcu }}
           cmake --build build/avr-${{ matrix.mcu }}
+      - name: Build without the event buffer, and without event buffer and state
+        run: |
+          cmake --preset avr -B build/avr-${{ matrix.mcu }}-passive -DHUBUS_AVR_MCU=${{ matrix.mcu }} -DHUBUS_ENABLE_EVENTS=0
+          cmake --build build/avr-${{ matrix.mcu }}-passive
+          cmake --preset avr -B build/avr-${{ matrix.mcu }}-command -DHUBUS_AVR_MCU=${{ matrix.mcu }} -DHUBUS_ENABLE_EVENTS=0 -DHUBUS_ENABLE_STATE=0
+          cmake --build build/avr-${{ matrix.mcu }}-command

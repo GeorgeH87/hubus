@@ -208,6 +208,15 @@ static void test_readback_modes(void)
     expect_error("slaves:\n  - mcid: 1\n    readback: later\n", "slave, cache, or none");
 }
 
+static void test_poll_interval(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse("slaves:\n  - mcid: 1\n    poll_interval_s: 60\n  - mcid: 2\n"));
+    TEST_ASSERT_EQUAL_UINT(60, cfg.slaves[0].poll_interval_s);
+    TEST_ASSERT_EQUAL_UINT(0, cfg.slaves[1].poll_interval_s); /* default: no polling */
+    TEST_ASSERT_EQUAL_UINT(0, cfg.n_warnings);
+    expect_error("slaves:\n  - mcid: 1\n    poll_interval_s: -1\n", "between 0 and 86400");
+}
+
 static void test_error_reports_the_right_line(void)
 {
     TEST_ASSERT_EQUAL_INT(-1, parse("gpio:\n  clk: 4\nmqtt:\n  host: a\n  port: x\n"));
@@ -428,6 +437,7 @@ int main(void)
     RUN_TEST(test_unknown_keys_are_warnings_with_line_numbers);
     RUN_TEST(test_error_classes);
     RUN_TEST(test_readback_modes);
+    RUN_TEST(test_poll_interval);
     RUN_TEST(test_error_reports_the_right_line);
     RUN_TEST(test_too_many_slaves);
     RUN_TEST(test_password_from_file_and_environment);

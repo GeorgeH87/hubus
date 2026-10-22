@@ -34,8 +34,19 @@
 #error "HUBUS_RX_BUF_SIZE must be 1..31"
 #endif
 
-/* REQUEST_STATE support (docs/MESSAGE_FORMAT.md section 4.4). It costs about 100 bytes of flash and 3 bytes of RAM and is
- * compiled out for 2 KB devices (ATtiny24/25): such a slave simply never answers REQUEST_STATE. */
+/*
+ * Optional parts (docs/SLAVE_PROPERTIES.md section 4.2), chosen per device type; both are on by default and every
+ * combination is valid:
+ *
+ *   HUBUS_ENABLE_EVENTS  event buffer: hubus_core_write(), idle event signaling, REQUEST_DATA, STATUS_CAPTURE.
+ *                        Without it the slave never speaks on its own (for example a sensor that is only read).
+ *   HUBUS_ENABLE_STATE   live state for REQUEST_STATE (docs/MESSAGE_FORMAT.md section 4.4).
+ *
+ * Without both the slave only executes commands and answers REQUEST_INFO; the master keeps its state in a cache.
+ */
+#ifndef HUBUS_ENABLE_EVENTS
+#define HUBUS_ENABLE_EVENTS 1
+#endif
 #ifndef HUBUS_ENABLE_STATE
 #define HUBUS_ENABLE_STATE 1
 #endif
@@ -58,9 +69,10 @@ typedef struct {
     uint8_t mcid;                              /* 1..63 */
     const uint8_t *info;                       /* application bytes of SLAVE_INFO (flash on AVR), may be NULL */
     uint8_t info_len;                          /* 0..HUBUS_INFO_APP_MAX */
-    const volatile uint8_t *state;             /* live state for REQUEST_STATE, read while transmitting; may be NULL */
+    const volatile uint8_t *state;             /* live state for REQUEST_STATE, read while transmitting; may be NULL;
+                                                  ignored without HUBUS_ENABLE_STATE */
     uint8_t state_len;                         /* 0 (no state) .. HUBUS_MAX_PAYLOAD */
-    hubus_status_capture_fn on_status_capture; /* NULL: STATUS_CAPTURE not supported */
+    hubus_status_capture_fn on_status_capture; /* NULL: STATUS_CAPTURE not supported; ignored without HUBUS_ENABLE_EVENTS */
     hubus_command_fn on_command;               /* application opcodes 0x10..0xFF, may be NULL */
     void *ctx;
 } hubus_core_config_t;
@@ -89,7 +101,9 @@ typedef struct hubus_slave_core {
     const volatile uint8_t *app_state;
     uint8_t app_state_len;
 #endif
+#if HUBUS_ENABLE_EVENTS
     hubus_status_capture_fn on_status_capture;
+#endif
     hubus_command_fn on_command;
     void *ctx;
 
@@ -97,7 +111,9 @@ typedef struct hubus_slave_core {
     uint8_t clk;         /* last seen CLK level */
     uint8_t data;        /* last seen DATA level (1 = high) */
     uint8_t data_low;    /* output: 1 = pull DATA low, 0 = release */
+#if HUBUS_ENABLE_EVENTS
     uint8_t armed;       /* STOP/RESET seen: a pending slave announces itself at the next falling CLK edge */
+#endif
 
     uint8_t state;
 
@@ -119,14 +135,16 @@ typedef struct hubus_slave_core {
 
     /* transmit */
     uint8_t tx_len;
-    uint8_t tx_complete; /* complete SLAVE_DATA sent in this transaction */
 
-    /* the single outgoing buffer */
+#if HUBUS_ENABLE_EVENTS
+    /* the single outgoing buffer (event buffer) */
+    uint8_t tx_complete; /* complete SLAVE_DATA sent in this transaction */
     uint8_t buf[HUBUS_TX_BUF_SIZE];
     uint8_t buf_len;
     uint8_t more;
     uint8_t gen;
     uint8_t pending;
+#endif
 } hubus_slave_core_t;
 
 /* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), too much info data,
@@ -143,6 +161,7 @@ static inline uint8_t hubus_core_data_low(const hubus_slave_core_t *c)
     return c->data_low;
 }
 
+#if HUBUS_ENABLE_EVENTS
 /*
  * Writes the outgoing buffer: sets the pending flag, increments GEN and, if
  * the bus is idle with CLK low, starts idle event signaling. `more` marks a
@@ -156,5 +175,6 @@ static inline uint8_t hubus_core_is_pending(const hubus_slave_core_t *c)
 {
     return *(const volatile uint8_t *)&c->pending;
 }
+#endif
 
 #endif /* HUBUS_SLAVE_CORE_H */

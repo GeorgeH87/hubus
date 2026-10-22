@@ -8,7 +8,7 @@
  *   hubus_slave_init(&cfg);              // pin change interrupts for CLK and DATA
  *   sei();                               // the application enables global interrupts when it is ready
  *   ...
- *   hubus_slave_write(data, len, 0);     // buffer data, announce it to the master
+ *   hubus_slave_write(data, len, 0);     // buffer data, announce it to the master (HUBUS_ENABLE_EVENTS)
  *
  * Callbacks run in the ISR and must be short (no delays, no blocking).
  * Build-time options are described in hubus_slave_config.h.
@@ -29,7 +29,8 @@
  *   state, state_len   live state for REQUEST_STATE (RAM, read while transmitting, 0..31 bytes); NULL: no state.
  *                      A longer state_len is an invalid configuration.
  *                      The application keeps it up to date; no copy is made. Needs HUBUS_ENABLE_STATE.
- *   on_status_capture  writes the current status via hubus_slave_write(); NULL: not supported
+ *   on_status_capture  writes the current status via hubus_slave_write(); NULL: not supported.
+ *                      Needs HUBUS_ENABLE_EVENTS.
  *   on_command         application commands (opcode 0x10..0xFF); may be NULL
  *   ctx                passed to the callbacks
  */
@@ -44,6 +45,7 @@ typedef hubus_core_config_t hubus_slave_config_t;
  */
 uint8_t hubus_slave_init(const hubus_slave_config_t *cfg);
 
+#if HUBUS_ENABLE_EVENTS
 /*
  * Writes the outgoing buffer (event data or captured status): overwrites
  * unread content, increments GEN, sets the pending flag and announces the
@@ -58,6 +60,7 @@ uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more);
 
 /* 1 while buffered data has not been read by the master. Fragmented transfers write the next fragment when this is 0. */
 uint8_t hubus_slave_is_pending(void);
+#endif /* HUBUS_ENABLE_EVENTS: a slave without the event buffer never speaks on its own */
 
 /* Pin change handler; called by the HAL vectors (and by host tests). */
 void hubus_slave_isr(void);

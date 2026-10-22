@@ -32,18 +32,26 @@ hubus_test(test_master)
 hubus_test(test_faults)
 hubus_test(test_slave_lib hubus_slave_host)
 
-# Small command buffer: oversized commands must be ignored. The core is
-# compiled again with HUBUS_RX_BUF_SIZE=4 and HUBUS_TX_BUF_SIZE=6.
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_small_buffers.c)
-add_executable(test_small_buffers test_small_buffers.c ${HUBUS_CORE_SOURCES_ABS} sim/hubus_sim.c)
-target_include_directories(test_small_buffers PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master sim support)
-# REQUEST_STATE support is compiled out as well (the build of the 2 KB devices).
-target_compile_definitions(test_small_buffers PRIVATE HUBUS_RX_BUF_SIZE=4 HUBUS_TX_BUF_SIZE=6 HUBUS_ENABLE_STATE=0)
-target_link_libraries(test_small_buffers PRIVATE unity)
-target_compile_options(test_small_buffers PRIVATE ${HUBUS_TEST_WARNINGS})
-add_test(NAME test_small_buffers COMMAND test_small_buffers)
-set_tests_properties(test_small_buffers PROPERTIES TIMEOUT 120)
-endif()
+# A test of the slave core in another build configuration: the core and the simulation are compiled again with the
+# given definitions.
+function(hubus_core_variant_test name source)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${source})
+        return()
+    endif()
+    add_executable(${name} ${source} ${HUBUS_CORE_SOURCES_ABS} sim/hubus_sim.c)
+    target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master sim support)
+    target_compile_definitions(${name} PRIVATE ${ARGN})
+    target_link_libraries(${name} PRIVATE unity)
+    target_compile_options(${name} PRIVATE ${HUBUS_TEST_WARNINGS})
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES TIMEOUT 120)
+endfunction()
+
+# Small buffers: oversized commands must be ignored. REQUEST_STATE support is compiled out as well.
+hubus_core_variant_test(test_small_buffers test_small_buffers.c HUBUS_RX_BUF_SIZE=4 HUBUS_TX_BUF_SIZE=6 HUBUS_ENABLE_STATE=0)
+# Without the event buffer: a passive slave that is only read, and one that only executes commands.
+hubus_core_variant_test(test_slave_passive test_slave_parts.c HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1)
+hubus_core_variant_test(test_slave_command_only test_slave_parts.c HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=0)
 
 if(HUBUSD_LIB_AVAILABLE)
     hubus_test(test_daemon_config hubusd_lib)

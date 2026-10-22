@@ -13,6 +13,7 @@ static void go_ignore(hubus_slave_core_t *c)
     c->state = HUBUS_ST_IGNORE;
 }
 
+#if HUBUS_ENABLE_EVENTS
 /* Idle event signaling: hold DATA low until the next falling CLK edge. */
 static void start_event(hubus_slave_core_t *c)
 {
@@ -20,6 +21,7 @@ static void start_event(hubus_slave_core_t *c)
     c->data_low = 1;
     c->state = HUBUS_ST_EVENT;
 }
+#endif
 
 static void tx_start(hubus_slave_core_t *c);
 
@@ -28,8 +30,10 @@ static void tx_start(hubus_slave_core_t *c);
 static void on_start(hubus_slave_core_t *c)
 {
     c->data_low = 0;
+#if HUBUS_ENABLE_EVENTS
     c->tx_complete = 0;
     c->armed = 0;
+#endif
     c->nbits = 0;
     c->idx = 0;
     c->crc = HUBUS_CRC_INIT;
@@ -38,13 +42,15 @@ static void on_start(hubus_slave_core_t *c)
 
 static void on_stop(hubus_slave_core_t *c)
 {
+#if HUBUS_ENABLE_EVENTS
     /* START immediately followed by STOP is a RESET: tx_complete is already
      * cleared by the START, so buffer, GEN, and pending flag stay intact. */
     c->armed = 1;
-    c->data_low = 0;
     if (c->tx_complete) {
         c->pending = 0;
     }
+#endif
+    c->data_low = 0;
     c->state = HUBUS_ST_IDLE;
 }
 
@@ -67,11 +73,14 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
         go_ignore(c);
         if (c->rx_len >= 1u && c->rx_len <= HUBUS_RX_BUF_SIZE) {
             uint8_t op = c->cmd[0];
+#if HUBUS_ENABLE_EVENTS
             if (op == HUBUS_OP_STATUS_CAPTURE) {
                 if (c->on_status_capture) {
                     c->on_status_capture(c->ctx);
                 }
-            } else if (op >= HUBUS_OP_APP_MIN && c->on_command) {
+            } else
+#endif
+            if (op >= HUBUS_OP_APP_MIN && c->on_command) {
                 c->on_command(c->ctx, op, &c->cmd[1], (uint8_t)(c->rx_len - 1u));
             }
         }
@@ -82,7 +91,11 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
         uint8_t can_answer = 1u;
 
         if (c->rx_type == HUBUS_M_REQUEST_DATA) {
+#if HUBUS_ENABLE_EVENTS
             can_answer = c->pending;
+#else
+            can_answer = 0u;
+#endif
         } else if (c->rx_type == HUBUS_M_REQUEST_STATE) {
 #if HUBUS_ENABLE_STATE
             can_answer = c->app_state_len;
@@ -202,12 +215,19 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
             b = c->app_state[i];
         } else
 #endif
-        if (c->rx_type != HUBUS_M_REQUEST_INFO) {
+#if HUBUS_ENABLE_EVENTS
+        if (c->rx_type == HUBUS_M_REQUEST_DATA) {
             b = c->buf[i];
-        } else if (i == HUBUS_INFO_VERSION) {
+        } else
+#endif
+        if (i == HUBUS_INFO_VERSION) {
             b = HUBUS_PROTOCOL_VERSION;
         } else if (i == HUBUS_INFO_CAPS) {
-            b = c->on_status_capture ? HUBUS_CAP_STATUS_CAPTURE : 0u;
+#if HUBUS_ENABLE_EVENTS
+            b = c->on_status_capture ? (HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE) : HUBUS_CAP_EVENTS;
+#else
+            b = 0u;
+#endif
 #if HUBUS_ENABLE_STATE
             if (c->app_state_len) {
                 b |= HUBUS_CAP_STATE;
@@ -227,22 +247,26 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
 
 static void tx_init(hubus_slave_core_t *c)
 {
-    uint8_t field;
+    uint8_t field = 0; /* SLAVE_INFO and state frames: MORE = 0, GEN = 00 */
     uint8_t type = HUBUS_S_DATA;
 
+    /* Only requests this slave can answer get here: REQUEST_INFO always, REQUEST_STATE and REQUEST_DATA only with
+     * the respective part compiled in. */
     if (c->rx_type == HUBUS_M_REQUEST_INFO) {
         type = HUBUS_S_INFO;
         c->tx_len = (uint8_t)(HUBUS_INFO_APP + c->info_len);
-        field = 0;
+    }
 #if HUBUS_ENABLE_STATE
-    } else if (c->rx_type == HUBUS_M_REQUEST_STATE) {
+    else if (c->rx_type == HUBUS_M_REQUEST_STATE) {
         c->tx_len = c->app_state_len;
-        field = 0; /* MORE = 0, GEN = 00 */
+    }
 #endif
-    } else {
+#if HUBUS_ENABLE_EVENTS
+    else {
         c->tx_len = c->buf_len;
         field = HUBUS_SLAVE_FIELD(c->more, c->gen);
     }
+#endif
     hubus_header_pack(c->hdr, type, field, c->mcid, c->tx_len);
     c->crc = HUBUS_CRC_INIT;
     c->idx = 0;
@@ -296,6 +320,7 @@ static void turn_fall(hubus_slave_core_t *c)
 static void on_fall(hubus_slave_core_t *c)
 {
     switch (c->state) {
+#if HUBUS_ENABLE_EVENTS
     case HUBUS_ST_IDLE:
         if (c->pending && c->armed) { /* the bus became idle: announce unread data once */
             start_event(c);
@@ -306,6 +331,7 @@ static void on_fall(hubus_slave_core_t *c)
         c->data_low = 0;
         c->state = HUBUS_ST_IDLE;
         break;
+#endif
     case HUBUS_ST_TURN:
         turn_fall(c);
         break;
@@ -334,11 +360,13 @@ static void on_rise(hubus_slave_core_t *c, uint8_t bit)
     case HUBUS_ST_ARB:
         arb_sample(c, bit);
         break;
+#if HUBUS_ENABLE_EVENTS
     case HUBUS_ST_TX:
         if (tx_finished(c) && c->rx_type == HUBUS_M_REQUEST_DATA) {
             c->tx_complete = 1; /* last bit has been sampled by the master */
         }
         break;
+#endif
     default:
         break;
     }
@@ -362,7 +390,9 @@ uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, u
     c->app_state = cfg->state;
     c->app_state_len = cfg->state ? cfg->state_len : 0u;
 #endif
+#if HUBUS_ENABLE_EVENTS
     c->on_status_capture = cfg->on_status_capture;
+#endif
     c->on_command = cfg->on_command;
     c->ctx = cfg->ctx;
     c->mcid = cfg->mcid;
@@ -398,6 +428,7 @@ void hubus_core_pins(hubus_slave_core_t *c, uint8_t clk, uint8_t data)
     }
 }
 
+#if HUBUS_ENABLE_EVENTS
 uint8_t hubus_core_write(hubus_slave_core_t *c, const uint8_t *data, uint8_t len, uint8_t more)
 {
     uint8_t i;
@@ -426,3 +457,4 @@ uint8_t hubus_core_write(hubus_slave_core_t *c, const uint8_t *data, uint8_t len
     }
     return HUBUS_WRITE_OK;
 }
+#endif

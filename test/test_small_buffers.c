@@ -126,7 +126,7 @@ static void test_transmit_buffer_limit(void)
 
 static volatile uint8_t live[2] = {1, 2};
 
-/* The 2 KB build leaves REQUEST_STATE out: a slave configured with a state does not answer and does not announce it. */
+/* A build without REQUEST_STATE: a slave configured with a state does not answer and does not announce it. */
 static void test_state_support_is_compiled_out(void)
 {
     hubus_core_config_t cfg;

@@ -73,7 +73,7 @@ Commands are never acknowledged by slaves. By default the published state is the
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
-| `hubus/slave/<n>/info` | yes | protocol version, capabilities, accepted command size, application bytes, device type, firmware, serial number, profile |
+| `hubus/slave/<n>/info` | yes | protocol version, capabilities (`events`, `status_capture`, `state`), accepted command size, application bytes, device type, firmware, serial number, profile |
 | `hubus/slave/<n>/state` | yes | interpreted value (`ON`/`OFF`, number) |
 | `hubus/slave/<n>/data` | no | every received frame: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `gap`, ... for events; `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |
@@ -97,11 +97,15 @@ What `hubus/slave/<n>/state` shows after a `set` command is configurable, global
 
 | Mode | Behavior |
 |---|---|
-| `slave` (default) | The daemon reads the answer from the slave: with `REQUEST_STATE` in one transaction if the slave exposes a state, otherwise with `STATUS_CAPTURE` and a burst (two more transactions). The published state is what the slave reports, so a defective or unreachable slave shows its real state. |
+| `slave` (default) | The daemon reads the answer from the slave: with `REQUEST_STATE` in one transaction if the slave exposes a state, otherwise with `STATUS_CAPTURE` and a burst (two more transactions). The published state is what the slave reports, so a defective or unreachable slave shows its real state. A slave with neither a state nor `STATUS_CAPTURE` (built without both, `SLAVE_PROPERTIES.md` section 4.2) cannot be read back and is treated as `cache`. |
 | `cache` | The slave is not contacted again. The daemon publishes the state the command establishes (`ON` after `ON`, `OFF` after `OFF`) from its own cache. Fast and free of extra bus traffic, but optimistic: it cannot notice a command that did not arrive or was not executed. The next event, ping-triggered refresh after an outage, or an explicit `capture` corrects it. |
 | `none` | Nothing is published after the command; the state changes only through events and captures. |
 
 Raw commands (`cmd` topic) have no known effect and publish no state in `cache` mode. `true`/`false` are accepted as `slave`/`none`.
+
+### Slaves that never announce changes (`poll_interval_s`)
+
+A slave built without the event buffer, for example a sensor that is only read, never announces a new value. With `poll_interval_s: <seconds>` in its slave entry the daemon reads its state periodically (`REQUEST_STATE`, or `STATUS_CAPTURE` and a burst for a slave without a state) and publishes it. The default `0` reads the state only at startup, after an outage, after commands, and on the `read` topic.
 
 ## 4. Home Assistant
 
@@ -143,7 +147,7 @@ A slave without a profile stays fully usable through the raw topics (`data`, `cm
 - **Bus thread:** the only thread that touches GPIO. It handles queued commands (at most four per loop), then waits for idle events (a slave announcing data), collects them in a burst, and publishes. The MQTT thread only validates messages and puts them in a bounded queue (32 entries); a full queue is counted in `queue_full` and never blocks the bus.
 - **Availability:** slaves do not speak unless asked, so the daemon checks every configured slave with `REQUEST_INFO` every `bus.ping_interval_s` (one slave per loop). After `bus.ping_failures` misses a slave is `offline`; when it answers again it is `online` and its state is read (`REQUEST_STATE`, or `STATUS_CAPTURE` for slaves without a state). Valid data frames also count as proof of life.
 - **Startup:** startup sequence with RESET, probe of all configured slaves, scan for unconfigured ones (group `REQUEST_INFO`, about one transaction per slave on the bus), a burst for data that was pending, and a state read of every online slave.
-- **State and events:** a slave can expose a live state that is read at any time (`REQUEST_STATE`, `read` topic, readback after commands, refresh after an outage) next to the events that it announces itself (`REQUEST_DATA`, collected in bursts). Only slaves with an event take part in a burst.
+- **State and events:** a slave can expose a live state that is read at any time (`REQUEST_STATE`, `read` topic, readback after commands, refresh after an outage, `poll_interval_s`) next to the events that it announces itself (`REQUEST_DATA`, collected in bursts). Only slaves with an event take part in a burst. Both parts are optional in a slave; one with neither is only commanded, and its published state comes from the cache.
 - **Faults:** a stuck `DATA` line puts the bus in `line_fault` (published with the error); commands are rejected meanwhile and the startup sequence is retried every `bus.startup_retry_s`. CRC failures are retried within the retry budget; repeated failures of one MCID raise `suspected_duplicate_mcid` in the diagnosis.
 - **Reconnect:** the MQTT client reconnects by itself; on every connection the retained messages (status, state, info, discovery) are published again.
 - **Shutdown:** `SIGTERM`/`SIGINT` publish `offline`, generate a RESET on the bus, and release the GPIO lines.
