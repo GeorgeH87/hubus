@@ -64,8 +64,7 @@ typedef struct {
 } hubusd_request_t;
 
 typedef struct {
-    uint32_t bursts;
-    uint32_t polls;
+    uint32_t bursts; /* group requests ("polls") are counted by the master library */
     uint32_t frames;
     uint32_t duplicates;
     uint32_t gaps;

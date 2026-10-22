@@ -795,7 +795,6 @@ static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t 
 static void account_burst(hubusd_t *d, const hubus_burst_stats_t *st)
 {
     d->stats.bursts++;
-    d->stats.polls += st->polls;
     d->stats.duplicates += st->duplicates;
     d->stats.retries += st->retries;
     d->stats.skipped += st->skipped;

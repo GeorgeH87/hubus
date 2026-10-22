@@ -23,7 +23,7 @@ Without hardware, `build/host/test/hubusd_sim -c config.yaml` runs the same daem
 
 ## 2. Configuration
 
-`/etc/hubus/hubusd.yaml`, see `daemon/hubusd.example.yaml` for every option. The file is validated at start; errors name the line and the daemon refuses to start, unknown keys are warnings. `SIGHUP` (`systemctl reload hubusd`) reloads the slave list and the profiles; GPIO, timing, and broker settings need a restart. The MQTT password can come from `password`, `password_file`, or the environment variable `HUBUSD_MQTT_PASSWORD` (which wins).
+`/etc/hubus/hubusd.yaml`, see `daemon/hubusd.example.yaml` for every option. The file is validated at start; errors name the line and the daemon refuses to start, unknown keys are warnings. `SIGHUP` (`systemctl reload hubusd`) reloads the slave list, the profiles, the `bus` section (readback, intervals), and `mqtt.stats_interval_s` and `mqtt.discovery`; GPIO, timing, and the other broker settings need a restart. The MQTT password can come from `password`, `password_file`, or the environment variable `HUBUSD_MQTT_PASSWORD` (which wins).
 
 Minimal file for the example:
 

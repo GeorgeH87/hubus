@@ -20,8 +20,8 @@ Example setup: one Raspberry Pi, one ATtiny as relay controller, one ATtiny as p
 ## 3. Architecture
 
 - **Bus thread:** the only thread that touches GPIO and the master library. It runs the service loop (idle event handshake, burst), executes queued commands, and collects statistics.
-- **MQTT thread:** `libmosquitto` network loop. It translates incoming messages into queued commands and publishes events and statistics produced by the bus thread.
-- Commands travel through a bounded queue. A full queue rejects the command and reports it on the log topic; it never blocks the bus thread.
+- **MQTT thread:** `libmosquitto` network loop. It validates incoming messages and translates them into queued commands. The bus thread publishes events, states, and statistics itself through the thread-safe client.
+- Commands travel through a bounded queue. A full queue drops the command and counts it (`queue_full` in the statistics); it never blocks the bus thread.
 - Between bursts the bus thread executes pending commands. A burst is never interrupted.
 - Real-time priority for the bus thread is configurable.
 
@@ -33,13 +33,13 @@ Example setup: one Raspberry Pi, one ATtiny as relay controller, one ATtiny as p
 - F2: Every received `SLAVE_DATA` frame is published (section 5). Duplicates detected through `GEN` are discarded, gaps are reported.
 - F3: On bus errors the daemon uses the library recovery. A hardware line fault (`DATA` stuck low) is reported and the daemon retries the startup sequence at a configurable interval instead of exiting.
 - F4: On shutdown (SIGTERM, SIGINT) the daemon generates a RESET, publishes `offline`, and releases the GPIO lines.
-- F5: Slaves that are configured but do not answer are marked unavailable. Slaves that appear on the bus but are not configured are reported and, if enabled, announced with default (raw) topics.
+- F5: Slaves that are configured but do not answer are marked unavailable. Slaves that appear on the bus but are not configured are ignored: they are listed in `hubus/master/state` and logged, but get no topics and no discovery entries.
 
 ### 4.2 Commands
 
 - F6: Send an application command to one slave, a prefix group, or all slaves (`TARGET_LEN` 0..6) with opcode and argument bytes.
 - F7: Trigger `STATUS_CAPTURE` for one slave, a group, or all.
-- F8: After a command that changes state, the daemon reports the state according to the configurable `readback` mode (global and per slave): `slave` (default) triggers `STATUS_CAPTURE` and publishes the value read from the slave; `cache` publishes the state the command establishes without contacting the slave again; `none` publishes nothing. Commands are never acknowledged by slaves, so only `slave` mode proves that the state was established.
+- F8: After a command that changes state, the daemon reports the state according to the configurable `readback` mode (global and per slave): `slave` (default) reads the state from the slave (F10a) and publishes it; `cache` publishes the state the command establishes without contacting the slave again; `none` publishes nothing. Commands are never acknowledged by slaves, so only `slave` mode proves that the state was established.
 - F9: Commissioning scan on request (group `REQUEST_INFO`, one transaction per slave), including the suspected-duplicate-MCID result.
 - F10: Raw request of `SLAVE_INFO` of a single MCID (probe) and of the live state of one slave (`REQUEST_STATE`) on request. There is no function that polls all 63 MCIDs one by one.
 - F10a: Where a slave exposes a state, the daemon reads it with `REQUEST_STATE` for the readback after commands and for the refresh after startup or an outage; slaves without a state use `STATUS_CAPTURE`. A slave with neither (`SLAVE_PROPERTIES.md` section 4.2) cannot be read back: `slave` readback falls back to `cache` for it.
@@ -68,7 +68,7 @@ Base topic `hubus` (configurable). Payloads are UTF-8 JSON unless stated otherwi
 | Topic | Direction | Retained | Content |
 |---|---|---|---|
 | `hubus/master/status` | publish | yes | `online` / `offline` (last will) |
-| `hubus/master/state` | publish | yes | bus state, last error, daemon version, uptime |
+| `hubus/master/state` | publish | yes | bus state, last error, daemon version, configured and online slaves, unknown slaves on the bus (the uptime is in `stats`) |
 | `hubus/master/stats` | publish | no | statistics of F13, every `stats_interval` |
 | `hubus/master/diagnosis` | publish | yes | result of the duplicate / line problem heuristic |
 | `hubus/master/log` | publish | no | notable events (recovery, unknown slave, rejected command) |
@@ -77,7 +77,7 @@ Base topic `hubus` (configurable). Payloads are UTF-8 JSON unless stated otherwi
 | `hubus/master/cmd/stats` | subscribe | | publish statistics now |
 | `hubus/slave/<mcid>/availability` | publish | yes | `online` / `offline` |
 | `hubus/slave/<mcid>/info` | publish | yes | SLAVE_INFO fields and interpreted device type |
-| `hubus/slave/<mcid>/data` | publish | no | every received frame: bytes, `gen`, `more`, timestamp, gap/duplicate flags |
+| `hubus/slave/<mcid>/data` | publish | no | every received frame except duplicates (F2): bytes, `gen`, `more`, `result` (`baseline`, `normal`, `wrapped`, `gap`, or `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<mcid>/state` | publish | yes | last interpreted value (via device profile) |
 | `hubus/slave/<mcid>/stats` | publish | no | per-slave statistics of F14 |
 | `hubus/slave/<mcid>/set` | subscribe | | command according to the device profile, for example `ON` / `OFF` |
@@ -92,14 +92,14 @@ Requirements:
 - M2: Slave state is published retained so that clients get the last known value after a reconnect.
 - M3: The daemon reconnects to the broker automatically and republishes retained state after a reconnect.
 - M4: Broker authentication (user, password) and TLS are configurable.
-- M5: Home Assistant discovery messages (`homeassistant/<component>/<node>/<object>/config`) are published retained for each slave according to its device profile and removed again when a slave is removed from the configuration. Discovery can be disabled.
+- M5: Home Assistant discovery messages (`<discovery prefix>/<component>/<object>/config`, prefix `homeassistant` by default) are published retained for each slave according to its device profile and removed again when a slave is removed from the configuration. Discovery can be disabled.
 
 ## 6. Home Assistant Integration
 
 - Relay profile: `switch` entity (state from `state`, command to `set`).
-- Button profile: `binary_sensor` entity, optionally an `event` entity for presses.
+- Button profile: `binary_sensor` entity.
 - Temperature profile: `sensor` entity with device class `temperature`.
-- The master itself appears as a device with diagnostic sensors (uptime, error counters, bus state, diagnosis).
+- The master itself appears as a device with diagnostic sensors (uptime, error counters, bus state). The diagnosis is published on `hubus/master/diagnosis`.
 - Every slave appears as a device with MCID, firmware version, and serial number from `SLAVE_INFO`, grouped under the master device.
 
 ## 7. Device Profiles
@@ -114,11 +114,11 @@ The protocol does not define the meaning of payload bytes; that lives in the sla
 ## 8. Configuration
 
 - C1: One configuration file, default `/etc/hubus/hubusd.yaml`, path overridable on the command line.
-- C2: Format: **YAML**, because it is the native configuration format of Home Assistant and its users already know it. It needs a small parser dependency (`libyaml`); JSON would avoid the dependency but is less comfortable to edit. To be confirmed before implementation.
+- C2: Format: **YAML**, because it is the native configuration format of Home Assistant and its users already know it. It needs a small parser dependency (`libyaml`); JSON would avoid the dependency but is less comfortable to edit.
 - C3: Content: GPIO chip label and line offsets, real-time priority, timing minimums, retry budget, MQTT broker (host, port, credentials, TLS, base topic, discovery prefix, client id), statistics interval, list of slaves (MCID, name, profile, options such as automatic read-back after `set`), custom profiles.
 - C4: The file is validated at start. Errors are reported with line numbers and the daemon refuses to start with an invalid configuration. Unknown keys are reported as warnings.
 - C5: Secrets can be read from a separate file or from environment variables, so that the main file can be shared.
-- C6: Reload on SIGHUP for the slave list and profiles; changes to GPIO or timing settings require a restart.
+- C6: Reload on SIGHUP for the slave list, the profiles, the `bus` options, and the statistics and discovery settings; changes to GPIO, timing, or the broker connection require a restart.
 
 ## 9. Non-Functional Requirements
 
@@ -136,8 +136,8 @@ The protocol does not define the meaning of payload bytes; that lives in the sla
 - T4: Discovery messages are checked against the expected JSON for each built-in profile.
 - T5: A manual end-to-end test on real hardware with a broker is described in the documentation (Raspberry Pi, relay ATtiny, button ATtiny).
 
-## 11. Open Decisions
+## 11. Decisions
 
-- Configuration format: YAML (proposed) versus JSON or TOML (C2).
-- Default behavior for unknown slaves found by a scan (announce with raw topics, or ignore).
-- Whether the daemon should additionally expose a local control interface besides MQTT (not planned; MQTT covers all requirements).
+- Configuration format: YAML (C2).
+- Unknown slaves found on the bus are ignored and only listed (F5).
+- No local control interface besides MQTT; MQTT covers all requirements.
