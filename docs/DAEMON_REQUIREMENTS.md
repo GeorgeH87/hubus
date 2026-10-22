@@ -106,7 +106,7 @@ Requirements:
 
 The protocol does not define the meaning of payload bytes; that lives in the slave firmware. A device profile tells the daemon how to interpret a slave.
 
-- P1: Built-in profiles for the three example firmwares in `examples/` (relay, switch, temperature sensor). The device type is taken from the first application byte of `SLAVE_INFO`, so scanned slaves are recognised automatically.
+- P1: Built-in profiles for the example firmwares in `examples/` (relay, switch, temperature sensor; the relay and sensor variants without event buffer use the same device types). The device type is taken from the first application byte of `SLAVE_INFO`, so scanned slaves are recognised automatically.
 - P2: A profile defines how `SLAVE_DATA` bytes become a value (for example byte 0 as 0/1, or bytes 0..1 as a big-endian raw ADC value with scale and offset), which Home Assistant component to use, and how `set` payloads map to opcodes and arguments.
 - P3: Profiles for custom firmware can be defined in the configuration file without recompiling.
 - P4: A slave without a known profile is still fully usable through the raw topics (`data`, `cmd`, `capture`).

@@ -49,7 +49,11 @@ slaves:
   - mcid: 7
     name: Cellar temperature
     readback: cache       # per-slave override of bus.readback (slave | cache | none)
-    poll_interval_s: 60   # read the state periodically (for slaves that never announce changes), 0 = off
+  - mcid: 4
+    name: Pump relay      # examples/slave-relay-simple: no state to read back, so its state comes from the cache
+  - mcid: 8
+    name: Attic temperature
+    poll_interval_s: 60   # examples/slave-sensor-passive never announces changes: read its state every minute, 0 = off
 
 # Profiles for custom firmware. Built in: relay (type 0x01), switch (0x02), temperature (0x03).
 # profiles:

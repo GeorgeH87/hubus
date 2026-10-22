@@ -4,6 +4,9 @@
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *   PB1 = push button to ground (internal pull-up)
  *
+ * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1 (docs/SLAVE_PROPERTIES.md
+ * section 4.2).
+ *
  * Every debounced state change is written to the buffer (one byte, 1 =
  * pressed) and thereby announced to the master via the idle event handshake
  * (event, REQUEST_DATA). The current state is also exposed live: the master

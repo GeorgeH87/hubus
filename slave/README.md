@@ -35,7 +35,17 @@ int main(void)
 }
 ```
 
-See `../examples/` for complete relay, switch, and temperature sensor firmware for the ATtiny85.
+See `../examples/` for complete firmware for the ATtiny85, one per combination of the optional parts (see below):
+
+| Example | Device | `HUBUS_ENABLE_EVENTS` | `HUBUS_ENABLE_STATE` |
+|---|---|---|---|
+| `slave-switch` | push button: announces changes, input level readable | 1 | 1 |
+| `slave-relay` | relay: state readable, `STATUS_CAPTURE` | 1 | 1 |
+| `slave-sensor` | temperature sensor: value collected with `STATUS_CAPTURE` | 1 | 0 |
+| `slave-sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
+| `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
+
+The CMake build compiles each example with its own options, independent of the options of the build directory.
 
 ## API
 
@@ -58,7 +68,7 @@ The event buffer and the live state are independent build options, chosen per de
 | 0 | 1 | sensor that is only read, relay with readback | 1434 / 58 |
 | 0 | 0 | relay without feedback (the master caches its state) | 1354 / 55 |
 
-Without the event buffer the slave never speaks on its own and never answers `REQUEST_DATA`, and `STATUS_CAPTURE` is ignored. Without the state it ignores `REQUEST_STATE`. Without both it executes commands and answers `REQUEST_INFO` only. The examples in `../examples/` use the event buffer.
+Without the event buffer the slave never speaks on its own and never answers `REQUEST_DATA`, and `STATUS_CAPTURE` is ignored. Without the state it ignores `REQUEST_STATE`. Without both it executes commands and answers `REQUEST_INFO` only.
 
 ## Configuration
 
