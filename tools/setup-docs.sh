@@ -26,6 +26,10 @@ fi
 
 # mermaid-cli renders with the headless browser of puppeteer; install it explicitly (the npm postinstall step
 # does not reliably do it, e.g. in CI). If it is already present, nothing is downloaded.
+for d in "${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}"/chrome-headless-shell/*; do
+    # an interrupted download of the postinstall step leaves a folder without the executable
+    [ -d "$d" ] && [ ! -x "$d/chrome-headless-shell-linux64/chrome-headless-shell" ] && rm -rf "$d"
+done
 (cd "$dir" && npx --no-install puppeteer browsers install chrome-headless-shell >/dev/null)
 
 java -jar "$dir/plantuml.jar" -version | head -1
