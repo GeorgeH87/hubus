@@ -16,6 +16,7 @@
  *
  *   HUBUS_TX_BUF_SIZE  outgoing buffer (SLAVE_DATA payload), bytes 1..31, default 31
  *   HUBUS_RX_BUF_SIZE  largest accepted command payload (announced in SLAVE_INFO), bytes 1..31, default 31
+ *                      (the CMake build uses 20 for both on devices with 128 B RAM)
  *   HUBUS_ENABLE_STATE 1 (default): answer REQUEST_STATE from the state the application exposes; 0 leaves it out
  *                      (saves about 100 bytes of flash and 3 bytes of RAM; the 2 KB devices ATtiny24/25 build with 0)
  *

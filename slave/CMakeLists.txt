@@ -5,8 +5,15 @@ if(HUBUS_AVR)
     set(HUBUS_CLK_PIN "" CACHE STRING "Bit number of CLK")
     set(HUBUS_DATA_PORT "" CACHE STRING "Port letter of DATA")
     set(HUBUS_DATA_PIN "" CACHE STRING "Bit number of DATA")
-    set(HUBUS_TX_BUF_SIZE "31" CACHE STRING "Outgoing buffer size in bytes (1..31)")
-    set(HUBUS_RX_BUF_SIZE "31" CACHE STRING "Largest accepted command payload in bytes (1..31)")
+    # Devices with 128 B RAM: two 31-byte buffers would leave too little RAM for the stack (the ISR path needs about
+    # 40-50 bytes), so they default to 20-byte buffers.
+    if(HUBUS_AVR_MCU MATCHES "^attiny(24a?|25|261a?|2313a?|202|204|212|214)$")
+        set(HUBUS_BUF_SIZE_DEFAULT 20)
+    else()
+        set(HUBUS_BUF_SIZE_DEFAULT 31)
+    endif()
+    set(HUBUS_TX_BUF_SIZE "${HUBUS_BUF_SIZE_DEFAULT}" CACHE STRING "Outgoing buffer size in bytes (1..31)")
+    set(HUBUS_RX_BUF_SIZE "${HUBUS_BUF_SIZE_DEFAULT}" CACHE STRING "Largest accepted command payload in bytes (1..31)")
     # REQUEST_STATE support costs about 100 bytes of flash; the 2 KB devices (ATtiny24/25) build without it.
     if(HUBUS_AVR_MCU MATCHES "^attiny(24a?|25)$")
         set(HUBUS_ENABLE_STATE_DEFAULT 0)

@@ -31,7 +31,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Implicit read confirmation: the slave clears buffer and pending flag on the STOP following its complete `SLAVE_DATA` response. On a missing, incomplete, or invalid response the master ends with RESET, which preserves both for a retry.
 - `DATA` is open-drain for all nodes including the master; `CLK` is push-pull from the master.
 - One turnaround slot separates master transmission from slave transmission (response or arbitration). Slaves compute CRC8 incrementally so the turnaround slot suffices.
-- The arbitration winner is served in a separate `REQUEST_DATA` transaction; slaves only transmit frames after exactly addressed `REQUEST_INFO`/`REQUEST_DATA`.
+- The arbitration winner answers in the same transaction; slaves only transmit frames after an exactly addressed `REQUEST_STATE`/`REQUEST_INFO`/`REQUEST_DATA` or as the winner of a group request.
 - Missing response detection: slave type codes start with `1`, so a released first bit after the turnaround slot means "no response". No response timeout needed.
 - Idle event handshake: slave releases `DATA` after the first complete master clock pulse; master clocks until `DATA` is released.
 - `SEND_COMMAND` opcodes: `0x00` = `STATUS_CAPTURE`, `0x01..0x0F` reserved for protocol use, `0x10..0xFF` application-defined.
@@ -46,7 +46,7 @@ Core project goal: define a reusable communication library and protocol. Concret
 - Master in C, Raspberry Pi 3 and newer (including Pi 5), GPIO via `libgpiod` with chip selection by label; `DATA` as open-drain line. Master logic runs on a HAL so it can be tested against a simulated bus.
 - START/STOP detection stays interrupt-based on both `CLK` and `DATA` (a `DATA` change while `CLK` is high is a condition). Rejected alternative: detecting conditions by comparing `DATA` at the rising and falling `CLK` edges. It would need only one interrupt pin, but with slaves of different ISR latency a fast transmitter changes `DATA` after the falling edge before a slow slave samples it, which the slow slave would misread as START/STOP (for example dropping out of arbitration).
 - Transactions of a burst are generated back-to-back with `CLK` held high after each STOP, and a slave announces itself only on a buffer write and once at the first falling `CLK` edge after a STOP/RESET (found during implementation). Without the first rule every pending slave would pull `DATA` low right after each STOP of a burst and make the next START impossible; without the second, pending slaves in different phases would keep toggling `DATA` during the idle handshake. See `PROTOCOL.md` sections 1.2 and 3.1.
-- The master checks `DATA` before raising `CLK` for a START/RESET and again after raising it, which detects an event signal that races with the condition (`PROTOCOL.md` section 7.1) and repeats the transaction.
+- The master checks `DATA` before raising `CLK` for a START/RESET and again after raising it, which detects an event signal that races with the condition (`PROTOCOL.md` section 7.1); it then runs the recovery sequence and repeats the transaction (`PROTOCOL.md` section 3.1).
 - MCID width stays 6 bits (`1..63`), also for v1 (D1). Electrical limits of a single open-drain line keep the practical node count well below 63; 8 bits would cost one header byte and 4 arbitration slots per frame.
 
 ## 3. Open Decisions

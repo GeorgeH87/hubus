@@ -55,8 +55,8 @@ Set on the compiler command line (the CMake build takes `-DHUBUS_CLK_PORT=...` e
 |---|---|
 | `HUBUS_CLK_PORT`, `HUBUS_CLK_PIN` | Port letter and bit of `CLK` (default on ATtiny25/45/85: `B`, `2`) |
 | `HUBUS_DATA_PORT`, `HUBUS_DATA_PIN` | Port letter and bit of `DATA` (default on ATtiny25/45/85: `B`, `3`) |
-| `HUBUS_TX_BUF_SIZE` | Outgoing buffer size, `1..31`, default 31 |
-| `HUBUS_RX_BUF_SIZE` | Largest accepted command payload including the opcode, `1..31`, default 31; announced in `SLAVE_INFO` byte 2. Longer commands are received to the end and ignored. |
+| `HUBUS_TX_BUF_SIZE` | Outgoing buffer size, `1..31`, default 31 (20 on 128 B RAM devices) |
+| `HUBUS_RX_BUF_SIZE` | Largest accepted command payload including the opcode, `1..31`, default 31 (20 on 128 B RAM devices); announced in `SLAVE_INFO` byte 2. Longer commands are received to the end and ignored. |
 
 `DATA` needs an external pull-up to 3.3 V; the library never enables internal pull-ups. Both pins need pin change / edge interrupts.
 
@@ -66,11 +66,11 @@ The HAL is selected from the compiler's device macro (`-mmcu=...`).
 
 | Family | HAL | Pin change group |
 |---|---|---|
-| Classic tinyAVR: ATtiny25/45/85, 24/44/84, 441/841, 48/88, 261/461/861 | `hal/hubus_hal_classic.h` | derived from the port; other classic devices: define `HUBUS_CLK_PCGROUP` / `HUBUS_DATA_PCGROUP` |
+| Classic tinyAVR: ATtiny25/45/85, 24/44/84, 441/841, 48/88, 261/461/861, 2313/2313A/4313, 1634 | `hal/hubus_hal_classic.h` | derived from the port; other classic devices: define `HUBUS_CLK_PCGROUP` / `HUBUS_DATA_PCGROUP` |
 | tinyAVR 0/1/2-series: ATtiny202/402/412, 804/814/1614/1616, 3216/3217, 424/824/1624 | `hal/hubus_hal_modern.h` | per-pin interrupt sense, `PORTx_PORT_vect` |
 | Host (tests) | `hal/hubus_hal_host.h` | pins are variables |
 
-Build-tested with `gcc-avr` 14.x for ATtiny25, 45, 85, 24, 44, 84, 441, 841, 48, 88, 261, 461, 861, 202, 402, 814, 1614, 1624, 3216, 424, and 824. Only the classic devices can be simulated with `simavr`; none of the HALs has been run on real hardware yet (`../TODO.md` section 9).
+Build-tested with `gcc-avr` 14.x for ATtiny25, 45, 85, 24, 44, 84, 441, 841, 48, 88, 261, 461, 861, 2313, 2313A, 4313, 1634, 202, 402, 412, 804, 814, 1614, 1616, 1624, 3216, 3217, 424, and 824 (`tools/build-avr-matrix.sh`). Devices with 128 B RAM (ATtiny24/25, 261, 2313/2313A, 202/204/212/214) build with 20-byte buffers by default, since 31-byte buffers would leave too little RAM for the stack (`../docs/HARDWARE_REQUIREMENTS.md` section 4.1). Only the classic devices can be simulated with `simavr`; none of the HALs has been run on real hardware yet (`../TODO.md` section 9).
 
 ## Footprint
 

@@ -47,7 +47,7 @@ Properties:
 | `10` | `REQUEST_DATA` | exact or group | Read the **event buffer** (a state change or a message the slave wants to deliver). Exact: the addressed slave sends `SLAVE_DATA` with the content of its buffer; silent if the buffer is empty. Group: only matching slaves **with pending data** arbitrate; all others drop out at once. The winner sends its `SLAVE_DATA` in the same transaction. |
 | `11` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
 
-`REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
+`REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins. A v0 slave includes such payload bytes in the CRC check, otherwise ignores them, and answers as if `LEN` were `0`.
 
 All master type codes are in use. Future protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
 
@@ -78,7 +78,7 @@ A slave ignores a `SEND_COMMAND` whose payload exceeds its configured maximum (a
 
 ## 3.1 Unified Target Mask Addressing
 
-All master-to-slave commands (`REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For a group `REQUEST_INFO`/`REQUEST_DATA`, the mask selects which slaves contend in the arbitration; the master uses this to request the prefix groups derived from handoff slots.
+All master-to-slave commands (`REQUEST_STATE`, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For a group `REQUEST_STATE`/`REQUEST_INFO`/`REQUEST_DATA`, the mask selects which slaves contend in the arbitration; the master uses this to request the prefix groups derived from handoff slots.
 
 The frame carries:
 

@@ -49,6 +49,8 @@ jobs:
           - attiny88
           - attiny841
           - attiny861
+          - attiny4313
+          - attiny1634
           - attiny1614
           - attiny3216
     steps:
