@@ -5,7 +5,8 @@
  * interrupts for CLK and DATA, and everything else happens in the ISR. The
  * main loop only produces data and consumes commands.
  *
- *   hubus_slave_init(&cfg);              // also enables global interrupts
+ *   hubus_slave_init(&cfg);              // pin change interrupts for CLK and DATA
+ *   sei();                               // the application enables global interrupts when it is ready
  *   ...
  *   hubus_slave_write(data, len, 0);     // buffer data, announce it to the master
  *
@@ -26,6 +27,7 @@
  *   info, info_len     application bytes of SLAVE_INFO, in flash (PROGMEM) on AVR, 0..28 bytes;
  *                      include a device-unique value (serial number)
  *   state, state_len   live state for REQUEST_STATE (RAM, read while transmitting, 0..31 bytes); NULL: no state.
+ *                      A longer state_len is an invalid configuration.
  *                      The application keeps it up to date; no copy is made. Needs HUBUS_ENABLE_STATE.
  *   on_status_capture  writes the current status via hubus_slave_write(); NULL: not supported
  *   on_command         application commands (opcode 0x10..0xFF); may be NULL
@@ -34,9 +36,11 @@
 typedef hubus_core_config_t hubus_slave_config_t;
 
 /*
- * Configures the pins, starts the protocol engine, and enables global
- * interrupts. Returns 1 on success, 0 for an invalid configuration (MCID
- * outside 1..63, info too long); the slave then stays silent.
+ * Configures the pins, starts the protocol engine, and enables the pin change
+ * interrupts. Global interrupts stay as they are: the application calls sei()
+ * once its own setup is done. Returns 1 on success, 0 for an invalid
+ * configuration (MCID outside 1..63, info or state too long); the slave then
+ * stays silent.
  */
 uint8_t hubus_slave_init(const hubus_slave_config_t *cfg);
 
@@ -46,8 +50,9 @@ uint8_t hubus_slave_init(const hubus_slave_config_t *cfg);
  * data to the master. `more` = 1 marks a fragment that is followed by more.
  * Safe to call from the main loop and from callbacks.
  *
- * Returns HUBUS_WRITE_OK, HUBUS_WRITE_TOO_LONG (len > HUBUS_TX_BUF_SIZE), or
- * HUBUS_WRITE_BUSY (the buffer is being transmitted right now; try again).
+ * Returns HUBUS_WRITE_OK, HUBUS_WRITE_TOO_LONG (len > HUBUS_TX_BUF_SIZE),
+ * HUBUS_WRITE_BUSY (the buffer is being transmitted right now; try again), or
+ * HUBUS_WRITE_DISABLED (hubus_slave_init() failed or was not called).
  */
 uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more);
 

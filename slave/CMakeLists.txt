@@ -7,7 +7,7 @@ if(HUBUS_AVR)
     set(HUBUS_DATA_PIN "" CACHE STRING "Bit number of DATA")
     set(HUBUS_TX_BUF_SIZE "31" CACHE STRING "Outgoing buffer size in bytes (1..31)")
     set(HUBUS_RX_BUF_SIZE "31" CACHE STRING "Largest accepted command payload in bytes (1..31)")
-    # REQUEST_STATE support costs about 130 bytes of flash; the 2 KB devices (ATtiny24/25) build without it.
+    # REQUEST_STATE support costs about 100 bytes of flash; the 2 KB devices (ATtiny24/25) build without it.
     if(HUBUS_AVR_MCU MATCHES "^attiny(24a?|25)$")
         set(HUBUS_ENABLE_STATE_DEFAULT 0)
     else()

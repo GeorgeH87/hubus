@@ -10,6 +10,7 @@
  * REQUEST_DATA or collects it in a burst. Converting the raw value to degrees
  * needs a per-device calibration (about 1 LSB per kelvin, see datasheet).
  */
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <stdint.h>
@@ -62,6 +63,7 @@ int main(void)
 
     latest = measure();
     hubus_slave_init(&cfg);
+    sei();
 
     for (;;) {
         uint16_t value = measure();

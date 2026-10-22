@@ -34,7 +34,7 @@
 #error "HUBUS_RX_BUF_SIZE must be 1..31"
 #endif
 
-/* REQUEST_STATE support (docs/MESSAGE_FORMAT.md section 4.4). It costs about 130 bytes of flash and 3 bytes of RAM and is
+/* REQUEST_STATE support (docs/MESSAGE_FORMAT.md section 4.4). It costs about 100 bytes of flash and 3 bytes of RAM and is
  * compiled out for 2 KB devices (ATtiny24/25): such a slave simply never answers REQUEST_STATE. */
 #ifndef HUBUS_ENABLE_STATE
 #define HUBUS_ENABLE_STATE 1
@@ -69,7 +69,7 @@ typedef struct {
 #define HUBUS_WRITE_OK 0u
 #define HUBUS_WRITE_TOO_LONG 1u /* more bytes than HUBUS_TX_BUF_SIZE */
 #define HUBUS_WRITE_BUSY 2u     /* SLAVE_DATA response in progress; retry later */
-#define HUBUS_WRITE_DISABLED 3u /* core not initialised (invalid MCID) */
+#define HUBUS_WRITE_DISABLED 3u /* core not initialised (invalid configuration) */
 
 /* Slave states (exposed for tests and debugging). */
 #define HUBUS_ST_IDLE 0u   /* wait for START; pending flag may trigger event signaling */
@@ -82,8 +82,7 @@ typedef struct {
 
 typedef struct hubus_slave_core {
     /* configuration */
-    uint8_t mcid;
-    uint8_t enabled;
+    uint8_t mcid; /* 0: core disabled (not initialised or invalid configuration) */
     const uint8_t *info;
     uint8_t info_len;
 #if HUBUS_ENABLE_STATE
@@ -102,31 +101,24 @@ typedef struct hubus_slave_core {
 
     uint8_t state;
 
-    /* receive */
-    uint8_t shreg;
-    uint8_t bitcnt;
-    uint8_t bytecnt;
+    /* frame shifter, shared by receive and transmit (never active at the same time) */
+    uint8_t hdr[2]; /* received header, then the header of the response */
+    uint8_t shift;  /* current byte */
+    uint8_t nbits;  /* receive: bits shifted in; transmit: bits of the loaded byte still to send */
+    uint8_t idx;    /* receive: bytes received; transmit: next byte to load (header, payload, CRC) */
     uint8_t crc;
-    uint8_t hdr[2];
+
+    /* request */
     uint8_t rx_type;
     uint8_t rx_len;
     uint8_t cmd[HUBUS_RX_BUF_SIZE];
 
-    /* turnaround */
-    uint8_t phase;
-
-    /* arbitration */
-    uint8_t slot;
-    uint8_t arb_active;
-    uint8_t lost; /* bit at which this slave lost, 0xFF if not lost */
+    /* turnaround and arbitration */
+    uint8_t slot; /* turnaround: phase 0..2; arbitration: position in the 12-slot pattern */
+    uint8_t lost; /* MCID bit at which this slave lost, 0xFF while it still contends */
 
     /* transmit */
     uint8_t tx_len;
-    uint8_t tx_hdr[2];
-    uint8_t tx_shift;
-    uint8_t tx_crc;
-    uint8_t tx_idx;   /* next byte to load (header, payload, CRC) */
-    uint8_t tx_nbits; /* bits of the loaded byte still to send */
     uint8_t tx_complete; /* complete SLAVE_DATA sent in this transaction */
 
     /* the single outgoing buffer */
@@ -137,8 +129,9 @@ typedef struct hubus_slave_core {
     uint8_t pending;
 } hubus_slave_core_t;
 
-/* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63) or too much info data
- * the core stays disabled (ignores all traffic, never drives DATA) and 0 is returned. */
+/* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), too much info data,
+ * or a state longer than HUBUS_MAX_PAYLOAD the core stays disabled (ignores all traffic, never drives DATA) and 0 is
+ * returned. */
 uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, uint8_t clk, uint8_t data);
 
 /* Feed the current pin levels (1 = high). Call after every pin change. */
@@ -158,9 +151,10 @@ static inline uint8_t hubus_core_data_low(const hubus_slave_core_t *c)
  */
 uint8_t hubus_core_write(hubus_slave_core_t *c, const uint8_t *data, uint8_t len, uint8_t more);
 
+/* Polled from the main loop while the ISR clears the flag: read it fresh on every call. */
 static inline uint8_t hubus_core_is_pending(const hubus_slave_core_t *c)
 {
-    return c->pending;
+    return *(const volatile uint8_t *)&c->pending;
 }
 
 #endif /* HUBUS_SLAVE_CORE_H */

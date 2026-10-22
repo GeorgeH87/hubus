@@ -28,9 +28,6 @@ uint8_t hubus_slave_init(const hubus_slave_config_t *cfg)
     ok = hubus_core_init(&g_core, cfg, hubus_hal_read_clk(), hubus_hal_read_data());
     if (ok) {
         hubus_hal_irq_enable();
-#ifdef __AVR__
-        sei();
-#endif
     }
     return ok;
 }

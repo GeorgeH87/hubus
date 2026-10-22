@@ -128,9 +128,9 @@ static void hook(void *ctx, hubusd_t *d)
         by_mcid(7)->temp_be[0] = (uint8_t)(raw >> 8);
         by_mcid(7)->temp_be[1] = (uint8_t)raw;
     } else if (sscanf(line, "unplug %u", &mcid) == 1 && by_mcid(mcid)) {
-        by_mcid(mcid)->core.enabled = 0;
+        hubus_sim_unplug(&sim, (unsigned)(by_mcid(mcid) - devices), 1);
     } else if (sscanf(line, "plug %u", &mcid) == 1 && by_mcid(mcid)) {
-        by_mcid(mcid)->core.enabled = 1;
+        hubus_sim_unplug(&sim, (unsigned)(by_mcid(mcid) - devices), 0);
     } else if (strncmp(line, "quit", 4) == 0) {
         hubusd_run_stop();
     }

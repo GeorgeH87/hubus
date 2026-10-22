@@ -124,6 +124,10 @@ static void test_init_rejects_invalid_config(void)
     cfg.info_len = 2;
     cfg.info = NULL;
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
+    cfg.info_len = 0;
+    cfg.state_len = HUBUS_MAX_PAYLOAD + 1u; /* longer than a LEN field: rejected, not truncated */
+    TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_DISABLED, hubus_core_write(&c, info_bytes, 1, 0));
 }
 
 static void test_disabled_core_stays_silent(void)

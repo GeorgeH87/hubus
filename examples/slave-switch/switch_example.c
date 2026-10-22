@@ -10,6 +10,7 @@
  * can read it at any time with REQUEST_STATE, independent of events. A slave
  * with several buttons would expose one bit per button in the same way.
  */
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <stdint.h>
@@ -52,6 +53,7 @@ int main(void)
     DDRB &= (uint8_t)~_BV(BUTTON_BIT);
     PORTB |= _BV(BUTTON_BIT); /* pull-up */
     hubus_slave_init(&cfg);
+    sei();
 
     for (;;) {
         uint8_t now = (PINB & _BV(BUTTON_BIT)) ? 0 : 1; /* active low */

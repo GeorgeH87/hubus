@@ -27,7 +27,8 @@ int main(void)
         .mcid = 3, .info = info, .info_len = sizeof info,
         .on_status_capture = on_status_capture, .on_command = on_command,
     };
-    hubus_slave_init(&cfg);                    /* enables the pin change interrupts and sei() */
+    hubus_slave_init(&cfg);                    /* enables the pin change interrupts for CLK and DATA */
+    sei();                                     /* global interrupts: the application decides when */
     for (;;) {
         /* application; hubus_slave_write() announces new data to the master */
     }
@@ -40,8 +41,8 @@ See `../examples/` for complete relay, switch, and temperature sensor firmware f
 
 | Function | Purpose |
 |---|---|
-| `hubus_slave_init(cfg)` | Configure the pins, start the protocol engine, enable interrupts. Returns 0 (and the slave stays silent) for MCID outside `1..63` or more than 28 info bytes. |
-| `hubus_slave_write(data, len, more)` | Write the single outgoing buffer: overwrites unread content, increments `GEN`, sets the pending flag, announces the data (idle event handshake). `more = 1` marks a fragment that is followed by further fragments. Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, or `HUBUS_WRITE_BUSY` (the buffer is being transmitted; retry later). Safe from the main loop and from callbacks. |
+| `hubus_slave_init(cfg)` | Configure the pins, start the protocol engine, enable the pin change interrupts. Global interrupts are left to the application (`sei()` after its own setup). Returns 0 (and the slave stays silent) for MCID outside `1..63`, more than 28 info bytes, or a state longer than 31 bytes. |
+| `hubus_slave_write(data, len, more)` | Write the single outgoing buffer: overwrites unread content, increments `GEN`, sets the pending flag, announces the data (idle event handshake). `more = 1` marks a fragment that is followed by further fragments. Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, `HUBUS_WRITE_BUSY` (the buffer is being transmitted; retry later), or `HUBUS_WRITE_DISABLED` (init failed). Safe from the main loop and from callbacks. |
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
 
 Callbacks (`on_status_capture`, `on_command`) run in the interrupt handler and must be short. `on_status_capture == NULL` clears the capability bit in `SLAVE_INFO`. Group and broadcast commands are executed without any response; results go through the buffer.
@@ -77,12 +78,12 @@ Reference firmware (`size_reference.c`: complete API, status capture, command ca
 
 | | bytes |
 |---|---:|
-| Flash | about 2050 (about 1950 without `REQUEST_STATE`) |
-| RAM (`.bss`) | 106 (103 without `REQUEST_STATE`; of which both 31-byte buffers: 62) |
+| Flash | about 1910 (about 1810 without `REQUEST_STATE`) |
+| RAM (`.bss`) | 97 (94 without `REQUEST_STATE`; of which both 31-byte buffers: 62) |
 
 The CMake build fails if the ATtiny85 reference build exceeds its budget (`HUBUS_BUDGET_FLASH`, `HUBUS_BUDGET_RAM` in `CMakeLists.txt`): 2050 / 112.
 
-`REQUEST_STATE` support (`HUBUS_ENABLE_STATE`, see `hubus_slave_config.h`) costs about 100 bytes of flash and 3 bytes of RAM. It is on by default and off for the 2 KB devices (ATtiny24/25), where the library alone takes most of the flash and only about 100 bytes remain for the application. A slave built without it simply never answers `REQUEST_STATE`.
+`REQUEST_STATE` support (`HUBUS_ENABLE_STATE`, see `hubus_slave_config.h`) costs about 100 bytes of flash and 3 bytes of RAM. It is on by default and off for the 2 KB devices (ATtiny24/25), where the library alone takes most of the flash and only about 250 bytes remain for the application. A slave built without it simply never answers `REQUEST_STATE`.
 
 ## Behavior Notes
 

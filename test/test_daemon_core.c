@@ -596,7 +596,7 @@ static void test_set_for_a_slave_without_a_profile_is_rejected(void)
     say("hubus/slave/9/cmd", "0x10 1"); /* the raw topic still works */
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
-    TEST_ASSERT_EQUAL_UINT(1, dev[3].core.enabled);
+    TEST_ASSERT_EQUAL_UINT(1, dev[3].commands); /* the raw command reached the slave */
 }
 
 static void test_raw_command_exact(void)
@@ -711,14 +711,14 @@ static void test_slave_goes_offline_and_comes_back(void)
 {
     standard_setup(base_yaml);
     n_msgs = 0;
-    dev[2].core.enabled = 0; /* the temperature sensor is unplugged */
+    hubus_sim_unplug(&sim, 2, 1); /* the temperature sensor is unplugged */
     advance(30);
     assert_last("hubus/slave/7/availability", "offline");
     TEST_ASSERT_NULL(last("hubus/slave/3/availability")); /* unchanged, nothing to report */
     assert_contains("hubus/master/state", "\"online_slaves\":2");
     TEST_ASSERT_TRUE(count_containing("hubus/master/log", "slave 7 (Cellar) is offline") == 1);
 
-    dev[2].core.enabled = 1;
+    hubus_sim_unplug(&sim, 2, 0);
     dev[2].raw_temp = 311;
     advance(30);
     assert_last("hubus/slave/7/availability", "online");
@@ -730,9 +730,9 @@ static void test_a_single_missed_ping_does_not_mark_the_slave_offline(void)
 {
     standard_setup(base_yaml);
     n_msgs = 0;
-    dev[2].core.enabled = 0;
+    hubus_sim_unplug(&sim, 2, 1);
     advance(6); /* one ping interval */
-    dev[2].core.enabled = 1;
+    hubus_sim_unplug(&sim, 2, 0);
     advance(30);
     TEST_ASSERT_NULL(last("hubus/slave/7/availability"));
 }
@@ -940,10 +940,10 @@ static void test_probe_of_a_duplicate_mcid_is_suspect(void)
 static void test_probe_brings_an_offline_slave_back(void)
 {
     standard_setup(base_yaml);
-    dev[2].core.enabled = 0; /* the sensor is unplugged */
+    hubus_sim_unplug(&sim, 2, 1); /* the sensor is unplugged */
     advance(20);
     assert_last("hubus/slave/7/availability", "offline");
-    dev[2].core.enabled = 1;
+    hubus_sim_unplug(&sim, 2, 0);
     n_msgs = 0;
     say("hubus/master/cmd/probe", "7");
     settle();

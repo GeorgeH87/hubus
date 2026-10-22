@@ -4,6 +4,7 @@
  * SLAVE_INFO from flash). The budget check in cmake/check-size.cmake runs on
  * this image.
  */
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 
@@ -40,6 +41,7 @@ int main(void)
     uint8_t fragment[2] = {0, 0};
 
     hubus_slave_init(&cfg);
+    sei();
     for (;;) {
         if (!hubus_slave_is_pending()) {
             fragment[0]++;

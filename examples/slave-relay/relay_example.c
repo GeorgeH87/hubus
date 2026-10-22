@@ -14,6 +14,7 @@
  *
  * Everything runs in the ISR; the main loop is idle.
  */
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <avr/sleep.h>
@@ -74,6 +75,7 @@ int main(void)
 
     DDRB |= _BV(RELAY_BIT);
     hubus_slave_init(&cfg);
+    sei();
 
     set_sleep_mode(SLEEP_MODE_IDLE);
     for (;;) {

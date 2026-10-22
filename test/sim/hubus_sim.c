@@ -19,7 +19,7 @@ static uint8_t resolve(const hubus_sim_t *sim)
         return 0;
     }
     for (i = 0; i < sim->n_slaves; i++) {
-        if (hubus_core_data_low(sim->slave[i])) {
+        if (!sim->unplugged[i] && hubus_core_data_low(sim->slave[i])) {
             return 0;
         }
     }
@@ -34,6 +34,9 @@ static void deliver_all(hubus_sim_t *sim)
         uint8_t clk = sim->clk;
         uint8_t data = sim->data;
 
+        if (sim->unplugged[i]) {
+            continue;
+        }
         if (sim->filter && !sim->filter(sim, i, &clk, &data, sim->filter_ctx)) {
             continue;
         }
@@ -215,6 +218,12 @@ uint8_t hubus_sim_slave_write(hubus_sim_t *sim, unsigned slave, const uint8_t *d
 
     hubus_sim_settle(sim);
     return r;
+}
+
+void hubus_sim_unplug(hubus_sim_t *sim, unsigned slave, int unplugged)
+{
+    sim->unplugged[slave] = unplugged ? 1u : 0u;
+    hubus_sim_settle(sim);
 }
 
 void hubus_sim_glitch_clk(hubus_sim_t *sim, unsigned slave)

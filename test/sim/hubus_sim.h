@@ -36,6 +36,7 @@ typedef uint8_t (*hubus_sim_read_filter_fn)(hubus_sim_t *sim, uint8_t level, voi
 struct hubus_sim {
     hubus_slave_core_t *slave[HUBUS_SIM_MAX_SLAVES];
     uint8_t slave_low[HUBUS_SIM_MAX_SLAVES]; /* last DATA drive of each slave */
+    uint8_t unplugged[HUBUS_SIM_MAX_SLAVES]; /* slave disconnected: sees no edges, does not drive DATA */
     unsigned n_slaves;
 
     uint8_t clk;         /* CLK driven by the master */
@@ -92,6 +93,9 @@ void hubus_sim_settle(hubus_sim_t *sim);
 
 /* Application write on a slave, with the line update that may follow. */
 uint8_t hubus_sim_slave_write(hubus_sim_t *sim, unsigned slave, const uint8_t *data, uint8_t len, uint8_t more);
+
+/* Disconnects a slave from the bus (unplugged = 1) or connects it again with the state it had (0). */
+void hubus_sim_unplug(hubus_sim_t *sim, unsigned slave, int unplugged);
 
 /* A spurious CLK pulse seen only by one slave (extra clock edge). */
 void hubus_sim_glitch_clk(hubus_sim_t *sim, unsigned slave);
