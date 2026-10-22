@@ -4,18 +4,26 @@
 
 gpio:
   chip: pinctrl-rp1      # chip label: pinctrl-rp1 (Pi 5), pinctrl-bcm2711 (Pi 4); empty = auto-detect
+  # path: /dev/gpiochip0 # alternative to chip: the device path of the GPIO chip
   clk: 17                # GPIO offset of CLK (push-pull output)
   data: 27               # GPIO offset of DATA (open drain, needs an external pull-up to 3.3 V)
+  internal_pullup: false # SoC pull-up on DATA, bench tests only; use an external pull-up
   realtime: 0            # SCHED_FIFO priority (1..99), 0 = off; needs CAP_SYS_NICE
 
-# All timing values are minimums. Frozen after hardware measurements (docs/project/open-issues.md, H3).
+# All timing values are minimums (docs/daemon.md, "Timing"). The defaults give a clock period of
+# 100 us (about 10 kbit/s). Frozen after hardware measurements (docs/project/open-issues.md, H3).
 timing:
-  clk_low_us: 50
-  clk_high_us: 50
-  sample_us: 25
-  cond_us: 50
-  turnaround_us: 200
-  retry_budget: 2
+  clk_low_us: 50         # minimum CLK low time
+  clk_high_us: 50        # minimum CLK high time
+  sample_us: 25          # DATA sample point after the rising edge, at most clk_high_us
+  cond_us: 50            # CLK high time around START/STOP
+  turnaround_us: 200     # CLK low time after the turnaround slot
+  line_fault_ticks: 300  # ticks of DATA stuck low before a line fault (at least 280)
+  retry_budget: 2        # retries of a failed REQUEST_DATA within a burst
+  follow_fragments: true # request the next fragment right after MORE = 1
+  max_fragments: 32      # fragments of one slave per burst
+  duplicate_threshold: 3 # CRC failures of one MCID in a row that raise a suspicion
+  line_problem_count: 3  # more suspected MCIDs than this point to a line problem
 
 mqtt:
   host: localhost

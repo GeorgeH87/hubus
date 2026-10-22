@@ -287,6 +287,9 @@ static void load_timing(ctx_t *c, yn_t *root)
     v = m->dup_fail_threshold;
     read_unsigned(c, s, "duplicate_threshold", 1, 100, &v);
     m->dup_fail_threshold = (uint8_t)v;
+    v = m->line_problem_count;
+    read_unsigned(c, s, "line_problem_count", 1, 100, &v);
+    m->line_problem_count = (uint8_t)v;
     if (!c->failed && m->t_sample_ns > m->t_clk_high_ns) {
         fail(c, s->line, "timing.sample_us must not exceed timing.clk_high_us");
     }
