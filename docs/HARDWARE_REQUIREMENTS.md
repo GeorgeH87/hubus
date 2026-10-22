@@ -56,7 +56,7 @@ Requirements:
 - **128 B RAM devices** (ATtiny24/25, 261, 2313/2313A, 202/204/212/214) need shorter buffers: with both buffers at 31 bytes the library takes 94 bytes of RAM, which leaves too little for the stack (the interrupt path alone needs about 40–50 bytes). The build therefore uses 20-byte buffers on these devices by default, so up to 20 bytes of payload per frame in each direction. A slave without the event buffer (`SLAVE_PROPERTIES.md` section 4.2) has only the command buffer and keeps the full 31 bytes.
 - **Configurable buffers:** buffer sizes are compile-time options so smaller devices can use shorter buffers. A slave announces the maximum command payload it accepts in `SLAVE_INFO` (`MESSAGE_FORMAT.md` section 4.1).
 - **Pins:** `CLK` and `DATA` are build options (`slave/README.md`) and can be any pins that support pin change or edge interrupts (`SLAVE_PROPERTIES.md` section 6). For every classic device listed above the HAL derives the pin change group (register, enable bit, vector) from the port; for other classic devices `HUBUS_CLK_PCGROUP` and `HUBUS_DATA_PCGROUP` name it. On classic devices, placing both pins on the same port keeps them on one interrupt vector.
-- **Device selection:** the HAL is selected automatically from the compiler's device macro (`-mmcu=...`); the application only configures pins and buffer sizes.
+- **Device selection:** the HAL is selected automatically from the compiler's device macro (`-mmcu=...`); the application only configures pins, buffer sizes, and the optional parts (`SLAVE_PROPERTIES.md` section 4.2).
 
 ## 4.2 Supported Master Devices
 
