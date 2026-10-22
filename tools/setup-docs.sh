@@ -24,5 +24,9 @@ if [ ! -x "$dir/node_modules/.bin/mmdc" ] ||
     (cd "$dir" && npm install --no-audit --no-fund --silent "@mermaid-js/mermaid-cli@$MERMAID_CLI_VERSION")
 fi
 
+# mermaid-cli renders with the headless browser of puppeteer; install it explicitly (the npm postinstall step
+# does not reliably do it, e.g. in CI). If it is already present, nothing is downloaded.
+(cd "$dir" && npx --no-install puppeteer browsers install chrome-headless-shell >/dev/null)
+
 java -jar "$dir/plantuml.jar" -version | head -1
 "$dir/node_modules/.bin/mmdc" --version
