@@ -1,6 +1,6 @@
 /*
  * HUBUS protocol constants shared by master, slave, and tests.
- * See docs/MESSAGE_FORMAT.md and docs/PROTOCOL.md.
+ * See docs/spec/ (frames: docs/spec/04-frames.md).
  */
 #ifndef HUBUS_PROTO_H
 #define HUBUS_PROTO_H

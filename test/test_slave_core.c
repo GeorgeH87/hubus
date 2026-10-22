@@ -773,7 +773,7 @@ static void test_burst_example_from_the_spec(void)
     make_pending(2);
     make_pending(3);
 
-    /* docs/ARBITRATION.md section 7, request 1: arb bits 101010, handoff after bit 5 and bit 1 */
+    /* docs/spec/05-arbitration.md section 5.6, request 1: arb bits 101010, handoff after bit 5 and bit 1 */
     group_request(&g, HUBUS_M_REQUEST_DATA, 0, 0);
     TEST_ASSERT_EQUAL_HEX16((1u << 0) | (1u << 1) | (1u << 4) | (1u << 8) | (1u << 9), g.slots);
     TEST_ASSERT_TRUE(hubus_arb_decode(g.slots, 0, 0, &r));

@@ -2,7 +2,7 @@
 # device matrix builds the size reference firmware for the other devices.
 #
 # Each example builds the slave library itself with the optional parts it uses
-# (docs/SLAVE_PROPERTIES.md section 4.2), independent of the options of this
+# (docs/spec/07-slave.md section 7.4), independent of the options of this
 # build directory; buffers and pins follow this build.
 if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
     set(HUBUS_EXAMPLE_LIB_SOURCES

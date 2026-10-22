@@ -3,8 +3,8 @@
  *
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *
- * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=0 (docs/SLAVE_PROPERTIES.md
- * section 4.2). For a sensor that is only read, see slave-sensor-passive.
+ * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=0 (docs/spec/07-slave.md
+ * section 7.4). For a sensor that is only read, see slave-sensor-passive.
  *
  * Uses the internal temperature sensor of the ATtiny85 (ADC channel 15,
  * 1.1 V reference), so no external pin is needed. The main loop measures

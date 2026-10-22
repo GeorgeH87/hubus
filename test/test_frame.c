@@ -110,7 +110,7 @@ static void test_decode_rejects_bad_length_and_crc(void)
 }
 
 /* Hamming distance 4 up to 14 covered bytes: no 1-, 2-, or 3-bit error is
- * accepted (docs/MESSAGE_FORMAT.md section 7). Exhaustive for a frame with a
+ * accepted (docs/spec/04-frames.md section 4.12). Exhaustive for a frame with a
  * 12-byte payload (header + payload = 14 bytes + CRC). */
 static void test_hamming_distance_4_for_12_byte_payload(void)
 {

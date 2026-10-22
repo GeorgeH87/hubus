@@ -1,8 +1,7 @@
 /*
  * Fault injection: bit errors, lost and extra clock edges, lost STOP, stuck
  * line, duplicate MCID, and an event signal racing a START. Every accepted
- * rare case must recover as specified (docs/PROTOCOL.md section 7,
- * examples/ERROR_SCENARIOS.md).
+ * rare case must recover as specified (docs/spec/08-faults.md).
  */
 #include <string.h>
 

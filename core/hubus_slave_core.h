@@ -1,5 +1,5 @@
 /*
- * Slave protocol state machine as pure logic (docs/SLAVE_PROPERTIES.md).
+ * Slave protocol state machine as pure logic (docs/spec/07-slave.md).
  *
  * The core has no hardware access and no time base. The caller feeds it the
  * pin levels after every pin change (`hubus_core_pins`) and applies the
@@ -35,12 +35,12 @@
 #endif
 
 /*
- * Optional parts (docs/SLAVE_PROPERTIES.md section 4.2), chosen per device type; both are on by default and every
+ * Optional parts (docs/spec/07-slave.md section 7.4), chosen per device type; both are on by default and every
  * combination is valid:
  *
  *   HUBUS_ENABLE_EVENTS  event buffer: hubus_core_write(), idle event signaling, REQUEST_DATA, STATUS_CAPTURE.
  *                        Without it the slave never speaks on its own (for example a sensor that is only read).
- *   HUBUS_ENABLE_STATE   live state for REQUEST_STATE (docs/MESSAGE_FORMAT.md section 4.4).
+ *   HUBUS_ENABLE_STATE   live state for REQUEST_STATE (docs/spec/04-frames.md section 4.10).
  *
  * Without both the slave only executes commands and answers REQUEST_INFO; the master keeps its state in a cache.
  */

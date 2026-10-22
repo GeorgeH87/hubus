@@ -7,7 +7,7 @@ on:
 
 # The AVR toolchain of older Ubuntu releases (gcc-avr < 14) does not know the
 # tinyAVR 0/1/2-series, so everything runs in the same Ubuntu release as the
-# development environment (docs/DEVELOPMENT.md).
+# development environment (docs/development.md).
 jobs:
   host:
     name: Host build, unit tests, bus simulation
@@ -34,6 +34,23 @@ jobs:
         run: sh tools/setup-ubuntu.sh
       - name: Every mutant must be killed by the tests
         run: sh tools/mutation-check.sh
+
+  docs:
+    name: Documentation (diagrams and links)
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install toolchain and documentation tools
+        run: |
+          sh tools/setup-ubuntu.sh
+          sh tools/setup-docs.sh
+      - name: Diagrams render, SVGs are up to date, links resolve
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          sh tools/build-docs.sh --check
 
   avr:
     name: Slave firmware (${{ matrix.mcu }})

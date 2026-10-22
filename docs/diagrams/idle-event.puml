@@ -1,0 +1,45 @@
+@startuml idle-event
+' Idle event handshake (docs/spec/06-operation.md, section 6.1). The slave pulls DATA low while the bus is idle
+' with CLK low, the master confirms with clock pulses, and the slave releases DATA after the first falling edge
+' (releasing while CLK is high would look like a STOP). The master then starts a burst.
+scale 10 as 90 pixels
+hide time-axis
+binary "CLK" as CLK
+binary "DATA" as DATA
+concise "Slave" as S
+concise "Master" as M
+
+@0
+CLK is low
+DATA is high
+S is idle
+M is "idle, watches DATA"
+@20
+DATA is low
+S is "buffer written: pulls DATA low"
+@30
+M is "DATA low: confirm"
+@40
+CLK is high
+@50
+CLK is low
+@52
+DATA is high
+S is released
+@60
+M is "DATA high: start the burst"
+@80
+CLK is high
+M is START
+@85
+DATA is low
+@90
+CLK is low
+M is "burst"
+S is "contends in the burst"
+@110
+S is {-}
+M is {-}
+
+CLK@40 <-> @50 : one clock pulse
+@enduml

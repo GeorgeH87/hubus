@@ -1,5 +1,5 @@
 /*
- * HUBUS master (docs/PROTOCOL.md, docs/ARBITRATION.md).
+ * HUBUS master (docs/spec/06-operation.md, docs/spec/05-arbitration.md).
  *
  * All hardware access goes through `hubus_master_hal_t`: set CLK, pull or
  * release DATA, read DATA, wait. The same logic runs on a Raspberry Pi
@@ -118,7 +118,7 @@ void hubus_master_init(hubus_master_t *m, const hubus_master_hal_t *hal, const h
 /* ---- line control --------------------------------------------------- */
 
 /*
- * Startup sequence steps 1-3 (docs/PROTOCOL.md section 3.3): clock until DATA
+ * Startup sequence steps 1-3 (docs/spec/06-operation.md section 6.6): clock until DATA
  * is high, then generate RESET. Also used for error recovery. Does not run
  * the initial burst; call hubus_master_burst() afterwards.
  */
@@ -128,7 +128,7 @@ hubus_status_t hubus_master_startup(hubus_master_t *m);
 hubus_status_t hubus_master_shutdown(hubus_master_t *m);
 
 /*
- * Idle event handshake (docs/PROTOCOL.md section 3.1): if a slave holds DATA
+ * Idle event handshake (docs/spec/06-operation.md section 6.1): if a slave holds DATA
  * low while the bus is idle, clock until it is released. `*event` is set to 1
  * if an event was confirmed. Call it periodically while idle.
  */
@@ -146,7 +146,7 @@ hubus_status_t hubus_master_status_capture(hubus_master_t *m, uint8_t target_len
 /* REQUEST_INFO / REQUEST_DATA / REQUEST_STATE to exactly one slave (no arbitration). */
 hubus_status_t hubus_master_request_info(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
 hubus_status_t hubus_master_request_data(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
-/* The live state of the slave as a SLAVE_DATA frame (docs/MESSAGE_FORMAT.md section 4.4). Clears nothing. */
+/* The live state of the slave as a SLAVE_DATA frame (docs/spec/04-frames.md section 4.10). Clears nothing. */
 hubus_status_t hubus_master_request_state(hubus_master_t *m, uint8_t mcid, hubus_slave_frame_t *out);
 
 /*

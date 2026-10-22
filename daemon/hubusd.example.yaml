@@ -8,7 +8,7 @@ gpio:
   data: 27               # GPIO offset of DATA (open drain, needs an external pull-up to 3.3 V)
   realtime: 0            # SCHED_FIFO priority (1..99), 0 = off; needs CAP_SYS_NICE
 
-# All timing values are minimums. Frozen after hardware measurements (docs/OPEN_ISSUES.md H3).
+# All timing values are minimums. Frozen after hardware measurements (docs/project/open-issues.md, H3).
 timing:
   clk_low_us: 50
   clk_high_us: 50

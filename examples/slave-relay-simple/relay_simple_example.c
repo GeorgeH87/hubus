@@ -4,8 +4,8 @@
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *   PB0 = relay driver / LED, active high
  *
- * Build options: HUBUS_ENABLE_EVENTS=0, HUBUS_ENABLE_STATE=0 (docs/SLAVE_PROPERTIES.md
- * section 4.2), the smallest build of the library. The slave executes
+ * Build options: HUBUS_ENABLE_EVENTS=0, HUBUS_ENABLE_STATE=0 (docs/spec/07-slave.md
+ * section 7.4), the smallest build of the library. The slave executes
  * commands and answers REQUEST_INFO, nothing else:
  *
  *   0x10 <0|1>   switch the output off / on

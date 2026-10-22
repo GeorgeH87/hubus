@@ -75,7 +75,7 @@ static void test_matches_reference(void)
 static void test_degenerate_frames_are_not_valid(void)
 {
     /* The non-zero init/xorout makes all-released (0x00) and all-low (0xFF)
-     * streams invalid frames (docs/MESSAGE_FORMAT.md section 7). */
+     * streams invalid frames (docs/spec/04-frames.md section 4.12). */
     uint8_t zeros[4] = {0, 0, 0, 0};
     uint8_t ones[4] = {0xFF, 0xFF, 0xFF, 0xFF};
 

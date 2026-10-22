@@ -1,0 +1,87 @@
+@startuml arbitration
+' Group request with TARGET_LEN = 4 and prefix 0010 (docs/spec/05-arbitration.md, section 5.3).
+' Slaves 11 (001011) and 9 (001001) contend for the open bits 1 and 0: 2 * (6 - 4) = 4 slots.
+' Slave 9 sends 0 at bit 1, samples DATA low, and has lost: it drives handoff slot 1 and stays passive.
+' The master reads winner 0010 + 11 = 11 and pushes the mask 00100 / TARGET_LEN 5 for the loser group.
+scale 10 as 80 pixels
+hide time-axis
+binary "CLK" as CLK
+binary "DATA" as DATA
+concise "Slot" as P
+concise "Slave 11" as A
+concise "Slave 9" as B
+concise "Master" as M
+
+@0
+CLK is low
+DATA is high
+P is "CRC8 (end)"
+A is {-}
+B is {-}
+M is {-}
+@10
+CLK is high
+@20
+CLK is low
+P is "T"
+@30
+CLK is high
+@40
+CLK is low
+P is "bit 1"
+A is "pulls (1)"
+B is "lost (0)"
+@43
+DATA is low
+@50
+CLK is high
+M is "1"
+@60
+CLK is low
+P is "handoff 1"
+A is "–"
+B is "pulls"
+@70
+CLK is high
+M is "push 00100/5"
+@80
+CLK is low
+P is "bit 0"
+A is "pulls (1)"
+B is passive
+@90
+CLK is high
+M is "1"
+@100
+CLK is low
+P is "handoff 0"
+A is "–"
+@103
+DATA is high
+@110
+CLK is high
+M is "–"
+@120
+CLK is low
+P is "winner's frame"
+A is "sends its frame"
+@123
+DATA is low
+@130
+CLK is high
+M is "winner 11"
+@140
+CLK is low
+@143
+DATA is high
+@150
+CLK is high
+@160
+CLK is low
+P is {-}
+A is {-}
+B is {-}
+M is {-}
+
+CLK@40 <-> @50 : T_TURNAROUND
+@enduml

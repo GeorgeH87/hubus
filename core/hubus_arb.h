@@ -1,5 +1,5 @@
 /*
- * Master-side arbitration helpers (docs/ARBITRATION.md section 6):
+ * Master-side arbitration helpers (docs/spec/05-arbitration.md section 5.5):
  * derive the winner and the pending masks from the 12 sampled arbitration
  * slots, and keep the last-in-first-out pending mask stack.
  */
@@ -25,7 +25,7 @@ typedef struct {
 } hubus_arb_result_t;
 
 /*
- * Decodes the arbitration slots of a group request (docs/ARBITRATION.md).
+ * Decodes the arbitration slots of a group request (docs/spec/05-arbitration.md).
  *
  * The request prefix `base_prefix`/`base_len` is not arbitrated, so only
  * 2 * (6 - base_len) slots were on the wire. `slots` holds them at their

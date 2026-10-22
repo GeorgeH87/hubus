@@ -145,7 +145,7 @@ static void test_burst_spec_example(void)
     fx_startup(&fx);
     TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
 
-    /* docs/ARBITRATION.md section 7: four polls, served in descending MCID order */
+    /* docs/spec/05-arbitration.md section 5.6: four requests, served in descending MCID order */
     TEST_ASSERT_EQUAL_UINT(4, st.polls);
     TEST_ASSERT_EQUAL_UINT(4, st.served);
     TEST_ASSERT_EQUAL_UINT(4, fx.n_log);
@@ -670,7 +670,7 @@ static void test_scan_blind_spot_for_identical_duplicates(void)
 {
     static hubus_scan_t scan;
 
-    /* accepted limitation (PROTOCOL.md 3.5): identical responses overlap into a valid frame */
+    /* accepted limitation (docs/spec/08-faults.md section 8.7): identical responses overlap into a valid frame */
     fx_add_ex(&fx, 9, 1, 0x77);
     fx_add_ex(&fx, 9, 1, 0x77);
     fx_startup(&fx);

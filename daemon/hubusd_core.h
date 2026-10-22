@@ -1,6 +1,6 @@
 /*
  * hubusd core: operates the bus through the master library and talks MQTT
- * through a small interface (docs/DAEMON_REQUIREMENTS.md).
+ * through a small interface (docs/daemon.md).
  *
  * Threading: `hubusd_step()` and everything else except the two functions
  * below run in the bus thread, the only thread that touches the bus.
