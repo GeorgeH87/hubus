@@ -173,7 +173,7 @@ static hubus_status_t cond_start(hubus_master_t *m)
         set_clk(m, 1);
         wait_ns(m, m->cfg.t_cond_ns);
         if (!data_high(m)) {
-            /* A slave started event signaling just before CLK rose (docs/PROTOCOL.md section 7.1).
+            /* A slave started event signaling just before CLK rose (docs/spec/08-faults.md section 8.3).
              * Finish the clock pulse so it releases DATA; the caller recovers and repeats. */
             wait_ns(m, m->cfg.t_clk_high_ns);
             set_clk(m, 0);
@@ -417,7 +417,7 @@ hubus_status_t hubus_master_status_capture(hubus_master_t *m, uint8_t target_len
 
 /*
  * One REQUEST_INFO / REQUEST_DATA transaction. With target_len < 6 the matching slaves arbitrate and the winner
- * answers in the same transaction (docs/ARBITRATION.md); `res` then tells winner and derived masks, also when the
+ * answers in the same transaction (docs/spec/05-arbitration.md); `res` then tells winner and derived masks, also when the
  * response is invalid. With target_len == 6 the addressed slave answers directly.
  */
 static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t resp_type, uint8_t target_len,

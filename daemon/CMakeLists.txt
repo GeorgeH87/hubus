@@ -1,4 +1,4 @@
-# hubusd: MQTT master daemon (docs/DAEMON_REQUIREMENTS.md).
+# hubusd: MQTT master daemon (docs/daemon.md).
 # Needs libyaml for the configuration; the MQTT client (libmosquitto) and the
 # libgpiod HAL are only needed for the executable itself.
 find_package(PkgConfig QUIET)

@@ -10,7 +10,7 @@ void tearDown(void) {}
 
 /*
  * Model of what the slaves put on DATA during one arbitration (written
- * straight from docs/ARBITRATION.md section 4, independent of the slave
+ * straight from docs/spec/05-arbitration.md section 5.3, independent of the slave
  * core). Returns the slots at their position in the 12-slot pattern; the
  * shared prefix bits of a masked request are not on the wire (slots below
  * 2 * len stay 0).
@@ -76,7 +76,7 @@ static void test_spec_example_first_poll(void)
     uint16_t slots = model_slots(pending, 4, 0, 0);
     hubus_arb_result_t r;
 
-    /* docs/ARBITRATION.md section 7, poll 1 */
+    /* docs/spec/05-arbitration.md section 5.6, request 1 */
     TEST_ASSERT_TRUE(hubus_arb_decode(slots, 0, 0, &r));
     TEST_ASSERT_TRUE(r.contender);
     TEST_ASSERT_EQUAL_UINT8(42, r.winner);
@@ -175,7 +175,7 @@ static void test_single_slave_every_mcid(void)
 
 /* Complete burst on the model for random pending sets: every pending slave is
  * served exactly once, in strictly descending MCID order, with at most one
- * stack entry per prefix length (docs/ARBITRATION.md section 6.2). */
+ * stack entry per prefix length (docs/spec/05-arbitration.md section 5.5). */
 static void test_random_bursts(void)
 {
     unsigned seed = 4242;

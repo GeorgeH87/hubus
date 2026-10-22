@@ -1,6 +1,6 @@
 /*
  * CRC-8/AUTOSAR: poly 0x2F, init 0xFF, xorout 0xFF, not reflected.
- * Check value for "123456789" is 0xDF (docs/MESSAGE_FORMAT.md section 7).
+ * Check value for "123456789" is 0xDF (docs/spec/04-frames.md section 4.12).
  *
  * The register is kept without the final XOR so frames can be processed
  * byte by byte while they are received or transmitted:

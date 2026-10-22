@@ -3,8 +3,8 @@
  *
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *
- * Build options: HUBUS_ENABLE_EVENTS=0, HUBUS_ENABLE_STATE=1 (docs/SLAVE_PROPERTIES.md
- * section 4.2). The slave never speaks on its own: no idle event signaling, no
+ * Build options: HUBUS_ENABLE_EVENTS=0, HUBUS_ENABLE_STATE=1 (docs/spec/07-slave.md
+ * section 7.4). The slave never speaks on its own: no idle event signaling, no
  * REQUEST_DATA, no STATUS_CAPTURE. It exposes the latest raw value of the
  * internal temperature sensor (ADC channel 15, 1.1 V reference) as its live
  * state, two bytes, big endian, and the master reads it whenever it needs it
@@ -16,8 +16,8 @@
  *
  * The library reads the state while it transmits, without a copy. If a new
  * measurement changes the high byte while a frame is on the bus, the master
- * can receive a mixed value once (valid CRC, docs/MESSAGE_FORMAT.md section
- * 4.4); the next read is correct again.
+ * can receive a mixed value once (valid CRC, docs/spec/08-faults.md section
+ * 8.6); the next read is correct again.
  */
 #include <avr/interrupt.h>
 #include <avr/io.h>

@@ -1,6 +1,6 @@
 /*
  * Master-side evaluation of the 2-bit generation counter (GEN),
- * docs/MESSAGE_FORMAT.md section 4.3. One tracker per MCID.
+ * docs/spec/04-frames.md section 4.9. One tracker per MCID.
  */
 #ifndef HUBUS_GEN_H
 #define HUBUS_GEN_H

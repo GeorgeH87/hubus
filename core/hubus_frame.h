@@ -1,5 +1,5 @@
 /*
- * Frame codec: 16-bit header, payload, CRC8 (docs/MESSAGE_FORMAT.md).
+ * Frame codec: 16-bit header, payload, CRC8 (docs/spec/04-frames.md).
  *
  *   Bit:     15 14 | 13 12 11   | 10  9  8  7  6  5 |  4  3  2  1  0
  *   Master:  TYPE  | TARGET_LEN |       MCID        |      LEN

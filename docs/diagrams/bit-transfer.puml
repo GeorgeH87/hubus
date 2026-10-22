@@ -1,0 +1,59 @@
+@startuml bit-transfer
+' Bit transfer (docs/spec/01-physical-layer.md, section 1.3). One clock period = 20 time units.
+' DATA low = 1, released (high) = 0. Changes only while CLK is low; sampled on the rising edge (marked).
+scale 10 as 90 pixels
+hide time-axis
+binary "CLK" as CLK
+binary "DATA" as DATA
+concise "Bit" as BIT
+
+@0
+CLK is low
+DATA is high
+BIT is {-}
+@3
+DATA is low
+BIT is "1"
+@10
+CLK is high
+@20
+CLK is low
+@23
+DATA is high
+BIT is "0"
+@30
+CLK is high
+@40
+CLK is low
+@43
+DATA is low
+BIT is "1"
+@50
+CLK is high
+@60
+CLK is low
+@63
+BIT is "1"
+@70
+CLK is high
+@80
+CLK is low
+@83
+DATA is high
+BIT is "0"
+@90
+CLK is high
+@100
+CLK is low
+@103
+BIT is {-}
+
+highlight 10 to 11 #Gold : sample
+highlight 30 to 31 #Gold : sample
+highlight 50 to 51 #Gold : sample
+highlight 70 to 71 #Gold : sample
+highlight 90 to 91 #Gold : sample
+
+CLK@40 <-> @60 : T_CLK
+DATA@20 <-> @30 : T_CLK_LOW
+@enduml

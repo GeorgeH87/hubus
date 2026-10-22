@@ -1,5 +1,5 @@
 /*
- * hubusd configuration (YAML). See docs/DAEMON_REQUIREMENTS.md section 8 and
+ * hubusd configuration (YAML). See docs/daemon.md (Configuration) and
  * daemon/hubusd.example.yaml for the format.
  */
 #ifndef HUBUSD_CONFIG_H

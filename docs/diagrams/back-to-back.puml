@@ -1,0 +1,57 @@
+@startuml back-to-back
+' Back-to-back transactions inside a burst (docs/spec/02-line-conditions.md, section 2.4).
+' CLK stays high from STOP to the next START, so no pending slave can announce itself in between.
+' Only after the final STOP does CLK fall, and a slave that is still pending signals at that edge.
+scale 10 as 90 pixels
+hide time-axis
+binary "CLK" as CLK
+binary "DATA" as DATA
+concise "Bus" as P
+concise "Pending slave" as S
+
+@0
+CLK is low
+DATA is high
+P is "transaction n"
+S is {-}
+@10
+CLK is high
+@20
+CLK is low
+@22
+DATA is low
+@30
+CLK is high
+P is "STOP + START"
+@35
+DATA is high
+@40
+DATA is low
+@45
+CLK is low
+P is "transaction n+1"
+@48
+DATA is high
+@55
+CLK is high
+@65
+CLK is low
+@68
+DATA is low
+@75
+CLK is high
+P is "final STOP"
+@80
+DATA is high
+@90
+CLK is low
+P is idle
+@92
+DATA is low
+S is "announces itself"
+@110
+P is {-}
+S is {-}
+
+highlight 30 to 45 #LightBlue : CLK stays high
+@enduml

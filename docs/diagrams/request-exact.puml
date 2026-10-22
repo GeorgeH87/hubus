@@ -1,0 +1,76 @@
+@startuml request-exact
+' An exactly addressed request (docs/spec/03-transactions.md, section 3.1). The master frame and the slave frame
+' are shortened to two bits each. The first response bit is low for every slave frame (type codes start with 1).
+scale 10 as 70 pixels
+hide time-axis
+binary "CLK" as CLK
+binary "DATA" as DATA
+concise "Phase" as P
+concise "DATA driven by" as D
+
+@0
+CLK is low
+DATA is high
+P is idle
+D is {-}
+@10
+CLK is high
+P is START
+D is master
+@15
+DATA is low
+@20
+CLK is low
+P is "master frame: header, payload, CRC8"
+@23
+DATA is high
+@30
+CLK is high
+@40
+CLK is low
+@43
+DATA is low
+@50
+CLK is high
+@60
+CLK is low
+P is "T"
+D is nobody
+@63
+DATA is high
+@70
+CLK is high
+@80
+CLK is low
+P is "slave frame: header, payload, CRC8"
+D is "addressed slave"
+@83
+DATA is low
+@100
+CLK is high
+@110
+CLK is low
+@113
+DATA is high
+@120
+CLK is high
+@130
+CLK is low
+P is STOP
+D is master
+@132
+DATA is low
+@140
+CLK is high
+@145
+DATA is high
+@150
+CLK is low
+P is idle
+D is {-}
+@160
+P is {-}
+
+CLK@80 <-> @100 : T_TURNAROUND
+highlight 100 to 101 #Gold : first bit low = response
+@enduml

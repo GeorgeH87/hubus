@@ -1,7 +1,7 @@
 /*
  * Device profiles: how the daemon interprets the buffer bytes of a slave and
- * how it turns `set` commands into protocol commands (docs/DAEMON_REQUIREMENTS.md
- * section 7). Built-in profiles cover the three example firmwares; further
+ * how it turns `set` commands into protocol commands (docs/daemon.md,
+ * Device Profiles). Built-in profiles cover the three example firmwares; further
  * profiles can be defined in the configuration file.
  */
 #ifndef HUBUSD_PROFILE_H

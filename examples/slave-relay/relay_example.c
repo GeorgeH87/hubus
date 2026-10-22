@@ -4,8 +4,8 @@
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *   PB0 = relay driver / LED, active high
  *
- * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1 (docs/SLAVE_PROPERTIES.md
- * section 4.2). REQUEST_STATE alone would do for the readback; the event
+ * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1 (docs/spec/07-slave.md
+ * section 7.4). REQUEST_STATE alone would do for the readback; the event
  * buffer adds STATUS_CAPTURE. Without feedback at all, see slave-relay-simple.
  *
  * Application commands (SEND_COMMAND, opcode and one argument byte):

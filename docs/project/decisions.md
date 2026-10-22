@@ -1,0 +1,47 @@
+# Decisions
+
+Why HUBUS is the way it is. Each entry states the decision, the reason, rejected alternatives where there were any, and where it is specified. The specification itself is the reference; this log only explains it.
+
+## Principles
+
+- **Lightweight slaves, complexity on the master.** ATtiny devices have tiny flash and RAM; the Raspberry Pi has resources to spare. Every design question is decided in favor of a simpler slave ([overview](../overview.md#design-principles)).
+- **No timeouts on the slave.** The master clock is the slave's only time base; all timeouts, retries, and recovery are master-side. A blocked bus is released by the master's clock pulses and RESET ([§7.6](../spec/07-slave.md#76-no-timeouts), [§6.6](../spec/06-operation.md#66-startup-shutdown-and-recovery)).
+- **Rare, self-recovering corner cases are accepted** and documented instead of prevented with slave logic ([§8](../spec/08-faults.md)).
+
+## Physical Layer and Framing
+
+- **`DATA` low = `1`, open drain for every node including the master.** Wired-AND makes the arbitration work and avoids electrical conflicts when the transmitter changes ([§1.1](../spec/01-physical-layer.md#11-bus-lines)).
+- **3.3 V bus without level shifters** (2026-10-21). Raspberry Pi GPIOs are not 5 V tolerant, and a 5 V ATtiny has no reliable input margin for 3.3 V signals ([§1.2](../spec/01-physical-layer.md#12-logic-levels-and-voltage)).
+- **Master clock, timing values as minimums.** A jittery user-space clock only slows the bus down; the master sets the minimums for the slowest slave ([§1.4](../spec/01-physical-layer.md#14-timing-parameters)).
+- **START/STOP line conditions delimit frames; RESET = START + STOP** (2026-10-20). Line conditions work without bit synchronization, so every START resynchronizes and RESET always works ([§2](../spec/02-line-conditions.md)).
+- **Line conditions are detected with interrupts on both `CLK` and `DATA`.** Rejected: comparing `DATA` at the rising and falling `CLK` edge, which would need only one interrupt pin. With slaves of different interrupt latency, a fast transmitter changes `DATA` after the falling edge before a slow slave has sampled it, which the slow slave would misread as START or STOP ([§7.7](../spec/07-slave.md#77-implementation-notes)).
+- **Back-to-back transactions inside a burst, and "announce once per STOP"** (found during implementation, 2026-10-21). Without them, pending slaves pulled `DATA` low after every STOP of a burst and blocked the next START, and slaves in different phases kept each other's signals alive ([§2.4](../spec/02-line-conditions.md#24-back-to-back-transactions), [§6.1](../spec/06-operation.md#61-idle-event-handshake)).
+- **16-bit header, identical in both directions, without start-of-frame field** (2026-10-20). Byte-aligned payload and CRC, one parser for both directions; the START is the frame boundary ([§4.1](../spec/04-frames.md#41-frame-structure)).
+- **MCID width stays 6 bits (`1..63`), also for v1.** The electrical limits of one open-drain line keep the practical node count well below 63; 8 bits would cost a header byte and 4 arbitration slots per frame. MCID `0` is reserved because it could not win an arbitration visibly ([§4.5](../spec/04-frames.md#45-addressing)).
+- **CRC-8/AUTOSAR** (poly `0x2F`, init and final XOR `0xFF`, check `0xDF`; 2026-10-21). Chosen by exhaustive evaluation of all 8-bit polynomials for HUBUS frame lengths: Hamming distance 4 up to 14 covered bytes, every odd-weight error detected, and the non-zero init makes all-zero and all-one frames invalid. The maximum payload stays 31 bytes, with ≤ 12-byte fragments recommended for the strongest integrity ([§4.12](../spec/04-frames.md#412-integrity-check-crc8)).
+
+## Messages
+
+- **Commands are fire-and-forget; no acknowledgement or error frames.** There is no request such a frame could answer; the master reads states back ([§4.4](../spec/04-frames.md#44-command-opcodes), [§4.6](../spec/04-frames.md#46-slave-message-types)).
+- **One overwritable event buffer per slave; no queue** (2026-10-20). Overwriting is preferred to queue growth on tiny devices; `GEN` makes overwritten content visible ([§4.8](../spec/04-frames.md#48-event-buffer)).
+- **Implicit read confirmation: the STOP after a complete response clears the buffer, a RESET keeps it** (2026-10-20). No acknowledgement frame is needed, and a failed response is retried ([§3.6](../spec/03-transactions.md#36-transaction-end-and-buffer-clearing)).
+- **`GEN` and `MORE` in the header instead of sequence numbers** (2026-10-21). Duplicate and overwrite detection and fragments cost no payload; the single buffer keeps fragments in order ([§4.9](../spec/04-frames.md#49-generation-counter-gen), [§4.11](../spec/04-frames.md#411-fragments)).
+- **`REQUEST_STATE` next to `REQUEST_DATA`** (2026-10-22). A slave has a current state that the master wants to read at any time, and events that only matter once. Reading the state through `STATUS_CAPTURE` and a burst needed two steps and went through the event buffer, where it could overwrite unread events. The state is read from the application while transmitting, without a copy ([§4.10](../spec/04-frames.md#410-state)).
+- **Event buffer and state are independent optional parts; every combination is valid** (2026-10-22). A passive sensor needs no event buffer, which saves about 500 bytes of flash and 39 bytes of RAM; a relay without feedback needs neither, and the master caches its state. Capability bit 2 announces the event buffer ([§7.4](../spec/07-slave.md#74-optional-parts)).
+- **Future protocol functions become reserved command opcodes, not message types.** All four master type codes are in use ([§4.3](../spec/04-frames.md#43-master-message-types)).
+
+## Arbitration and Operation
+
+- **Handoff slots and a pending mask stack** (2026-10-20). A slave that loses tells the master where it is, so a burst serves every pending slave in descending MCID order with one arbitration each ([§5.3](../spec/05-arbitration.md#53-slot-sequence), [§5.5](../spec/05-arbitration.md#55-pending-masks)).
+- **The winner answers in the same transaction; group requests skip the prefix bits** (2026-10-21). Previously a burst needed two transactions per slave (a `POLL_PENDING` arbitration, then `REQUEST_DATA` to the winner), the scan sent `REQUEST_INFO` to all 63 MCIDs, and every arbitration had 12 slots. Now: one transaction per slave, `2·(6−TARGET_LEN)` slots, and a contender is recognized by the first response bit ([§3.1](../spec/03-transactions.md#31-transaction-types), [§5](../spec/05-arbitration.md)).
+- **Commands to a group stay one-way.** Only requests are answered, and only by one slave; results of group commands go through the pending flag and a burst ([§4.5](../spec/04-frames.md#45-addressing)).
+- **Fairness through the burst.** A burst serves every slave pending at its start, so a busy high-priority slave cannot starve the others. Priority aging or deferral windows are not planned unless tests show a need; any such policy would be master-side ([open issues](open-issues.md#d3-fairness-strategy)).
+- **Duplicate MCIDs are detected by the master only** (2026-10-21): commissioning scan and runtime heuristic. Rejected: detection in the slave, which would hide the configuration fault and add slave logic ([§6.4](../spec/06-operation.md#64-commissioning-scan-and-duplicate-mcids)).
+
+## Implementation
+
+- **Hardware-independent core shared by slave, master, and tests; one HAL per device family** (2026-10-21). The same code runs in the ATtiny interrupt, in the host tests, and in the bus simulation ([slave library](../slave-library.md)).
+- **Master in C on Raspberry Pi 3 and newer, GPIO via `libgpiod`, chip selected by label.** Works on every model including the Pi 5; `pigpio` and direct register access are model-specific ([§1.5](../spec/01-physical-layer.md#15-nodes)).
+- **Ubuntu 26.04 toolchain** (2026-10-21): `gcc-avr` 14.2 and `avr-libc` 2.2.1 support classic and 0/1/2-series tinyAVR without device packs ([development](../development.md#toolchain)).
+- **The application enables global interrupts.** `hubus_slave_init()` only enables the library's pin change interrupts; the application calls `sei()` once its own setup is done ([slave library](../slave-library.md#api)).
+- **hubusd: YAML configuration, unknown slaves ignored, MQTT as the only interface.** YAML is the configuration format Home Assistant users know; unconfigured slaves are only listed ([hubusd](../daemon.md)).

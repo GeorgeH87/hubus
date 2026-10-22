@@ -22,7 +22,7 @@
  *                      (saves about 500 bytes of flash and 39 bytes of RAM)
  *   HUBUS_ENABLE_STATE 1 (default): answer REQUEST_STATE from the state the application exposes; 0 leaves it out
  *                      (saves about 100 bytes of flash and 3 bytes of RAM)
- *   Every combination is valid (docs/SLAVE_PROPERTIES.md section 4.2).
+ *   Every combination is valid (docs/spec/07-slave.md section 7.4).
  *
  * DATA needs an external pull-up to 3.3 V; the library never enables
  * internal pull-ups.
