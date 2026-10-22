@@ -12,12 +12,17 @@
  * Both pins need pin change / edge interrupts. On classic devices, putting
  * both on the same port keeps them on one interrupt vector.
  *
- * Buffer sizes (bytes, 1..31, default 31) are compile-time options:
+ * Further compile-time options:
  *
+ *   HUBUS_TX_BUF_SIZE  outgoing buffer (SLAVE_DATA payload), bytes 1..31, default 31
+ *   HUBUS_RX_BUF_SIZE  largest accepted command payload (announced in SLAVE_INFO), bytes 1..31, default 31
+ *                      (the CMake build uses 20 for both on devices with 128 B RAM that have the event buffer)
+ *   HUBUS_ENABLE_EVENTS 1 (default): event buffer with hubus_slave_write(), idle event signaling, REQUEST_DATA,
+ *                      and STATUS_CAPTURE; 0 leaves it out for slaves that never speak on their own
+ *                      (saves about 500 bytes of flash and 39 bytes of RAM)
  *   HUBUS_ENABLE_STATE 1 (default): answer REQUEST_STATE from the state the application exposes; 0 leaves it out
- *                      (about 100 bytes of flash, 3 bytes of RAM; the 2 KB devices ATtiny24/25 build with 0)
- *   HUBUS_TX_BUF_SIZE  outgoing buffer (SLAVE_DATA payload)
- *   HUBUS_RX_BUF_SIZE  largest accepted command payload (announced in SLAVE_INFO)
+ *                      (saves about 100 bytes of flash and 3 bytes of RAM)
+ *   Every combination is valid (docs/SLAVE_PROPERTIES.md section 4.2).
  *
  * DATA needs an external pull-up to 3.3 V; the library never enables
  * internal pull-ups.

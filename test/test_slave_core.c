@@ -124,6 +124,10 @@ static void test_init_rejects_invalid_config(void)
     cfg.info_len = 2;
     cfg.info = NULL;
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
+    cfg.info_len = 0;
+    cfg.state_len = HUBUS_MAX_PAYLOAD + 1u; /* longer than a LEN field: rejected, not truncated */
+    TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_DISABLED, hubus_core_write(&c, info_bytes, 1, 0));
 }
 
 static void test_disabled_core_stays_silent(void)
@@ -160,7 +164,7 @@ static void test_request_info(void)
     TEST_ASSERT_EQUAL_UINT8(9, h.mcid);
     TEST_ASSERT_EQUAL_UINT8(0, h.field); /* MORE and GEN are 000 in SLAVE_INFO */
     TEST_ASSERT_EQUAL_UINT8(HUBUS_PROTOCOL_VERSION, buf[2 + HUBUS_INFO_VERSION]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, buf[2 + HUBUS_INFO_MAX_CMD]);
     TEST_ASSERT_EQUAL_MEMORY(info_bytes, &buf[2 + HUBUS_INFO_APP], sizeof info_bytes);
 }
@@ -172,7 +176,7 @@ static void test_request_info_without_status_capture_clears_capability(void)
     add_slave(0, 9, 0);
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(0, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS]); /* events, but no capture */
 }
 
 static void test_request_info_does_not_clear_buffer(void)
@@ -1007,13 +1011,13 @@ static void test_slave_info_announces_the_state_capability(void)
     add_slave_state(2, 11, 0, 1);
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE | HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE | HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 10, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 11, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
 }
 
 static void test_group_state_request_lets_every_slave_with_a_state_contend(void)

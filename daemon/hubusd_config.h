@@ -18,7 +18,7 @@
 
 /* State reported after a command (config key `readback`). */
 #define HUBUSD_READBACK_NONE 0  /* nothing: the next event or capture shows the state */
-#define HUBUSD_READBACK_SLAVE 1 /* STATUS_CAPTURE: ask the slave (default) */
+#define HUBUSD_READBACK_SLAVE 1 /* ask the slave (default): REQUEST_STATE, or STATUS_CAPTURE without a state */
 #define HUBUSD_READBACK_CACHE 2 /* report the state the command establishes, without contacting the slave */
 #define HUBUSD_TOPIC_LEN 64
 
@@ -27,6 +27,8 @@ typedef struct {
     char name[HUBUSD_NAME_LEN];
     char profile[HUBUSD_PROFILE_NAME_LEN]; /* empty: recognised from SLAVE_INFO, otherwise raw topics only */
     int readback;                          /* HUBUSD_READBACK_*, -1: use bus.readback */
+    unsigned poll_interval_s;              /* read the live state (REQUEST_STATE) this often, 0: off; for slaves
+                                              that only answer and never announce changes (passive sensors) */
 } hubusd_slave_cfg_t;
 
 typedef struct {

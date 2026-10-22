@@ -4,6 +4,10 @@
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *   PB0 = relay driver / LED, active high
  *
+ * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1 (docs/SLAVE_PROPERTIES.md
+ * section 4.2). REQUEST_STATE alone would do for the readback; the event
+ * buffer adds STATUS_CAPTURE. Without feedback at all, see slave-relay-simple.
+ *
  * Application commands (SEND_COMMAND, opcode and one argument byte):
  *   0x10 <0|1>   switch the output off / on
  *   0x11         toggle the output
@@ -14,6 +18,7 @@
  *
  * Everything runs in the ISR; the main loop is idle.
  */
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <avr/sleep.h>
@@ -74,6 +79,7 @@ int main(void)
 
     DDRB |= _BV(RELAY_BIT);
     hubus_slave_init(&cfg);
+    sei();
 
     set_sleep_mode(SLEEP_MODE_IDLE);
     for (;;) {

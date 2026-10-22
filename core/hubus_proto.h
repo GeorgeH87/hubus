@@ -43,5 +43,6 @@
 #define HUBUS_INFO_APP 3u
 #define HUBUS_CAP_STATUS_CAPTURE 0x01u
 #define HUBUS_CAP_STATE 0x02u /* answers REQUEST_STATE */
+#define HUBUS_CAP_EVENTS 0x04u /* has an event buffer: announces events and answers REQUEST_DATA */
 
 #endif /* HUBUS_PROTO_H */

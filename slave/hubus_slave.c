@@ -28,13 +28,11 @@ uint8_t hubus_slave_init(const hubus_slave_config_t *cfg)
     ok = hubus_core_init(&g_core, cfg, hubus_hal_read_clk(), hubus_hal_read_data());
     if (ok) {
         hubus_hal_irq_enable();
-#ifdef __AVR__
-        sei();
-#endif
     }
     return ok;
 }
 
+#if HUBUS_ENABLE_EVENTS
 uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more)
 {
     uint8_t r;
@@ -50,3 +48,4 @@ uint8_t hubus_slave_is_pending(void)
 {
     return hubus_core_is_pending(&g_core);
 }
+#endif

@@ -11,7 +11,7 @@ The protocol is specified in `docs/` and implemented in C: a hardware-independen
 - `master/`: master logic on a HAL, plus the libgpiod HAL for the Raspberry Pi.
 - `daemon/`: `hubusd`, the master as a service with MQTT and Home Assistant integration (`docs/DAEMON.md`).
 - `test/`: unit tests, bus simulation, fault injection.
-- `examples/`: slave firmware examples (relay, switch, temperature sensor), a master command line tool, and the documented protocol sessions.
+- `examples/`: slave firmware examples (relay with and without feedback, switch, temperature sensor that announces or is only read), a master command line tool, and the documented protocol sessions.
 - `docs/`: specification and development environment (`docs/DEVELOPMENT.md` explains how to build and test).
 
 ## Goals

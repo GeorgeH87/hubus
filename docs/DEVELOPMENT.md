@@ -90,6 +90,7 @@ The same build is available through CMake presets (`host`, `avr`; see `CMakePres
 - `test_faults`: fault injection (bit errors, lost and extra clock edges, lost STOP/START, stuck line, noise in arbitration, event racing a START, duplicate MCID).
 - `test_slave_lib`: the public slave API on the host HAL.
 - `test_small_buffers`: the core compiled with small compile-time buffers.
+- `test_slave_passive`, `test_slave_command_only`: the core compiled without the event buffer, with and without the state (`SLAVE_PROPERTIES.md` section 4.2).
 
 The simulation checks two invariants in every master/fault test: a slave never changes `DATA` while `CLK` is high, and the master never undercuts its configured timing minimums.
 

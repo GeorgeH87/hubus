@@ -4,12 +4,16 @@
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
  *   PB1 = push button to ground (internal pull-up)
  *
+ * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1 (docs/SLAVE_PROPERTIES.md
+ * section 4.2).
+ *
  * Every debounced state change is written to the buffer (one byte, 1 =
  * pressed) and thereby announced to the master via the idle event handshake
  * (event, REQUEST_DATA). The current state is also exposed live: the master
  * can read it at any time with REQUEST_STATE, independent of events. A slave
  * with several buttons would expose one bit per button in the same way.
  */
+#include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <stdint.h>
@@ -52,6 +56,7 @@ int main(void)
     DDRB &= (uint8_t)~_BV(BUTTON_BIT);
     PORTB |= _BV(BUTTON_BIT); /* pull-up */
     hubus_slave_init(&cfg);
+    sei();
 
     for (;;) {
         uint8_t now = (PINB & _BV(BUTTON_BIT)) ? 0 : 1; /* active low */

@@ -139,7 +139,7 @@ So that one turnaround slot is sufficient, no slave step may require bulk proces
 ### Slave
 
 - Listens for master intents.
-- Signals pending communication on `DATA`.
+- Signals pending communication on `DATA` (slaves with an event buffer).
 - Participates in arbitration when needed.
 - Responds only when selected by master.
 - Reacts only to `CLK` edges and master line conditions; never waits on its own timer.
@@ -159,9 +159,9 @@ So that one turnaround slot is sufficient, no slave step may require bulk proces
   - read the event buffer (`REQUEST_DATA`)
   - send a command (`SEND_COMMAND`, including `STATUS_CAPTURE`)
 
-Each slave has exactly one outgoing buffer. A slave with an empty buffer ignores `REQUEST_DATA` completely and remains silent. New buffer content may overwrite unread old content.
+A slave with an event buffer has exactly one outgoing buffer. A slave with an empty buffer, or without an event buffer, ignores `REQUEST_DATA` completely and remains silent. New buffer content may overwrite unread old content. Event buffer and state are optional parts of a slave (`SLAVE_PROPERTIES.md` section 4.2).
 
-Commands are never acknowledged. If the master needs to confirm that a state was established, it reads the state back explicitly with `REQUEST_STATE`.
+Commands are never acknowledged. If the master needs to confirm that a state was established, it reads the state back explicitly with `REQUEST_STATE`. A slave with neither a state nor an event buffer cannot be read back; the master keeps the state it commanded in a cache.
 
 All addressed master commands use unified target-mask addressing.
 
@@ -170,7 +170,7 @@ All addressed master commands use unified target-mask addressing.
 - `TARGET_LEN=6` is exact single-slave addressing in v0.
 - Slaves may reject the frame early when `TARGET_LEN` and the incoming prefix bits prove a mismatch.
 
-`SEND_COMMAND` to a group is one-way (master to n slaves): no slave answers it. Anything a slave wants to report afterwards goes through the regular return path (pending flag, idle event handshake, burst). `REQUEST_INFO` and `REQUEST_DATA` with a group mask are answered by exactly one slave, the arbitration winner. See `MESSAGE_FORMAT.md` section 3.1, "Direction Rule".
+`SEND_COMMAND` to a group is one-way (master to n slaves): no slave answers it. Anything a slave wants to report afterwards goes through the regular return path (pending flag, idle event handshake, burst). `REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` with a group mask are answered by exactly one slave, the arbitration winner. See `MESSAGE_FORMAT.md` section 3.1, "Direction Rule".
 
 For a group request only slaves that can answer contend: every matching slave for `REQUEST_INFO`, every matching slave with a state for `REQUEST_STATE`, only matching slaves with pending data for `REQUEST_DATA`. The master therefore chooses with the request type whether it asks "all that exist", "all that have a state" or "only those that have something to deliver"; slaves that do not qualify drop out immediately and take no part in the arbitration. `TARGET_LEN=0` addresses all slaves.
 
@@ -212,7 +212,7 @@ A slave pulls `DATA` low (event signaling) in exactly two situations, both with 
 
 A slave signals at most once per STOP. In particular it does not signal again on the clock pulses of an idle event handshake, and not at all on a falling `CLK` edge that follows a START. Without this rule, pending slaves in different phases would keep each other's signals alive and the master could never see `DATA` released.
 
-Master side: before every START (and RESET) with `CLK` low, the master checks `DATA`. If it is low it runs the handshake first. After raising `CLK` for the condition it checks `DATA` once more: a slave that started signaling just before `CLK` rose (section 7.1) holds `DATA` low, and the master lowers `CLK` again, which releases the slave, and repeats the transaction.
+Master side: before every START (and RESET) with `CLK` low, the master checks `DATA`. If it is low it runs the handshake first. After raising `CLK` for the condition it checks `DATA` once more: a slave that started signaling just before `CLK` rose (section 7.1) holds `DATA` low. The master then completes the clock pulse (lowering `CLK` releases the slave), runs the recovery sequence (section 3.3, including a RESET) and reports a line error for the transaction. Commands and group requests are repeated within the retry budget; bursts, state reads, and the commissioning scan also retry their exactly addressed requests. A single exactly addressed request outside these sequences returns the line error, and repeating it is up to the caller.
 
 The slave has no timeout for this handshake. If no master is running, the slave keeps `DATA` low indefinitely; this is harmless and is resolved by the master startup sequence (section 3.3).
 
@@ -306,11 +306,11 @@ Rules:
 - `SLAVE_INFO` is static; nothing is cleared after `REQUEST_INFO`.
 - A state frame (`REQUEST_STATE`) is a live read; nothing is cleared after it either. Only a complete event frame (`REQUEST_DATA`) clears buffer and pending flag.
 - After a RESET the master may retry with an exactly addressed `REQUEST_DATA`, within its retry budget. When the budget is exhausted it skips the slave for the current burst; the data stays buffered and the slave announces itself again later.
+- The application cannot write the buffer while a `SLAVE_DATA` response to `REQUEST_DATA` is being transmitted: the slave library refuses the write (the application retries), so a frame never mixes old and new content. A write after the response but before the STOP is kept: the STOP does not clear content that was written after the complete response.
 
 ### Accepted Rare Cases
 
 - **STOP corrupted or missed:** the slave keeps its data and announces it again, so the master receives the same data twice. The `GEN` counter in the slave header lets the master detect the duplicate (`MESSAGE_FORMAT.md` section 4.3).
-- **Application writes the buffer during transmission:** the transmitted frame may mix old and new content, and the following STOP clears the new content. The library SHOULD prevent this cheaply (for example by deferring application writes while a response is in progress, or by not clearing if the buffer was written during transmission). Otherwise it is an accepted rare case.
 
 ## 3.5 Commissioning Scan and Duplicate MCID Detection
 
@@ -336,7 +336,9 @@ If the same MCID fails CRC repeatedly while other MCIDs respond cleanly, the mas
 
 Without a device-unique value in `SLAVE_INFO`, a duplicate MCID can remain unnoticed as long as only one of the affected slaves has buffered data, or their responses are identical. Commands addressed to that MCID reach both slaves.
 
-## 4. Protocol State Names
+## 4. Protocol Phases
+
+Phases of the bus as a whole, used in this document. They are not implementation states: the slave state machine is described in `SLAVE_PROPERTIES.md` section 2.
 
 - `IDLE`
 - `MASTER_INTENT`
@@ -362,9 +364,9 @@ Without a device-unique value in `SLAVE_INFO`, a duplicate MCID can remain unnot
 
 The protocol is generic, but the following examples define intended behavior classes:
 
-- Relay and LED slaves: receive application commands (`SEND_COMMAND`) to switch outputs on or off. To verify, the master reads the state with `REQUEST_STATE`.
+- Relay and LED slaves: receive application commands (`SEND_COMMAND`) to switch outputs on or off. To verify, the master reads the state with `REQUEST_STATE`. They need no event buffer. A relay without a state either (the smallest build) cannot be read back; the master keeps the commanded state in its cache.
 - Switch slaves: write state changes into the buffer and announce them via idle event signaling; the master collects them in a burst. The slave also exposes the current level of all its inputs as state, which the master may read at any time with `REQUEST_STATE`.
-- Temperature sensor slaves: expose the measured value as state (`REQUEST_STATE`, single slave or group). `STATUS_CAPTURE` still lets the master collect values through a burst.
+- Temperature sensor slaves: expose the measured value as state (`REQUEST_STATE`, single slave or group). A sensor that is only read needs no event buffer; the master polls it. With an event buffer, `STATUS_CAPTURE` also lets the master collect values through a burst, and the sensor can announce threshold crossings itself.
 
 These are usage examples only. The protocol does not require these exact device types.
 
@@ -377,7 +379,7 @@ The following corner cases are known and accepted in v0. They are rare and recov
 A slave decides to start idle event signaling while `CLK` is low, but the master raises `CLK` for a START before the slave's write takes effect. Other slaves then observe a `DATA` fall while `CLK` is high and interpret it as a START.
 
 - Effect: the signaling slave interprets the first frame clock ticks as confirmation ticks and releases `DATA`; the frame being sent is corrupted and fails CRC or address matching in all slaves.
-- Recovery: the master detects the corruption by reading back `DATA` while transmitting (or by a missing response), treats it as a pending event, and repeats the transaction. The next START resynchronizes all slaves.
+- Recovery: the master detects the race by `DATA` being low right after raising `CLK` for the START, or the corruption by reading back `DATA` while transmitting (or by a missing response). It runs the recovery sequence (section 3.3) and repeats the transaction as described in section 3.1. The next START resynchronizes all slaves.
 
 ### 7.2 Master Stops Mid-Transaction
 

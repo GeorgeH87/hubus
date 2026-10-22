@@ -9,7 +9,7 @@ A compliant HUBUS slave must provide:
 - `DATA` line sensing at defined sample points (rising `CLK` edge).
 - `DATA` line drive-low and release behavior; `DATA` is only changed while `CLK` is low.
 - Detection of START, STOP, and RESET line conditions (`DATA` change while `CLK` is high).
-- Idle event announce behavior by pulling `DATA` low until the first complete master clock pulse.
+- With an event buffer (section 4.2): idle event announce behavior by pulling `DATA` low until the first complete master clock pulse.
 - Arbitration participation logic, including driving the handoff slot directly after losing.
 - Target-mask match logic (`MCID` prefix + `TARGET_LEN`) for all master commands.
 - Early target filtering based on `TARGET_LEN` before full command processing.
@@ -20,15 +20,15 @@ A compliant HUBUS slave must provide:
 
 ## 2. Slave State Machine
 
-- `IDLE_LISTEN`: Wait for START. The pending flag indicates unread outgoing data.
-- `IDLE_EVENT_SIGNAL`: Hold `DATA` low to announce a pending event.
-- `RX_FRAME`: Receive the master frame after START; stop evaluating once the address does not match.
-- `TURNAROUND`: Release `DATA` for one slot; evaluate CRC, address, and buffer state.
-- `ARBITRATION_ACTIVE`: Contend with the open MCID bits (only if addressed by the group mask and able to answer: any slave for `REQUEST_INFO`, a slave with a state for `REQUEST_STATE`, a pending slave for `REQUEST_DATA`). The first arbitration slot is slot `2·TARGET_LEN` of the 12-slot pattern.
-- `ARBITRATION_HANDOFF`: Lost at the current bit; drive `DATA` low for the following handoff slot.
-- `ARBITRATION_DROPPED`: Passive until the transaction ends.
-- `SELECTED_TRANSFER`: Transmit `SLAVE_INFO` or `SLAVE_DATA` after an exactly addressed request, or directly after the last arbitration slot as the winner of a group request.
-- `IGNORE`: Not addressed, invalid frame, or nothing to send; passive until the next START, STOP, or RESET.
+The names are those of the slave library (`HUBUS_ST_*` in `core/hubus_slave_core.h`).
+
+- `IDLE`: Wait for START. The pending flag indicates unread outgoing data.
+- `EVENT`: Hold `DATA` low to announce a pending event (idle event signaling; only with the event buffer).
+- `RX`: Receive the master frame after START. A prefix mismatch is detected as soon as the bits arrive (`IGNORE`). With the CRC8 byte the frame is evaluated: CRC result, command execution for `SEND_COMMAND`, and whether the slave can answer a request (any slave for `REQUEST_INFO`, a slave with a state for `REQUEST_STATE`, a pending slave for `REQUEST_DATA`).
+- `TURN`: Turnaround slot with `DATA` released. Only a slave that answers or contends gets here.
+- `ARB`: Arbitration with the open MCID bits, starting at slot `2·TARGET_LEN` of the 12-slot pattern. A slave that loses at bit `k` remembers `k`, drives `DATA` low in handoff slot `k`, and then stays passive for the rest of the pattern. After the last slot the winner goes to `TX`, the losers to `IGNORE`. With `TARGET_LEN = 6` there are no slots and the slave goes to `TX` at once.
+- `TX`: Transmit `SLAVE_INFO` or `SLAVE_DATA` (event buffer or state).
+- `IGNORE`: Not addressed, invalid frame, nothing to send, lost arbitration, or response complete; passive until the next START, STOP, or RESET.
 
 ### Arbitration Rules
 
@@ -40,9 +40,9 @@ A compliant HUBUS slave must provide:
 
 ### Response Rules
 
-- Only `REQUEST_INFO` and `REQUEST_DATA`, exactly addressed and with valid CRC, lead to `SELECTED_TRANSFER`.
-- The response starts in the slot directly after the turnaround slot.
-- With an empty buffer, a `REQUEST_DATA` leads to `IGNORE` (the line stays released, which the master reads as "no response").
+- Only `REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` with valid CRC lead to `TX`: exactly addressed, or as the winner of a group request.
+- The response starts in the slot directly after the turnaround slot (exact request) or after the last arbitration slot (group request).
+- With an empty buffer (no pending data), a `REQUEST_DATA` leads to `IGNORE`; so does a `REQUEST_STATE` without a state. The line stays released, which the master reads as "no response".
 
 There is no slave recovery state. On a CRC failure or non-matching frame the slave simply ignores the rest of the frame and waits for the next START.
 
@@ -51,13 +51,13 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 | Condition | Slave action (from any state) |
 |---|---|
 | START | Release `DATA`, discard partial frame/arbitration/transmit state, start receiving at bit 0. |
-| STOP | Release `DATA`, go to `IDLE_LISTEN`. If a complete `SLAVE_DATA` response was transmitted in this transaction, clear the buffer and the pending flag (`PROTOCOL.md` section 3.4). |
-| RESET | Release `DATA`, reset communication stack, go to `IDLE_LISTEN`. Buffer, `GEN` counter, and pending flag are preserved (see `PROTOCOL.md` section 3.3). |
+| STOP | Release `DATA`, go to `IDLE`. If a complete `SLAVE_DATA` response to `REQUEST_DATA` was transmitted in this transaction, clear the pending flag, which empties the buffer (`PROTOCOL.md` section 3.4). |
+| RESET | Release `DATA`, reset communication stack, go to `IDLE`. Buffer, `GEN` counter, and pending flag are preserved (see `PROTOCOL.md` section 3.3). |
 
 ### Idle Event Signal Rules
 
-- The slave enters `IDLE_EVENT_SIGNAL` and pulls `DATA` low in exactly two cases: (1) the buffer is written while no data was pending and the bus is idle with `CLK` low; (2) at the first falling `CLK` edge after a STOP or RESET, if data is still pending (the slave is "armed" by the STOP/RESET and disarmed by signaling or by a START). A slave therefore signals at most once per STOP (`PROTOCOL.md` section 3.1).
-- After the first falling `CLK` edge (one complete clock pulse), the slave releases `DATA` and returns to `IDLE_LISTEN`. Releasing while `CLK` is high is not allowed, since it would look like a STOP.
+- The slave enters `EVENT` and pulls `DATA` low in exactly two cases: (1) the buffer is written while no data was pending and the bus is idle with `CLK` low; (2) at the first falling `CLK` edge after a STOP or RESET, if data is still pending (the slave is "armed" by the STOP/RESET and disarmed by signaling or by a START). A slave therefore signals at most once per STOP (`PROTOCOL.md` section 3.1).
+- After the first falling `CLK` edge (one complete clock pulse), the slave releases `DATA` and returns to `IDLE`. Releasing while `CLK` is high is not allowed, since it would look like a STOP.
 - There is no local timeout: the slave holds `DATA` low until that clock pulse arrives.
 
 ## 3. MCID Requirements
@@ -71,7 +71,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 ## 4. Buffer and Payload Constraints
 
 - Design for low RAM footprint.
-- Exactly one outgoing buffer (`MESSAGE_FORMAT.md` section 4.2) and a receive buffer for command payloads.
+- A receive buffer for command payloads and, with the event buffer (section 4.2), exactly one outgoing buffer (`MESSAGE_FORMAT.md` section 4.2).
 - Both buffer sizes are compile-time options (maximum 31 bytes each). The ATtiny85 reference build uses the full 31 bytes; smaller devices may use shorter buffers (`HARDWARE_REQUIREMENTS.md` section 4.1).
 - The accepted command payload size is announced in `SLAVE_INFO` byte 2. Longer commands are received to the end (to stay synchronized) and then ignored.
 - Writing the outgoing buffer (event data or `STATUS_CAPTURE`) sets the pending flag.
@@ -79,7 +79,7 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Every buffer write increments the 2-bit `GEN` counter, which is transmitted in the `SLAVE_DATA` header (`MESSAGE_FORMAT.md` section 4.3).
 - The application passes the `MORE` flag with each buffer write (fragmented transfers) and writes the next fragment only when the buffer is empty (`MESSAGE_FORMAT.md` section 6.1).
 - Static device info for `REQUEST_INFO` (`MESSAGE_FORMAT.md` section 4.1) can be a constant in flash and needs no RAM.
-- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM. State support is a compile-time option of the slave library (`HUBUS_ENABLE_STATE`, about 100 bytes of flash); it is left out for 2 KB devices, which then never answer `REQUEST_STATE`.
+- An optional state for `REQUEST_STATE` (`MESSAGE_FORMAT.md` section 4.4) is not copied: the application hands the library a pointer and a length, and the library reads the bytes while it transmits. It costs no buffer RAM.
 
 ## 4.1 Responses
 
@@ -87,6 +87,21 @@ There is no slave recovery state. On a CRC failure or non-matching frame the sla
 - Commands are executed without acknowledgement. No error frames exist; application errors are reported through the buffer.
 - Unknown reserved opcodes (`0x01..0x0F`) are ignored.
 - After transmitting a complete `SLAVE_DATA` response to `REQUEST_DATA`, the slave remembers this (one flag) until the transaction ends: STOP clears buffer and pending flag, RESET keeps both. A state frame (`REQUEST_STATE`) clears nothing.
+
+## 4.2 Optional Parts
+
+The event buffer and the state are independent, optional parts of a slave. The application chooses them per device type; the slave library makes both compile-time options (`HUBUS_ENABLE_EVENTS`, `HUBUS_ENABLE_STATE`, both on by default). Every combination is valid, and `SLAVE_INFO` byte 1 tells the master which parts a slave has (`MESSAGE_FORMAT.md` section 4.1).
+
+| Event buffer | State | Typical device | How the master learns the state |
+|---|---|---|---|
+| yes | yes | push button, multi-button panel | events in bursts, `REQUEST_STATE` at any time |
+| yes | no | simple event source | events in bursts, `STATUS_CAPTURE` |
+| no | yes | sensor that is only read, relay | `REQUEST_STATE` (the master polls if it needs current values) |
+| no | no | relay without feedback | not at all: the master keeps the state it commanded in a cache |
+
+- **Without the event buffer** the slave never speaks on its own: no idle event signaling, no `REQUEST_DATA` response (it behaves like a slave with an empty buffer), no `STATUS_CAPTURE` (the opcode is ignored). The library leaves out the outgoing buffer, `GEN`, `MORE`, and the pending flag, and the application has no write function. On the ATtiny85 this saves about 500 bytes of flash and 39 bytes of RAM (reference firmware, including its capture and write code).
+- **Without the state** the slave ignores `REQUEST_STATE` (about 100 bytes of flash and 3 bytes of RAM).
+- **Without both** the slave only executes commands and answers `REQUEST_INFO`. The master cannot read anything back; the state it reports is the one it commanded. A command that did not arrive or was not executed stays unnoticed; this is accepted for such devices.
 
 ## 5. No Timeouts on the Slave
 
@@ -107,7 +122,6 @@ If the master clock stops mid-transfer, the slave stays in its current state. Th
 - Protocol logic lives in a hardware-independent core shared by all devices (and by host-side tests). Each device family has a small HAL for pin access and interrupt setup (`HARDWARE_REQUIREMENTS.md` section 4.1).
 - Both `CLK` and `DATA` raise pin change/edge interrupts. The handler evaluates the pin state: a `CLK` edge is a bit event; a `DATA` change while `CLK` is high is a START/STOP; a `DATA` change while `CLK` is low (including the slave's own writes) is ignored.
 - On the ATtiny85 both pins share one pin change vector; the handler compares the pin state with the previous one to see which line changed. Other devices may use one vector per port or per pin; the HAL hides this.
-- Precompute MCID bit masks for arbitration speed.
 
 ## 7. Example Slave Categories
 

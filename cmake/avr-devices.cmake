@@ -2,7 +2,7 @@
 # Any other pins can be set with -DHUBUS_CLK_PORT=... (see slave/hubus_slave_config.h).
 
 function(hubus_avr_default_pins mcu out_clk_port out_clk_pin out_data_port out_data_pin)
-    if(mcu MATCHES "^attiny(25|45|85)$")
+    if(mcu MATCHES "^attiny(25|45|85|2313a?|4313)$")
         set(cp B)
         set(cn 2)
         set(dp B)
@@ -12,7 +12,7 @@ function(hubus_avr_default_pins mcu out_clk_port out_clk_pin out_data_port out_d
         set(cn 0)
         set(dp B)
         set(dn 1)
-    elseif(mcu MATCHES "^attiny(24a?|44a?|84a?|441|841|261a?|461a?|861a?|202|204|212|214|402|404|412|414|804|814|1604|1614|1624|3216|3224|424|824)$")
+    elseif(mcu MATCHES "^attiny(24a?|44a?|84a?|441|841|261a?|461a?|861a?|1634|202|204|212|214|402|404|412|414|804|814|1604|1614|1616|1624|3216|3217|3224|424|824)$")
         set(cp A)
         set(cn 2)
         set(dp A)

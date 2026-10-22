@@ -151,7 +151,7 @@ static read_fault_t rf;
 /* Number of response bits the slave has put on the line so far. */
 static unsigned tx_bits_driven(const hubus_slave_core_t *c)
 {
-    return (unsigned)c->tx_idx * 8u - c->tx_nbits;
+    return (unsigned)c->idx * 8u - c->nbits;
 }
 
 static uint8_t tx_bit_filter(hubus_sim_t *sim, uint8_t level, void *ctx)

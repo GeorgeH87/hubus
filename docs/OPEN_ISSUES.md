@@ -21,7 +21,7 @@ No open specification issues. Remaining items are hardware measurements (section
 ### H3: Concrete Timing Values
 
 - **Status:** open
-- **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, `T_SAMPLE`, `T_GUARD`, the line-fault threshold, and the pull-up value have no concrete values.
+- **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, `T_SAMPLE`, the line-fault threshold, and the pull-up value have no concrete values.
 - **Direction:** Derive `T_CLK_LOW` from measured slave ISR latency; freeze after first hardware experiments.
 
 ## 3. Slave Library (`slave/`, `core/`)

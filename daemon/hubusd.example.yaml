@@ -33,8 +33,9 @@ mqtt:
   stats_interval_s: 60               # 0 = only on request
 
 bus:
-  readback: slave         # state reported after a command: slave (default: STATUS_CAPTURE, ask the slave),
-                          # cache (the state the command establishes, slave is not contacted), none
+  readback: slave         # state reported after a command: slave (default: ask the slave with REQUEST_STATE,
+                          # or STATUS_CAPTURE without a state), cache (the state the command establishes,
+                          # slave is not contacted), none
   ping_interval_s: 30     # availability check per slave, 0 = off
   ping_failures: 3        # missed checks before a slave is offline
   scan_interval_s: 300    # look for unconfigured slaves, 0 = only at start
@@ -49,6 +50,11 @@ slaves:
   - mcid: 7
     name: Cellar temperature
     readback: cache       # per-slave override of bus.readback (slave | cache | none)
+  - mcid: 4
+    name: Pump relay      # examples/slave-relay-simple: no state to read back, so its state comes from the cache
+  - mcid: 8
+    name: Attic temperature
+    poll_interval_s: 60   # examples/slave-sensor-passive never announces changes: read its state every minute, 0 = off
 
 # Profiles for custom firmware. Built in: relay (type 0x01), switch (0x02), temperature (0x03).
 # profiles:

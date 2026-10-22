@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Arbitration decides which of several slaves answers a group `REQUEST_INFO` or `REQUEST_DATA`, on a shared `DATA` line without active bus arbitration hardware. The winner sends its response frame in the same transaction. Combined with handoff slots, the arbitration also tells the master where in the MCID space further matching slaves are located, so a burst (pending slaves) or a commissioning scan (all slaves) can serve all of them in priority order.
+Arbitration decides which of several slaves answers a group `REQUEST_STATE`, `REQUEST_INFO`, or `REQUEST_DATA`, on a shared `DATA` line without active bus arbitration hardware. The winner sends its response frame in the same transaction. Combined with handoff slots, the arbitration also tells the master where in the MCID space further matching slaves are located, so a burst (pending slaves) or a commissioning scan (all slaves) can serve all of them in priority order.
 
 ## 2. Fixed Semantics
 

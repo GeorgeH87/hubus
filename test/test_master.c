@@ -463,7 +463,7 @@ static void test_request_info_roundtrip(void)
     TEST_ASSERT_EQUAL_UINT8(9, f.mcid);
     TEST_ASSERT_EQUAL_UINT8(7, f.len);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_PROTOCOL_VERSION, f.payload[HUBUS_INFO_VERSION]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, f.payload[HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, f.payload[HUBUS_INFO_CAPS]);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, f.payload[HUBUS_INFO_MAX_CMD]);
     TEST_ASSERT_EQUAL_UINT8(0xC3, f.payload[HUBUS_INFO_APP + 3]);
     assert_bus_idle();
@@ -647,8 +647,8 @@ static void test_scan_finds_all_present_slaves(void)
         unsigned expect = (mcid == 5 || mcid == 17 || mcid == 63) ? HUBUS_SCAN_PRESENT : HUBUS_SCAN_ABSENT;
         TEST_ASSERT_EQUAL_UINT(expect, scan.state[mcid]);
     }
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, scan.info[5].payload[HUBUS_INFO_CAPS]);
-    TEST_ASSERT_EQUAL_UINT8(0, scan.info[17].payload[HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, scan.info[5].payload[HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, scan.info[17].payload[HUBUS_INFO_CAPS]);
     TEST_ASSERT_EQUAL_UINT8(0x3F, scan.info[63].payload[HUBUS_INFO_APP + 3]);
     assert_bus_idle();
 }
@@ -694,7 +694,7 @@ static void test_scan_needs_about_one_transaction_per_slave(void)
     TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[17]);
     TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_PRESENT, scan.state[63]);
     TEST_ASSERT_EQUAL_UINT(HUBUS_SCAN_ABSENT, scan.state[6]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_STATUS_CAPTURE, scan.info[5].payload[HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, scan.info[5].payload[HUBUS_INFO_CAPS]);
     TEST_ASSERT_EQUAL_UINT8(0x3F, scan.info[63].payload[HUBUS_INFO_APP + 3]);
     assert_bus_idle();
 }

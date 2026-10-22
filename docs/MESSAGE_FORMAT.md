@@ -47,7 +47,7 @@ Properties:
 | `10` | `REQUEST_DATA` | exact or group | Read the **event buffer** (a state change or a message the slave wants to deliver). Exact: the addressed slave sends `SLAVE_DATA` with the content of its buffer; silent if the buffer is empty. Group: only matching slaves **with pending data** arbitrate; all others drop out at once. The winner sends its `SLAVE_DATA` in the same transaction. |
 | `11` | `SEND_COMMAND` | exact or group | Execute the command. **Never a response**, regardless of addressing. |
 
-`REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins.
+`REQUEST_STATE`, `REQUEST_INFO`, and `REQUEST_DATA` carry `LEN = 0` in v0; other values are reserved. Slaves still receive all `LEN` payload bytes and the CRC8 so they know where the frame ends and the turnaround slot begins. A v0 slave includes such payload bytes in the CRC check, otherwise ignores them, and answers as if `LEN` were `0`.
 
 All master type codes are in use. Future protocol functions are added as reserved `SEND_COMMAND` opcodes (section 3.0), not as new types.
 
@@ -78,7 +78,7 @@ A slave ignores a `SEND_COMMAND` whose payload exceeds its configured maximum (a
 
 ## 3.1 Unified Target Mask Addressing
 
-All master-to-slave commands (`REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For a group `REQUEST_INFO`/`REQUEST_DATA`, the mask selects which slaves contend in the arbitration; the master uses this to request the prefix groups derived from handoff slots.
+All master-to-slave commands (`REQUEST_STATE`, `REQUEST_INFO`, `REQUEST_DATA`, `SEND_COMMAND`) use the same target-mask rule. For a group `REQUEST_STATE`/`REQUEST_INFO`/`REQUEST_DATA`, the mask selects which slaves contend in the arbitration; the master uses this to request the prefix groups derived from handoff slots.
 
 The frame carries:
 
@@ -140,13 +140,13 @@ Static metadata, typically a constant in flash.
 | Byte | Content |
 |---|---|
 | 0 | HUBUS protocol version |
-| 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; other bits reserved (0) |
+| 1 | Capability flags: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); other bits reserved (0). Bit 0 requires bit 2. |
 | 2 | Maximum command payload the slave accepts, in bytes (`1..31`; ATtiny85 reference build: 31) |
 | 3.. | Application-defined (for example device type, firmware version). SHOULD include a device-unique value (for example a serial number) so the master's commissioning scan reliably detects duplicate MCIDs (`PROTOCOL.md` section 3.5). |
 
 ### 4.2 Slave Buffer and `SLAVE_DATA`
 
-Each slave has exactly one buffer for outgoing data.
+A slave with an event buffer has exactly one buffer for outgoing data. The event buffer is optional (`SLAVE_PROPERTIES.md` section 4.2): a slave without it never announces anything, never answers `REQUEST_DATA` (like a slave whose buffer is empty), and does not support `STATUS_CAPTURE`. It clears capability bits 0 and 2.
 
 - The application writes event data into it (for example a switch change), or the slave fills it on `STATUS_CAPTURE` with the current status provided by the application.
 - Writing the buffer sets the pending flag.
