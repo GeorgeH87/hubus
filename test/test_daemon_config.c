@@ -99,6 +99,11 @@ static const char *full_config =
     "  cond_us: 90\n"
     "  turnaround_us: 300\n"
     "  retry_budget: 4\n"
+    "  line_fault_ticks: 400\n"
+    "  follow_fragments: false\n"
+    "  max_fragments: 8\n"
+    "  duplicate_threshold: 5\n"
+    "  line_problem_count: 6\n"
     "mqtt:\n"
     "  host: broker.local\n"
     "  port: 8883\n"
@@ -136,6 +141,11 @@ static void test_full_configuration(void)
     TEST_ASSERT_EQUAL_UINT(90000, cfg.master.t_cond_ns);
     TEST_ASSERT_EQUAL_UINT(300000, cfg.master.t_turnaround_ns);
     TEST_ASSERT_EQUAL_UINT(4, cfg.master.retry_budget);
+    TEST_ASSERT_EQUAL_UINT(400, cfg.master.line_fault_ticks);
+    TEST_ASSERT_EQUAL_UINT(0, cfg.master.follow_more);
+    TEST_ASSERT_EQUAL_UINT(8, cfg.master.max_fragments);
+    TEST_ASSERT_EQUAL_UINT(5, cfg.master.dup_fail_threshold);
+    TEST_ASSERT_EQUAL_UINT(6, cfg.master.line_problem_count);
     TEST_ASSERT_EQUAL_STRING("broker.local", cfg.mqtt.host);
     TEST_ASSERT_EQUAL_INT(8883, cfg.mqtt.port);
     TEST_ASSERT_TRUE(cfg.mqtt.tls);

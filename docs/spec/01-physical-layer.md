@@ -37,9 +37,10 @@ The master defines all timing; slaves have no time base and no timing constants 
 
 | Parameter | Meaning |
 |---|---|
-| `T_CLK` | Clock period. |
+| `T_CLK` | Clock period: `T_CLK_LOW` plus `T_CLK_HIGH`, at least. |
 | `T_CLK_LOW` | Minimum `CLK` low time. Covers the interrupt latency of the slowest slave plus the time it needs to update `DATA` after the falling edge. |
-| `T_SAMPLE` | Sample point of the master after the rising edge. |
+| `T_CLK_HIGH` | Minimum `CLK` high time. Must not be shorter than `T_SAMPLE`. |
+| `T_SAMPLE` | Sample point of the master after the rising edge; not later than `T_CLK_HIGH`. |
 | `T_COND` | Minimum `CLK` high time around the `DATA` transition of a line condition ([§2.2](02-line-conditions.md#22-generating-conditions)), so that every slave sees it. |
 | `T_TURNAROUND` | Minimum `CLK` low time before the first slot after a turnaround slot ([§3.2](03-transactions.md#32-turnaround-slot)): time for the slave to evaluate the frame and prepare its first bit. |
 | line-fault threshold | Number of clock ticks after which a `DATA` line that stays low is a hardware fault; at least one maximum frame length ([§6.6](06-operation.md#66-startup-shutdown-and-recovery)). |

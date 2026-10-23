@@ -15,6 +15,7 @@ sudo install -D daemon/hubusd.example.yaml /etc/hubus/hubusd.yaml
 sudo install daemon/hubusd.service /etc/systemd/system/
 sudo useradd -r -G gpio hubus
 hubusd --check -c /etc/hubus/hubusd.yaml       # validates the file and prints warnings
+hubusd --version                               # prints the version; -v: verbose logging (info messages)
 sudo systemctl enable --now hubusd
 journalctl -u hubusd -f
 ```
@@ -45,6 +46,34 @@ slaves:
   - mcid: 5
     name: Door button
 ```
+
+### Timing
+
+The `timing` section configures the clock and the retry behaviour of the master ([§1.4](spec/01-physical-layer.md#14-timing-parameters)). All times are **minimums** in microseconds; the bus can only get slower than configured, never faster.
+
+| Key | Default | Range | Meaning |
+|---|---|---|---|
+| `clk_low_us` | 50 | 1 to 10000000 | Minimum `CLK` low time (`T_CLK_LOW`). |
+| `clk_high_us` | 50 | 1 to 10000000 | Minimum `CLK` high time (`T_CLK_HIGH`). |
+| `sample_us` | 25 | 1 to `clk_high_us` | Sample point of `DATA` after the rising edge (`T_SAMPLE`). A larger value than `clk_high_us` is a configuration error. |
+| `cond_us` | 50 | 1 to 10000000 | `CLK` high time around the `DATA` change of START and STOP (`T_COND`). |
+| `turnaround_us` | 200 | 1 to 10000000 | `CLK` low time after the turnaround slot (`T_TURNAROUND`); raised to `clk_low_us` if smaller. |
+| `line_fault_ticks` | 300 | 280 to 65000 | Clock ticks of a `DATA` line stuck low before it is a line fault; at least one maximum frame. |
+| `retry_budget` | 2 | 0 to 20 | Retries of a failed `REQUEST_DATA` within a burst. |
+| `follow_fragments` | true | true, false | Request the next fragment right after `MORE = 1`. |
+| `max_fragments` | 32 | 1 to 255 | Consecutive fragments of one slave per burst. |
+| `duplicate_threshold` | 3 | 1 to 100 | Consecutive CRC failures of one MCID that make it a suspect for a duplicate MCID. |
+| `line_problem_count` | 3 | 1 to 100 | If more MCIDs than this are suspects at the same time, the diagnosis is a line problem instead of a duplicate MCID. |
+
+The clock period is `clk_low_us + clk_high_us`: 100 µs with the defaults, which is about 10 kbit/s on the wire. The throughput is lower because of the turnaround slots, the arbitration, and the line conditions between transactions. A bit-banged clock in user space only meets the minimums; with `gpio.realtime` set, the scheduling jitter stays small and the real period stays close to the configured one.
+
+To adapt the bus:
+
+- **Slower slaves, long wires, or interference:** raise `clk_low_us` (the slave needs it for its interrupt latency and for updating `DATA`) and `turnaround_us`. Slaves running at 1 MHz are the usual limit; the values must suit the slowest slave on the bus.
+- **Faster bus:** lower `clk_low_us`, `clk_high_us`, and `sample_us` together, keeping `sample_us <= clk_high_us`, and watch the statistics for CRC errors ([Statistics and Diagnosis](#statistics-and-diagnosis)).
+- The defaults are conservative placeholders until measured on hardware ([open issues](project/open-issues.md#h3-concrete-timing-values)). Changes need a restart of the daemon.
+
+The `gpio` section selects the chip by label (`chip`, preferred) or device path (`path`), the offsets of `clk` and `data` (different lines), `realtime` (`SCHED_FIFO` priority 1 to 99, 0 = off, needs `CAP_SYS_NICE`), and `internal_pullup` (the SoC pull-up on `DATA`, for bench tests only; use an external pull-up).
 
 Slaves are recognised from the first application byte of their `SLAVE_INFO` (device type 1 relay, 2 switch, 3 temperature, as in the [examples](slave-library.md#examples)), so `profile:` is optional for them. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
 

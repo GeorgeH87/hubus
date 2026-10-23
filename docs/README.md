@@ -17,6 +17,7 @@
 | [8. Faults](spec/08-faults.md) | Fault scenarios and accepted rare cases |
 | **Implementation and operation** | |
 | [Slave library](slave-library.md) | API, optional parts, configuration, supported devices, footprint, examples |
+| [Master library](master-library.md) | API of the master: HAL, startup, bursts, transactions, commissioning, diagnosis, protocol helpers |
 | [hubusd](daemon.md) | The master as an MQTT service: installation, configuration, topics, Home Assistant |
 | [Development](development.md) | Toolchain, build and test, documentation tools |
 | **Project** | |
@@ -29,6 +30,7 @@
 - **Getting to know HUBUS:** [overview](overview.md), then [§3](spec/03-transactions.md) and [§6](spec/06-operation.md).
 - **Writing slave firmware:** [§7](spec/07-slave.md) and the [slave library](slave-library.md); the other chapters as referenced.
 - **Implementing the protocol:** the specification in chapter order.
+- **Writing a master application:** the [master library](master-library.md).
 - **Running a bus:** [hubusd](daemon.md).
 - **Working on the code:** [development](development.md).
 
