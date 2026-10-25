@@ -28,6 +28,10 @@
 #endif
 #define MCID_EEPROM ((uint8_t *)E2END)
 
+/* Word 0 of the flash, in the same image as the updater (linked to address 0): a freshly programmed device starts
+ * the updater. Every loaded application keeps this jump in its first page. */
+const uint16_t hubus_reset_vector __attribute__((section(".hubus_reset"), used)) = HUBUS_UPD_RESET_RJMP;
+
 uint8_t hubus_upd_flash_read(uint16_t addr)
 {
     return pgm_read_byte(addr);

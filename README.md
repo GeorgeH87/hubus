@@ -18,6 +18,7 @@ The protocol is specified in [`docs/`](docs/README.md) and implemented in C: a h
 |---|---|
 | `core/` | Protocol code without hardware access: CRC, frames, arbitration, slave state machine |
 | `slave/` | Slave library with one HAL per device family |
+| `updater/` | Updater for firmware updates over the bus (optional, devices with 8 KB of flash) |
 | `master/` | Master logic on a HAL, and the libgpiod HAL for the Raspberry Pi |
 | `daemon/` | `hubusd`, the master as an MQTT service |
 | `test/` | Unit tests, bus simulation, fault injection |

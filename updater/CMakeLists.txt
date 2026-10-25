@@ -17,7 +17,9 @@ if(HUBUS_AVR_MCU STREQUAL "attiny85")
         HUBUS_UPD_ADDR=${HUBUS_UPDATER_ADDR} HUBUS_UPDATER_MCID=${HUBUS_UPDATER_MCID})
     # Link-time optimisation brings the updater from about 2200 to about 2000 bytes, below the 2 KB it has.
     target_compile_options(hubus_updater PRIVATE ${HUBUS_WARNINGS} -flto)
-    target_link_options(hubus_updater PRIVATE -flto -Wl,--section-start=.text=${HUBUS_UPDATER_ADDR})
+    # .hubus_reset is the reset vector at address 0 that points to the updater (hubus_updater_avr.c).
+    target_link_options(hubus_updater PRIVATE -flto -Wl,--section-start=.text=${HUBUS_UPDATER_ADDR}
+        -Wl,--section-start=.hubus_reset=0 -Wl,--undefined=hubus_reset_vector)
     set_target_properties(hubus_updater PROPERTIES SUFFIX ".elf")
 
     # It must fit between its address and the end of flash.

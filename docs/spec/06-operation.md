@@ -1,6 +1,6 @@
 # 6. Operation
 
-This chapter describes the procedures the master runs on top of the transactions: collecting events, reading states, finding slaves, and bringing the bus into a defined state. All of them are master-side; a slave only reacts to clock edges and line conditions ([§7.6](07-slave.md#76-no-timeouts)).
+This chapter describes the procedures the master runs on top of the transactions: collecting events, reading states, finding slaves, bringing the bus into a defined state, and updating slave firmware. All of them are master-side; a slave only reacts to clock edges and line conditions ([§7.6](07-slave.md#76-no-timeouts)).
 
 ## 6.1 Idle Event Handshake
 
@@ -157,3 +157,101 @@ sequenceDiagram
 - The capture command reaches all four slaves; none of them answers it ([§4.5](04-frames.md#45-addressing)). Slaves without `STATUS_CAPTURE` or without event buffer ignore the opcode ([§4.4](04-frames.md#44-command-opcodes)).
 - Each request goes to the group of its mask, and only pending slaves of that group contend; the arrows point to the winner.
 - A captured status may still be overwritten by a newer write before the master collects it; the master sees that as a `GEN` gap ([§4.9](04-frames.md#49-generation-counter-gen)).
+
+## 6.8 Firmware Update
+
+A slave MAY be able to receive a new application over the bus. This is an optional part ([§7.4](07-slave.md#74-optional-parts)): it needs a second firmware on the device, the **updater**, which takes the new application page by page and writes it into flash. Devices without enough flash leave it out; a slave announces in `SLAVE_INFO` byte 1 which side it is ([§4.7](04-frames.md#47-slave-info-slave_info)):
+
+| Capability bit | Meaning |
+|---|---|
+| 3, update | The running application switches to its updater on `UPDATE_ENTER`. |
+| 4, updater | The updater is running and takes the update commands. |
+
+A slave never sets both. The updater is a slave like any other: same MCID, same protocol, no event buffer, a state, and its own `SLAVE_INFO`.
+
+### Commands
+
+| Opcode | Name | Arguments | Taken by | Effect |
+|---|---|---|---|---|
+| `0x01` | `UPDATE_ENTER` | `0x55 0x50` | application (bit 3) | Switch to the updater at once. Only with exact addressing (`TARGET_LEN = 6`) and exactly these two key bytes; otherwise ignored. |
+| `0x02` | `UPDATE_LOAD` | `offset data…` | updater | Copy `data` into the page buffer at `offset`. A load that does not fit into the page is ignored. |
+| `0x03` | `UPDATE_WRITE` | `addr_hi addr_lo crc_hi crc_lo` | updater | Write the page buffer to the flash page at byte address `addr`, after the STOP of the transaction. |
+| `0x04` | `UPDATE_LEAVE` | – | updater | Reset after the STOP of the transaction; the updater then starts the application if it is valid. |
+
+- Every other slave ignores these opcodes as unknown reserved opcodes ([§4.4](04-frames.md#44-command-opcodes)), so a misdirected command does no harm. An application without bit 3 ignores `UPDATE_ENTER`; the updater ignores `0x10..0xFF`.
+- The exact addressing and the key keep a broadcast or a stray frame from switching slaves into their updaters.
+- `UPDATE_WRITE` checks before writing: `addr` is the start of a page inside the application area, the CRC-16 ([below](#integrity)) of the whole page buffer equals `crc`, and with the reset vector rule the page at address 0 starts with the required jump. Otherwise nothing is written.
+- A flash write halts the CPU on classic tinyAVR devices. The updater writes only after the STOP, and the master keeps the bus quiet for the write time the updater announces: no clock, no transaction.
+
+### Updater Information
+
+The application bytes of the updater's `SLAVE_INFO`, multi-byte values big-endian:
+
+| Byte | Content |
+|---|---|
+| 0–2 | Device signature, for example `1E 93 0B` for the ATtiny85 |
+| 3 | Flash page size in bytes; `0` means 256 |
+| 4–5 | First byte of the application area |
+| 6–7 | Size of the application area in bytes, including the info page |
+| 8 | Write time in milliseconds: how long the master waits after `UPDATE_WRITE` |
+| 9 | Flags: bit 0 = reset vector rule (below) |
+| 10–11 | Byte address of the updater |
+| 12 | Updater version |
+
+The state of the updater (`REQUEST_STATE`) has four bytes: the result of the last `UPDATE_WRITE` (`0` none yet, `1` written, `2` CRC mismatch, `3` address outside the application area or not page-aligned, `4` reset vector rule violated), its address (2 bytes), and a counter that increments with every executed `UPDATE_WRITE`. The counter tells the master whether its write was executed at all.
+
+### Info Page
+
+The last page of the application area describes the application; the rest of the page is `FF`.
+
+| Byte | Content |
+|---|---|
+| 0–1 | `48 42` (`HB`) |
+| 2–3 | Length of the application in bytes, from the start of the area |
+| 4–5 | CRC-16 over the application as stored in flash |
+| 6–7 | Word address of the application's reset code |
+
+At every reset the updater checks the info page: the magic bytes, a length that fits in front of the info page, an entry inside the application, and the CRC-16 over the stored application. If all of it holds, it jumps to the entry; otherwise it stays and waits for the master. An application that is incomplete or damaged therefore never starts, and the slave always remains reachable through its updater.
+
+**Reset vector rule** (flag bit 0). On classic tinyAVR the interrupt vector table at address 0 belongs to the application, and the device always starts at address 0. The first word of the application area is therefore a relative jump (`RJMP`) to the updater, and the application's own reset target goes into the info page. The master replaces the first word of the image and computes the entry; the updater refuses a first page without this jump.
+
+### Procedure
+
+```mermaid
+sequenceDiagram
+    participant M as Master
+    participant S as Slave
+    M->>S: REQUEST_INFO
+    S-->>M: application, capability bit 3
+    M->>S: UPDATE_ENTER 0x55 0x50 (exact)
+    Note over S: jumps to its updater
+    M->>S: REQUEST_INFO (repeated until bit 4)
+    S-->>M: updater: signature, page size, area, write time
+    M->>S: LOAD … WRITE info page with FF (invalidate)
+    loop every page of the image, the first page last
+        M->>S: UPDATE_LOAD (several), UPDATE_WRITE addr crc
+        Note over M,S: master waits the write time
+        M->>S: REQUEST_STATE
+        S-->>M: written, addr, counter + 1
+    end
+    M->>S: LOAD … WRITE info page
+    M->>S: UPDATE_LEAVE
+    Note over S: reset, checks the application, starts it
+    M->>S: REQUEST_INFO (repeated until bit 4 is gone)
+```
+
+1. The master reads `SLAVE_INFO`. With bit 3 it sends `UPDATE_ENTER` and asks again until the updater answers (bit 4); with bit 4 the updater already runs.
+2. It checks the image against the updater information: signature, size (at most the application area without the info page), and with the reset vector rule a first word that is an `RJMP`.
+3. It writes the info page with `FF` first: from now on the old application is invalid, and an interruption leaves the slave in its updater.
+4. It writes every page of the image, the first page last, and after each write reads the state: the result must be `1`, the address that of the page, and the counter one higher than before. Otherwise it loads and writes the page again, within its retry budget.
+5. It writes the info page, sends `UPDATE_LEAVE`, and asks for `SLAVE_INFO` until the application answers. If the updater answers again, `UPDATE_LEAVE` was lost or the application did not check out; the master repeats `UPDATE_LEAVE` within its retry budget and otherwise reports the failure.
+
+The master owns the bus during an update. Other slaves keep their pending data and announce it afterwards ([§6.1](#61-idle-event-handshake)).
+
+### Integrity
+
+Pages and the application are protected by CRC-16/CCITT-FALSE (polynomial `0x1021`, initial value `FFFF`, no final XOR, not reflected, check value `29B1` for ASCII `"123456789"`), on top of the CRC8 of every frame. A lost or corrupted `UPDATE_LOAD` shows as a CRC mismatch of the page, a lost `UPDATE_WRITE` as an unchanged counter; both lead to a repeated page. The CRC-16 over the whole application at every reset also catches pages the master never wrote and later flash corruption.
+
+### MCID
+
+The updater answers to the MCID of the application. The application hands it over when it switches; the updater keeps it for the next time it starts without a valid application. How it keeps it is up to the implementation; the HUBUS updater uses the last byte of the EEPROM ([slave library](../slave-library.md#firmware-update)).

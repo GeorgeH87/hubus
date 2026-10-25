@@ -89,6 +89,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [ ] Measure clock rate and jitter on Pi 3, Pi 4, and Pi 5 ([H2](docs/project/open-issues.md#h2-master-clock-implementation)).
 - [ ] Determine concrete timing values and the pull-up value; update [§1.4](docs/spec/01-physical-layer.md#14-timing-parameters) ([H3](docs/project/open-issues.md#h3-concrete-timing-values)).
 - [ ] Multi-node test with mixed device families (`v0-multi` milestone).
+- [ ] Firmware update on an ATtiny85: install the updater, load an application over the bus, interrupt an update ([open issues](docs/project/open-issues.md#firmware-update)).
 - [ ] Optional: sigrok protocol decoder for HUBUS.
 
 ## 10. Master Daemon (`hubusd`, MQTT)
@@ -103,3 +104,13 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] Readback from the cache for slaves that cannot be read back; periodic state reads (`poll_interval_s`).
 - [x] systemd unit, installation notes.
 - [ ] End-to-end test on hardware (Raspberry Pi, relay ATtiny, button ATtiny) and Home Assistant.
+
+## 11. Firmware Update
+
+- [x] Specification: capability bits 3 and 4, update opcodes, updater information, info page ([§6.8](docs/spec/06-operation.md#68-firmware-update)).
+- [x] Slave library option `HUBUS_ENABLE_UPDATE`: hand-over to the updater.
+- [x] Updater for classic tinyAVR (ATtiny85, 2 KB at the end of flash).
+- [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of the master example.
+- [x] Bus simulation test with bit errors and an interrupted update.
+- [ ] Updater for the tinyAVR 0/1/2-series (protected boot section).
+- [ ] Updates from hubusd over MQTT.

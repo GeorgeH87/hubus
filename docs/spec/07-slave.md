@@ -79,6 +79,8 @@ The event buffer ([§4.8](04-frames.md#48-event-buffer)) and the state ([§4.10]
 
 The slave library makes both parts build options; their cost in flash and RAM is listed in [slave library: optional parts](../slave-library.md#optional-parts).
 
+**Firmware update** is a third optional part, independent of the two above ([§6.8](06-operation.md#68-firmware-update)). It consists of the updater, a second firmware that stays on the device, and, in the application, the switch to it on `UPDATE_ENTER` (capability bit 3). It costs the flash of the updater, about 2 KB, which is why it suits devices with 8 KB of flash or more; smaller devices leave it out and are programmed in-system as before.
+
 ## 7.5 Buffers and Resources
 
 - A receive buffer for command payloads and, with the event buffer, exactly one outgoing buffer. Both sizes are build options of at most 31 bytes; the accepted command size is announced in `SLAVE_INFO` byte 2 ([§4.7](04-frames.md#47-slave-info-slave_info)).
