@@ -277,6 +277,28 @@ static void test_application_command(void)
     TEST_ASSERT_EQUAL_UINT8(2, last_len);
 }
 
+static void test_idle_only_between_transactions(void)
+{
+    hubus_slave_config_t cfg = config(7);
+    const uint8_t cmd[] = {0x25};
+
+    TEST_ASSERT_TRUE(hubus_slave_init(&cfg));
+    TEST_ASSERT_TRUE(hubus_slave_is_idle());
+    start();
+    TEST_ASSERT_FALSE(hubus_slave_is_idle());
+    send_frame(HUBUS_M_SEND_COMMAND, HUBUS_TARGET_LEN_EXACT, 7, cmd, 1);
+    TEST_ASSERT_EQUAL_UINT(1, commands);
+    TEST_ASSERT_FALSE(hubus_slave_is_idle()); /* the callback ran, the STOP is still to come */
+    stop();
+    TEST_ASSERT_TRUE(hubus_slave_is_idle());
+
+    start(); /* a transaction for another slave */
+    send_frame(HUBUS_M_SEND_COMMAND, HUBUS_TARGET_LEN_EXACT, 9, cmd, 1);
+    TEST_ASSERT_FALSE(hubus_slave_is_idle());
+    stop();
+    TEST_ASSERT_TRUE(hubus_slave_is_idle());
+}
+
 static void test_group_request_arbitration_with_mcid_7(void)
 {
     hubus_slave_config_t cfg = config(7); /* 000111 */
@@ -337,6 +359,7 @@ int main(void)
     RUN_TEST(test_request_info);
     RUN_TEST(test_status_capture_callback_writes_the_buffer_from_the_isr);
     RUN_TEST(test_application_command);
+    RUN_TEST(test_idle_only_between_transactions);
     RUN_TEST(test_group_request_arbitration_with_mcid_7);
     RUN_TEST(test_write_limits_and_busy);
     return UNITY_END();

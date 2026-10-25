@@ -32,6 +32,11 @@ uint8_t hubus_slave_init(const hubus_slave_config_t *cfg)
     return ok;
 }
 
+uint8_t hubus_slave_is_idle(void)
+{
+    return hubus_core_is_idle(&g_core);
+}
+
 #if HUBUS_ENABLE_EVENTS
 uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more)
 {

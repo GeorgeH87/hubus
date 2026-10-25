@@ -62,6 +62,14 @@ uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more);
 uint8_t hubus_slave_is_pending(void);
 #endif /* HUBUS_ENABLE_EVENTS: a slave without the event buffer never speaks on its own */
 
+/*
+ * 1 between transactions: the last transaction ended with STOP or RESET and no
+ * START followed. A command callback runs before the STOP of its transaction;
+ * work that must not miss pin changes (interrupts disabled for longer than a
+ * clock phase) waits for this.
+ */
+uint8_t hubus_slave_is_idle(void);
+
 /* Pin change handler; called by the HAL vectors (and by host tests). */
 void hubus_slave_isr(void);
 

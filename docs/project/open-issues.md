@@ -20,6 +20,12 @@ What is still open. The specification is complete except for values that can onl
 - **Problem:** the default buffer size of 20 bytes for devices with 128 B RAM rests on an estimate of the interrupt path's stack use (about 40–50 bytes, from the compiler's stack usage report), not on a measurement ([slave library](../slave-library.md#supported-devices)).
 - **Direction:** measure the maximum stack depth in `simavr`.
 
+## Quiet Time After a Command
+
+- **Status:** open.
+- **Problem:** a slave that has to disable interrupts for longer than a clock phase, like the LED strip slave during `SHOW` ([example](../example-ledstrip.md#timing)), misses edges if the master keeps clocking. hubusd sends queued commands, pings, and bursts back to back and has no way to pause the bus after a given command.
+- **Direction:** a per-slave setting in hubusd, for example `quiet: {opcode: 0x42, us: 2500}`: after that command the bus thread sends nothing, answers no idle event, and pings no slave for the given time. The master library needs no change; the waiting belongs to the application that schedules transactions. Raw frames over MQTT would also benefit from a topic that takes a whole frame and splits it into `WRITE` and `SHOW` in one queue entry, so that a full queue cannot drop part of a frame.
+
 ## D3: Fairness Strategy
 
 - **Status:** largely resolved. A burst serves every slave pending at its start ([§6.2](../spec/06-operation.md#62-burst)); starvation across bursts is only possible if bursts are aborted before completion.

@@ -161,6 +161,12 @@ static inline uint8_t hubus_core_data_low(const hubus_slave_core_t *c)
     return c->data_low;
 }
 
+/* 1 between transactions (after STOP or RESET, also while signaling an event); polled from the main loop. */
+static inline uint8_t hubus_core_is_idle(const hubus_slave_core_t *c)
+{
+    return *(const volatile uint8_t *)&c->state <= HUBUS_ST_EVENT;
+}
+
 #if HUBUS_ENABLE_EVENTS
 /*
  * Writes the outgoing buffer: sets the pending flag, increments GEN and, if
