@@ -26,3 +26,22 @@ uint8_t hubus_crc8(const uint8_t *data, size_t len)
     }
     return hubus_crc8_final(crc);
 }
+
+/* Byte-wise without a table or a bit loop: the updater checks the whole application at every boot. */
+uint16_t hubus_crc16_update(uint16_t crc, uint8_t byte)
+{
+    uint8_t x = (uint8_t)((crc >> 8) ^ byte);
+
+    x ^= (uint8_t)(x >> 4);
+    return (uint16_t)((uint16_t)(crc << 8) ^ (uint16_t)((uint16_t)x << 12) ^ (uint16_t)((uint16_t)x << 5) ^ x);
+}
+
+uint16_t hubus_crc16(const uint8_t *data, size_t len)
+{
+    uint16_t crc = HUBUS_CRC16_INIT;
+
+    while (len--) {
+        crc = hubus_crc16_update(crc, *data++);
+    }
+    return crc;
+}

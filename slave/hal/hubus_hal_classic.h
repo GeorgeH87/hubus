@@ -137,6 +137,31 @@ static inline void hubus_hal_irq_enable(void)
 #endif
 }
 
+#if HUBUS_ENABLE_UPDATE
+#ifndef HUBUS_UPDATER_ADDR
+#error "HUBUS_ENABLE_UPDATE needs HUBUS_UPDATER_ADDR, the byte address of the updater in flash"
+#endif
+#include <avr/pgmspace.h>
+
+#include "hubus_proto.h"
+
+/*
+ * Hands over to the updater (docs/spec/06-operation.md section 6.8): key and MCID in GPIOR0 and GPIOR1, then a jump
+ * with interrupts disabled. The updater sets up its own stack. Returns only if no updater is installed (erased
+ * flash at its address).
+ */
+static inline void hubus_hal_enter_updater(uint8_t mcid)
+{
+    if (pgm_read_word(HUBUS_UPDATER_ADDR) == 0xFFFFu) {
+        return;
+    }
+    cli();
+    GPIOR0 = HUBUS_UPDATE_KEY0;
+    GPIOR1 = mcid;
+    ((void (*)(void))(HUBUS_UPDATER_ADDR / 2u))();
+}
+#endif
+
 #define HUBUS_ATOMIC_BEGIN()         \
     uint8_t hubus_sreg_saved = SREG; \
     cli()

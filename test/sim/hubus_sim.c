@@ -26,6 +26,15 @@ static uint8_t resolve(const hubus_sim_t *sim)
     return 1;
 }
 
+static void feed(hubus_sim_t *sim, unsigned i, uint8_t clk, uint8_t data)
+{
+    if (sim->pins[i]) {
+        sim->pins[i](sim->slave[i], clk, data);
+    } else {
+        hubus_core_pins(sim->slave[i], clk, data);
+    }
+}
+
 static void deliver_all(hubus_sim_t *sim)
 {
     unsigned i;
@@ -40,7 +49,7 @@ static void deliver_all(hubus_sim_t *sim)
         if (sim->filter && !sim->filter(sim, i, &clk, &data, sim->filter_ctx)) {
             continue;
         }
-        hubus_core_pins(sim->slave[i], clk, data);
+        feed(sim, i, clk, data);
     }
 }
 
@@ -230,8 +239,8 @@ void hubus_sim_unplug(hubus_sim_t *sim, unsigned slave, int unplugged)
 
 void hubus_sim_glitch_clk(hubus_sim_t *sim, unsigned slave)
 {
-    hubus_core_pins(sim->slave[slave], 1, sim->data);
-    hubus_core_pins(sim->slave[slave], 0, sim->data);
+    feed(sim, slave, 1, sim->data);
+    feed(sim, slave, 0, sim->data);
     hubus_sim_settle(sim);
 }
 

@@ -63,6 +63,10 @@ struct hubus_sim {
     uint32_t min_clk_high_ns;
     uint32_t min_cond_ns;
 
+    /* Pin handler per slave, NULL: hubus_core_pins. Lets a test run a core built with other options on the same
+     * bus, as long as `data_low` is at the same place in its structure. */
+    void (*pins[HUBUS_SIM_MAX_SLAVES])(hubus_slave_core_t *core, uint8_t clk, uint8_t data);
+
     hubus_sim_filter_fn filter;
     void *filter_ctx;
 

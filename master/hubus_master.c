@@ -31,6 +31,7 @@ const char *hubus_status_str(hubus_status_t s)
     case HUBUS_ERR_LINE: return "line readback mismatch";
     case HUBUS_ERR_LINE_FAULT: return "line fault (DATA stuck low)";
     case HUBUS_ERR_STACK: return "pending mask stack overflow";
+    case HUBUS_ERR_UPDATE: return "firmware update failed";
     }
     return "unknown";
 }

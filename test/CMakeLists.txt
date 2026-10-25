@@ -53,6 +53,20 @@ hubus_core_variant_test(test_small_buffers test_small_buffers.c HUBUS_RX_BUF_SIZ
 hubus_core_variant_test(test_slave_passive test_slave_parts.c HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1)
 hubus_core_variant_test(test_slave_command_only test_slave_parts.c HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=0)
 
+# Firmware update end to end: master library, updater logic, and an application core with update support on one
+# simulated bus. The core and the master are compiled again for the updater configuration.
+add_executable(test_update test_update.c support/update_app_core.c sim/hubus_sim.c
+    ${HUBUS_CORE_SOURCES_ABS} ${PROJECT_SOURCE_DIR}/updater/hubus_updater.c
+    ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c)
+target_include_directories(test_update PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
+    ${PROJECT_SOURCE_DIR}/updater sim support)
+target_compile_definitions(test_update PRIVATE
+    HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800)
+target_link_libraries(test_update PRIVATE unity)
+target_compile_options(test_update PRIVATE ${HUBUS_TEST_WARNINGS})
+add_test(NAME test_update COMMAND test_update)
+set_tests_properties(test_update PROPERTIES TIMEOUT 120)
+
 if(HUBUSD_LIB_AVAILABLE)
     hubus_test(test_daemon_config hubusd_lib)
     hubus_test(test_daemon_core hubusd_lib)

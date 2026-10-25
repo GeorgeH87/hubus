@@ -80,7 +80,16 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
                 }
             } else
 #endif
-            if (op >= HUBUS_OP_APP_MIN && c->on_command) {
+#if HUBUS_ENABLE_UPDATE
+            if (op == HUBUS_OP_UPDATE_ENTER) {
+                /* exact addressing only: a group or broadcast never switches several slaves at once */
+                if (c->rx_len == 3u && c->cmd[1] == HUBUS_UPDATE_KEY0 && c->cmd[2] == HUBUS_UPDATE_KEY1 &&
+                    ((c->hdr[0] >> 3) & 7u) == HUBUS_TARGET_LEN_EXACT) {
+                    c->update_req = 1;
+                }
+            } else
+#endif
+            if (op >= (HUBUS_UPDATER ? HUBUS_OP_UPDATE_LOAD : HUBUS_OP_APP_MIN) && c->on_command) {
                 c->on_command(c->ctx, op, &c->cmd[1], (uint8_t)(c->rx_len - 1u));
             }
         }
@@ -232,6 +241,12 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
             if (c->app_state_len) {
                 b |= HUBUS_CAP_STATE;
             }
+#endif
+#if HUBUS_ENABLE_UPDATE
+            b |= HUBUS_CAP_UPDATE;
+#endif
+#if HUBUS_UPDATER
+            b |= HUBUS_CAP_UPDATER;
 #endif
         } else if (i == HUBUS_INFO_MAX_CMD) {
             b = HUBUS_RX_BUF_SIZE;

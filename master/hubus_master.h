@@ -57,7 +57,8 @@ typedef enum {
     HUBUS_ERR_MISMATCH,     /* valid frame with unexpected type or source MCID */
     HUBUS_ERR_LINE,         /* DATA readback differs from what was transmitted; recovery was run */
     HUBUS_ERR_LINE_FAULT,   /* DATA stuck low: hardware line fault */
-    HUBUS_ERR_STACK         /* pending mask stack overflow (corrupted arbitration) */
+    HUBUS_ERR_STACK,        /* pending mask stack overflow (corrupted arbitration) */
+    HUBUS_ERR_UPDATE        /* firmware update refused or failed; hubus_update_result_t tells why */
 } hubus_status_t;
 
 const char *hubus_status_str(hubus_status_t s);

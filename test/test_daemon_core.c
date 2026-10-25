@@ -309,6 +309,7 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
     assert_contains("hubus/slave/3/info", "\"serial\":\"00000003\"");
     assert_contains("hubus/slave/3/info", "\"profile\":\"relay\"");
     assert_contains("hubus/slave/3/info", "\"status_capture\":true");
+    assert_contains("hubus/slave/3/info", "\"update\":false,\"updater\":false");
     TEST_ASSERT_TRUE(last_msg("hubus/slave/3/info")->retain);
 
     /* initial state is read back from the slaves */

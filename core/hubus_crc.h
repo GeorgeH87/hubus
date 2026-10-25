@@ -30,4 +30,15 @@ static inline uint8_t hubus_crc8_final(uint8_t crc)
 /* One-shot CRC over a buffer. */
 uint8_t hubus_crc8(const uint8_t *data, size_t len);
 
+/*
+ * CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no xorout, not reflected; check value 0x29B1. Protects firmware
+ * pages and images during an update (docs/spec/06-operation.md section 6.8), which are longer than what the CRC8
+ * of a frame covers well.
+ */
+#define HUBUS_CRC16_INIT 0xFFFFu
+#define HUBUS_CRC16_CHECK 0x29B1u
+
+uint16_t hubus_crc16_update(uint16_t crc, uint8_t byte);
+uint16_t hubus_crc16(const uint8_t *data, size_t len);
+
 #endif /* HUBUS_CRC_H */
