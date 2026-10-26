@@ -128,7 +128,7 @@ static void test_init_rejects_invalid_config(void)
     cfg.state_len = HUBUS_MAX_PAYLOAD + 1u; /* longer than a LEN field: rejected, not truncated */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
     cfg.state_len = 0;
-    cfg.speed_class = HUBUS_SPEED_CLASS_MAX + 1u; /* does not fit into capability bits 7..5 */
+    cfg.speed_class = HUBUS_SPEED_CLASS_MAX + 1u; /* bits 7..4 of SLAVE_INFO byte 3 are reserved */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_DISABLED, hubus_core_write(&c, info_bytes, 1, 0));
 }
@@ -161,7 +161,7 @@ static void test_request_info(void)
     n = raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf);
     raw_stop(&rm, 0);
 
-    TEST_ASSERT_EQUAL_UINT(3 + 3 + sizeof info_bytes, n);
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP + sizeof info_bytes, n);
     TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, &h));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_S_INFO, h.type);
     TEST_ASSERT_EQUAL_UINT8(9, h.mcid);
@@ -194,8 +194,8 @@ static void test_request_info_announces_the_speed_class(void)
     hubus_sim_add(&sim, &core[0]);
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_SPEED_CLASS_MAX, HUBUS_CAP_SPEED_CLASS(buf[2 + HUBUS_INFO_CAPS]));
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS] & (uint8_t)~HUBUS_CAP_SPEED_MASK);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_SPEED_CLASS_MAX, buf[2 + HUBUS_INFO_SPEED]); /* reserved bits 7..4 stay 0 */
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS]);
 }
 
 static void test_request_info_does_not_clear_buffer(void)
@@ -219,9 +219,9 @@ static void test_request_info_without_app_bytes(void)
     cfg.mcid = 3;
     TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
     hubus_sim_add(&sim, &core[0]);
-    TEST_ASSERT_EQUAL_UINT(6, raw_request(&rm, HUBUS_M_REQUEST_INFO, 3, buf)); /* header + 3 bytes + CRC */
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP, raw_request(&rm, HUBUS_M_REQUEST_INFO, 3, buf)); /* header + protocol bytes + CRC */
     raw_stop(&rm, 0);
-    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 6, NULL));
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + HUBUS_INFO_APP, NULL));
 }
 
 /* ---- REQUEST_DATA -------------------------------------------------------- */

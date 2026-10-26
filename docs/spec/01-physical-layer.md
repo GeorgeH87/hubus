@@ -57,17 +57,13 @@ Every slave declares in `SLAVE_INFO` how fast it reacts to the bus ([§4.7](04-f
 
 The class bounds the **edge response time** `R`: the longest time from a `CLK` edge or a `DATA` change until the slave has handled it completely, including the evaluation of a frame and the application callbacks this calls.
 
-| Class | `R` at most |
-|---:|---|
-| 0 | not declared: the master applies its configured minimums |
-| 1 | 512 µs |
-| 2 | 256 µs |
-| 3 | 128 µs |
-| 4 | 64 µs |
-| 5 | 32 µs |
-| 6 | 16 µs |
-| 7 | 8 µs |
+| Class | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `R` at most (µs) | not declared | 1024 | 724 | 512 | 362 | 256 | 181 | 128 | 90 | 64 | 45 | 32 | 22 | 16 | 11 | 8 |
 
+Class `0` means that the master applies its configured minimums.
+
+- `R` halves every two classes: class `k` allows `8 µs · 2^((15−k)/2)`, rounded down. Odd classes are exact powers of two.
 - A slave declares the highest class whose `R` it meets in every situation; in doubt the next slower one. A slave slower than class 1 declares `0`, and the master is configured for it.
 - The scale is coarse on purpose: all timing values are minimums and the master clock is jittery ([§1.4](#14-timing-parameters)), so a finer scale would promise a precision the bus does not have.
 - Derived timing: `T_CLK_LOW`, `T_CLK_HIGH`, `T_COND`, and `T_TURNAROUND` each at least `R` of the slaves they have to respect, plus the master's own margin.

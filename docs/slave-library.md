@@ -40,7 +40,7 @@ int main(void)
 
 | Function | Purpose |
 |---|---|
-| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 28 info bytes, a state longer than 31 bytes, or a speed class above 7. |
+| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 27 info bytes, a state longer than 31 bytes, or a speed class above 15. |
 | `hubus_slave_write(data, len, more)` | Writes the event buffer: overwrites unread content, increments `GEN`, sets the pending flag, and announces the data ([§4.8](spec/04-frames.md#48-event-buffer), [§6.1](spec/06-operation.md#61-idle-event-handshake)). `more = 1` marks a fragment followed by more ([§4.11](spec/04-frames.md#411-fragments)). Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, `HUBUS_WRITE_BUSY` (the buffer is being transmitted, [§3.6](spec/03-transactions.md#36-transaction-end-and-buffer-clearing); retry later), or `HUBUS_WRITE_DISABLED` (init failed). Safe from the main loop and from callbacks. |
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
 | `hubus_slave_isr()` | The pin change handler. The HAL vectors call it; the application only calls it itself in host tests, where there are no interrupts. |
@@ -52,12 +52,12 @@ Configuration (`hubus_slave_config_t`):
 | Field | Meaning |
 |---|---|
 | `mcid` | `1..63`, unique on the bus ([§7.2](spec/07-slave.md#72-mcid)) |
-| `info`, `info_len` | Application bytes of `SLAVE_INFO`, in flash (`PROGMEM`), 0..28 bytes; include a device-unique value ([§4.7](spec/04-frames.md#47-slave-info-slave_info)) |
+| `info`, `info_len` | Application bytes of `SLAVE_INFO`, in flash (`PROGMEM`), 0..27 bytes; include a device-unique value ([§4.7](spec/04-frames.md#47-slave-info-slave_info)) |
 | `state`, `state_len` | Live state for `REQUEST_STATE`: RAM the application keeps up to date, read while transmitting, 1..31 bytes; `NULL` for no state ([§4.10](spec/04-frames.md#410-state)) |
 | `on_status_capture` | Writes the current status with `hubus_slave_write()`; `NULL`: `STATUS_CAPTURE` not supported (capability bit 0 cleared) |
 | `on_command` | Application commands, opcodes `0x10..0xFF`; may be `NULL` |
 | `ctx` | Passed to the callbacks |
-| `speed_class` | Speed class `0..7` of this firmware, announced in `SLAVE_INFO` capability bits 7–5; `0` (default): not declared ([§1.5](spec/01-physical-layer.md#15-speed-classes)) |
+| `speed_class` | Speed class `0..15` of this firmware, announced in `SLAVE_INFO` byte 3; `0` (default): not declared ([§1.5](spec/01-physical-layer.md#15-speed-classes)) |
 
 - The speed class depends on the whole firmware, not only on the device: the longest interrupt handler or interrupt-disabled section of the application adds to the library's own response time. Declare the highest class whose edge response time the firmware meets in every situation.
 - `hubus_slave_write()` and `hubus_slave_is_pending()` exist only with the event buffer; `on_status_capture` is ignored without it.

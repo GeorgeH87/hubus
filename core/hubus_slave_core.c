@@ -248,9 +248,10 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
 #if HUBUS_UPDATER
             b |= HUBUS_CAP_UPDATER;
 #endif
-            b |= c->speed_caps;
         } else if (i == HUBUS_INFO_MAX_CMD) {
             b = HUBUS_RX_BUF_SIZE;
+        } else if (i == HUBUS_INFO_SPEED) {
+            b = c->speed_class;
         } else {
             b = HUBUS_INFO_READ(&c->info[i - HUBUS_INFO_APP]);
         }
@@ -400,7 +401,7 @@ uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, u
         cfg->state_len > HUBUS_MAX_PAYLOAD || cfg->speed_class > HUBUS_SPEED_CLASS_MAX) {
         return 0;
     }
-    c->speed_caps = (uint8_t)(cfg->speed_class << HUBUS_CAP_SPEED_SHIFT);
+    c->speed_class = cfg->speed_class;
     c->info = cfg->info;
     c->info_len = cfg->info_len;
 #if HUBUS_ENABLE_STATE

@@ -81,9 +81,9 @@ static void test_info_announces_neither_events_nor_capture(void)
     uint8_t buf[40];
 
     add(0, 9);
-    TEST_ASSERT_EQUAL_UINT(3 + 3 + sizeof info_bytes, raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP + sizeof info_bytes, raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + 3 + sizeof info_bytes, NULL));
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + HUBUS_INFO_APP + sizeof info_bytes, NULL));
     TEST_ASSERT_EQUAL_UINT8(0, buf[2 + HUBUS_INFO_CAPS] & (HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_ENABLE_STATE ? HUBUS_CAP_STATE : 0u, buf[2 + HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
     TEST_ASSERT_EQUAL_MEMORY(info_bytes, buf + 2 + HUBUS_INFO_APP, sizeof info_bytes);

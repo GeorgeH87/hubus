@@ -69,7 +69,7 @@
 #error "HUBUS_ENABLE_UPDATE is for the application, HUBUS_UPDATER for the updater: not both"
 #endif
 
-/* Application bytes of SLAVE_INFO follow 3 protocol bytes. */
+/* Application bytes of SLAVE_INFO follow 4 protocol bytes. */
 #define HUBUS_INFO_APP_MAX (HUBUS_MAX_PAYLOAD - HUBUS_INFO_APP)
 
 /* Read a byte of the static SLAVE_INFO data (flash on AVR). */
@@ -125,7 +125,7 @@ typedef struct hubus_slave_core {
 #endif
     hubus_command_fn on_command;
     void *ctx;
-    uint8_t speed_caps; /* speed class, already in its SLAVE_INFO capability bits */
+    uint8_t speed_class; /* SLAVE_INFO byte 3 */
 
     /* line */
     uint8_t clk;         /* last seen CLK level */

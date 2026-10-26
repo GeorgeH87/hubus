@@ -311,7 +311,8 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
     assert_contains("hubus/slave/3/info", "\"profile\":\"relay\"");
     assert_contains("hubus/slave/3/info", "\"status_capture\":true");
     assert_contains("hubus/slave/3/info", "\"update\":false,\"updater\":false");
-    assert_contains("hubus/slave/3/info", "\"capabilities\":5,\"speed_class\":4");
+    assert_contains("hubus/slave/3/info", "\"capabilities\":5,");
+    assert_contains("hubus/slave/3/info", "\"speed_class\":4");
     assert_contains("hubus/slave/5/info", "\"speed_class\":0");
     TEST_ASSERT_TRUE(last_msg("hubus/slave/3/info")->retain);
 
