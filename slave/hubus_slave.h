@@ -33,6 +33,8 @@
  *                      Needs HUBUS_ENABLE_EVENTS.
  *   on_command         application commands (opcode 0x10..0xFF); may be NULL
  *   ctx                passed to the callbacks
+ *   speed_class        0..7: edge response time this firmware guarantees, announced in SLAVE_INFO
+ *                      (docs/spec/01-physical-layer.md section 1.5); 0 = not declared
  */
 typedef hubus_core_config_t hubus_slave_config_t;
 
@@ -40,7 +42,7 @@ typedef hubus_core_config_t hubus_slave_config_t;
  * Configures the pins, starts the protocol engine, and enables the pin change
  * interrupts. Global interrupts stay as they are: the application calls sei()
  * once its own setup is done. Returns 1 on success, 0 for an invalid
- * configuration (MCID outside 1..63, info or state too long); the slave then
+ * configuration (MCID outside 1..63, info or state too long, speed class above 7); the slave then
  * stays silent.
  */
 uint8_t hubus_slave_init(const hubus_slave_config_t *cfg);

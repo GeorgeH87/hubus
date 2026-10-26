@@ -169,6 +169,7 @@ static sim_dev_t *add_dev(uint8_t mcid, uint8_t type)
     c.info_len = sizeof v->info;
     c.on_status_capture = dev_capture;
     c.on_command = dev_command;
+    c.speed_class = mcid == 3 ? 4u : 0u;
     if (dev_with_state && type == DEV_RELAY) {
         c.state = &v->state;
         c.state_len = 1;
@@ -310,6 +311,8 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
     assert_contains("hubus/slave/3/info", "\"profile\":\"relay\"");
     assert_contains("hubus/slave/3/info", "\"status_capture\":true");
     assert_contains("hubus/slave/3/info", "\"update\":false,\"updater\":false");
+    assert_contains("hubus/slave/3/info", "\"capabilities\":5,\"speed_class\":4");
+    assert_contains("hubus/slave/5/info", "\"speed_class\":0");
     TEST_ASSERT_TRUE(last_msg("hubus/slave/3/info")->retain);
 
     /* initial state is read back from the slaves */

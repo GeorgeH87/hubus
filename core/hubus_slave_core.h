@@ -93,6 +93,7 @@ typedef struct {
     hubus_status_capture_fn on_status_capture; /* NULL: STATUS_CAPTURE not supported; ignored without HUBUS_ENABLE_EVENTS */
     hubus_command_fn on_command;               /* application opcodes 0x10..0xFF, may be NULL */
     void *ctx;
+    uint8_t speed_class;                       /* 0 (not declared) .. HUBUS_SPEED_CLASS_MAX, announced in SLAVE_INFO */
 } hubus_core_config_t;
 
 /* Result of hubus_core_write(). */
@@ -124,6 +125,7 @@ typedef struct hubus_slave_core {
 #endif
     hubus_command_fn on_command;
     void *ctx;
+    uint8_t speed_caps; /* speed class, already in its SLAVE_INFO capability bits */
 
     /* line */
     uint8_t clk;         /* last seen CLK level */
@@ -169,8 +171,8 @@ typedef struct hubus_slave_core {
 } hubus_slave_core_t;
 
 /* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), too much info data,
- * or a state longer than HUBUS_MAX_PAYLOAD the core stays disabled (ignores all traffic, never drives DATA) and 0 is
- * returned. */
+ * a state longer than HUBUS_MAX_PAYLOAD, or a speed class above HUBUS_SPEED_CLASS_MAX the core stays disabled (ignores
+ * all traffic, never drives DATA) and 0 is returned. */
 uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, uint8_t clk, uint8_t data);
 
 /* Feed the current pin levels (1 = high). Call after every pin change. */

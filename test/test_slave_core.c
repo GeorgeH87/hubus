@@ -127,6 +127,9 @@ static void test_init_rejects_invalid_config(void)
     cfg.info_len = 0;
     cfg.state_len = HUBUS_MAX_PAYLOAD + 1u; /* longer than a LEN field: rejected, not truncated */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
+    cfg.state_len = 0;
+    cfg.speed_class = HUBUS_SPEED_CLASS_MAX + 1u; /* does not fit into capability bits 7..5 */
+    TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_DISABLED, hubus_core_write(&c, info_bytes, 1, 0));
 }
 
@@ -177,6 +180,22 @@ static void test_request_info_without_status_capture_clears_capability(void)
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS]); /* events, but no capture */
+}
+
+static void test_request_info_announces_the_speed_class(void)
+{
+    hubus_core_config_t cfg;
+    uint8_t buf[40];
+
+    memset(&cfg, 0, sizeof cfg);
+    cfg.mcid = 9;
+    cfg.speed_class = HUBUS_SPEED_CLASS_MAX;
+    TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
+    hubus_sim_add(&sim, &core[0]);
+    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
+    raw_stop(&rm, 0);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_SPEED_CLASS_MAX, HUBUS_CAP_SPEED_CLASS(buf[2 + HUBUS_INFO_CAPS]));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS] & (uint8_t)~HUBUS_CAP_SPEED_MASK);
 }
 
 static void test_request_info_does_not_clear_buffer(void)
@@ -1383,6 +1402,7 @@ int main(void)
     RUN_TEST(test_disabled_core_stays_silent);
     RUN_TEST(test_request_info);
     RUN_TEST(test_request_info_without_status_capture_clears_capability);
+    RUN_TEST(test_request_info_announces_the_speed_class);
     RUN_TEST(test_request_info_does_not_clear_buffer);
     RUN_TEST(test_request_info_without_app_bytes);
     RUN_TEST(test_request_data_empty_buffer_is_silent);

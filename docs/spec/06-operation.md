@@ -76,7 +76,7 @@ Duplicate MCIDs are a configuration fault. Only the master detects them; slaves 
 
 **Commissioning scan.** The master enumerates the slaves with group `REQUEST_INFO`, using the burst algorithm ([§6.2](#62-burst)) with `REQUEST_INFO` instead of `REQUEST_DATA`. Every matching slave contends, so the winner's `SLAVE_INFO` arrives in the same transaction: about one transaction per slave, and empty MCID groups are never visited.
 
-- A valid `SLAVE_INFO`: the slave is present; its protocol version and capabilities are known ([§4.7](04-frames.md#47-slave-info-slave_info)).
+- A valid `SLAVE_INFO`: the slave is present; its protocol version, capabilities, and speed class are known ([§4.7](04-frames.md#47-slave-info-slave_info)).
 - No contender: no slave in that group.
 - Repeated CRC failures for a winner: suspected duplicate MCID or a line problem. The master repeats the request for that MCID with exact addressing within its retry budget.
 

@@ -74,7 +74,7 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 
 ## Raspberry Pi Hardware Layer
 
-`hubus_master_gpiod.h` implements the HAL on the Linux GPIO character device with the libgpiod v2 API ([§1.5](spec/01-physical-layer.md#15-nodes)). `DATA` is requested as open-drain output and needs an external pull-up.
+`hubus_master_gpiod.h` implements the HAL on the Linux GPIO character device with the libgpiod v2 API ([§1.6](spec/01-physical-layer.md#16-nodes)). `DATA` is requested as open-drain output and needs an external pull-up.
 
 | Function | Purpose |
 |---|---|

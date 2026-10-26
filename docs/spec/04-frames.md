@@ -108,7 +108,7 @@ Static metadata, typically a constant in flash.
 | Byte | Content |
 |---|---|
 | 0 | HUBUS protocol version (`0` in v0) |
-| 1 | Capabilities: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); bit 3 = application with firmware update, takes `UPDATE_ENTER`; bit 4 = the updater is running ([§6.8](06-operation.md#68-firmware-update)); the other bits are reserved (`0`). Bit 0 requires bit 2; bits 3 and 4 exclude each other. |
+| 1 | Capabilities: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); bit 3 = application with firmware update, takes `UPDATE_ENTER`; bit 4 = the updater is running ([§6.8](06-operation.md#68-firmware-update)); bits 7–5 = speed class `0..7`, `0` = not declared ([§1.5](01-physical-layer.md#15-speed-classes)). Bit 0 requires bit 2; bits 3 and 4 exclude each other. |
 | 2 | Maximum command payload the slave accepts, in bytes (`1..31`; including the opcode) |
 | 3.. | Application-defined, for example device type, firmware version. SHOULD include a device-unique value, such as a serial number, so that the commissioning scan reliably detects duplicate MCIDs ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)). |
 

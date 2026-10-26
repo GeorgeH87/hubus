@@ -108,7 +108,7 @@ Every command is validated (MCID range, `TARGET_LEN`, payload size against the m
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
-| `hubus/slave/<n>/info` | yes | protocol version, capabilities (`events`, `status_capture`, `state`, `update`: can switch to its updater, `updater`: the updater runs), accepted command size, application bytes, device type, firmware, serial number, profile |
+| `hubus/slave/<n>/info` | yes | protocol version, capabilities (`events`, `status_capture`, `state`, `update`: can switch to its updater, `updater`: the updater runs), speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), accepted command size, application bytes, device type, firmware, serial number, profile |
 | `hubus/slave/<n>/state` | yes | interpreted value (`ON`/`OFF`, a number), so clients get the last value after a reconnect |
 | `hubus/slave/<n>/data` | no | every received frame except duplicates: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `wrapped`, `gap`, or `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |

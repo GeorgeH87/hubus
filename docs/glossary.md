@@ -20,7 +20,8 @@
 | Pending mask | A prefix mask (`MCID` prefix and `TARGET_LEN`) derived from a low handoff slot; a group with at least one further contender. | [§5.5](spec/05-arbitration.md#55-pending-masks) |
 | Pending mask stack | Master-internal last-in-first-out list of pending masks; never transmitted. | [§5.5](spec/05-arbitration.md#55-pending-masks) |
 | RESET | START immediately followed by STOP; resets the communication stack of every slave but keeps buffered data and the pending flag. | [§6.5](spec/06-operation.md#65-communication-stack-reset) |
-| `SLAVE_INFO` | Static device information: protocol version, capabilities, accepted command size, application bytes. | [§4.7](spec/04-frames.md#47-slave-info-slave_info) |
+| `SLAVE_INFO` | Static device information: protocol version, capabilities, speed class, accepted command size, application bytes. | [§4.7](spec/04-frames.md#47-slave-info-slave_info) |
+| Speed class | `0..7` in `SLAVE_INFO`: the edge response time a slave firmware guarantees; `0` = not declared. The master derives its timing minimums from it. | [§1.5](spec/01-physical-layer.md#15-speed-classes) |
 | State | Live data a slave exposes for `REQUEST_STATE`, for example the level of every input; read at any time, never cleared. Optional. | [§4.10](spec/04-frames.md#410-state) |
 | `STATUS_CAPTURE` | Command opcode `0x00`: the slave writes its current status into its event buffer. | [§4.4](spec/04-frames.md#44-command-opcodes) |
 | Target mask | `TARGET_LEN` significant prefix bits of the `MCID` field that select the addressed slaves. | [§4.5](spec/04-frames.md#45-addressing) |

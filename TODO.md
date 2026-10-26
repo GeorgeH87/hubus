@@ -51,6 +51,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Compile-time buffer sizes; `SLAVE_INFO` byte 2; ignore oversized commands.
 - [x] Event buffer and state as independent build options.
 - [x] Protect buffer writes against the ISR (atomic access, refuse writes during transmission).
+- [x] Speed class in `SLAVE_INFO` capability bits 7–5 (`speed_class` in the configuration, [§1.5](docs/spec/01-physical-layer.md#15-speed-classes)).
 - [x] Flash/RAM budget for the ATtiny85 reference build, checked with `avr-size` ([slave library](docs/slave-library.md#optional-parts)).
 - [ ] Optional: run in simavr and measure ISR cycles and stack depth (input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, and the buffer sizes of 128 B RAM devices; [open issues](docs/project/open-issues.md)).
 - [x] Remove the old ATtiny85-only implementation.
@@ -67,6 +68,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Commissioning scan (group `REQUEST_INFO`) and duplicate MCID heuristic.
 - [x] Configurable timing minimums (for the slowest slave on the bus).
 - [x] Real-time priority option for the clock thread.
+- [ ] Derive the timing minimums from the speed classes of the known slaves; later clock the rest of a frame faster once slower slaves have rejected its prefix ([open issues](docs/project/open-issues.md#speed-classes-on-the-master)).
 
 ## 7. Examples
 

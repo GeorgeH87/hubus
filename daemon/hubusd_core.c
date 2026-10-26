@@ -402,7 +402,8 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
     jw_uint(&w, "mcid", mcid);
     jw_str(&w, "name", slave_name(d, mcid));
     jw_uint(&w, "protocol", s->info.payload[HUBUS_INFO_VERSION]);
-    jw_uint(&w, "capabilities", s->info.payload[HUBUS_INFO_CAPS]);
+    jw_uint(&w, "capabilities", s->info.payload[HUBUS_INFO_CAPS] & (uint8_t)~HUBUS_CAP_SPEED_MASK);
+    jw_uint(&w, "speed_class", HUBUS_CAP_SPEED_CLASS(s->info.payload[HUBUS_INFO_CAPS]));
     jw_bool(&w, "events", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_EVENTS) != 0);
     jw_bool(&w, "status_capture", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATUS_CAPTURE) != 0);
     jw_bool(&w, "state", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE) != 0);

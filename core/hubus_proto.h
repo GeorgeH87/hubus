@@ -46,6 +46,12 @@
 #define HUBUS_CAP_EVENTS 0x04u /* has an event buffer: announces events and answers REQUEST_DATA */
 #define HUBUS_CAP_UPDATE 0x08u  /* application that switches to its updater on UPDATE_ENTER */
 #define HUBUS_CAP_UPDATER 0x10u /* this is the updater: takes the update commands */
+/* Bits 7..5: speed class, the edge response time the firmware guarantees (docs/spec/01-physical-layer.md
+ * section 1.5); 0 = not declared, 1..7 = slowest..fastest. */
+#define HUBUS_CAP_SPEED_SHIFT 5u
+#define HUBUS_CAP_SPEED_MASK 0xE0u
+#define HUBUS_SPEED_CLASS_MAX 7u
+#define HUBUS_CAP_SPEED_CLASS(caps) (((caps) & HUBUS_CAP_SPEED_MASK) >> HUBUS_CAP_SPEED_SHIFT)
 
 /*
  * Firmware update (docs/spec/06-operation.md section 6.8). UPDATE_ENTER goes to the application, the other opcodes
