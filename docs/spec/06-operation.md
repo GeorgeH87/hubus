@@ -240,7 +240,7 @@ sequenceDiagram
     M->>S: REQUEST_INFO (repeated until bit 4 is gone)
 ```
 
-1. The master reads `SLAVE_INFO`. With bit 3 it sends `UPDATE_ENTER` and asks again until the updater answers (bit 4); with bit 4 the updater already runs.
+1. The master reads `SLAVE_INFO`. With bit 3 it sends `UPDATE_ENTER` and asks again until the updater answers (bit 4); if the application still answers, the command was lost and the master repeats it. With bit 4 the updater already runs.
 2. It checks the image against the updater information: signature, size (at most the application area without the info page), and with the reset vector rule a first word that is an `RJMP`.
 3. It writes the info page with `FF` first: from now on the old application is invalid, and an interruption leaves the slave in its updater.
 4. It writes every page of the image, the first page last, and after each write reads the state: the result must be `1`, the address that of the page, and the counter one higher than before. Otherwise it loads and writes the page again, within its retry budget.

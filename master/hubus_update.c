@@ -60,21 +60,6 @@ static hubus_status_t fail(upd_t *u, hubus_update_reason_t reason)
     return HUBUS_ERR_UPDATE;
 }
 
-/* Waits until the slave answers REQUEST_INFO as updater (`updater` 1) or as application (0). */
-static hubus_status_t wait_info(upd_t *u, uint8_t updater, unsigned tries, uint32_t delay, hubus_slave_frame_t *f)
-{
-    unsigned i;
-
-    for (i = 0; i < tries; i++) {
-        delay_ms(u->m, delay);
-        if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_CAPS &&
-            !(f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) == !updater) {
-            return HUBUS_OK;
-        }
-    }
-    return HUBUS_ERR_NO_RESPONSE;
-}
-
 /* Byte `i` of the image as it is stored: padded with 0xFF, word 0 redirected to the updater. */
 static uint8_t image_byte(const upd_t *u, uint32_t i)
 {
@@ -161,22 +146,41 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
 {
     static const uint8_t key[2] = {HUBUS_UPDATE_KEY0, HUBUS_UPDATE_KEY1};
     hubus_status_t r;
+    uint8_t attempt;
+    unsigned i;
 
-    r = wait_info(u, 0, u->attempts, 0, f);
-    if (r == HUBUS_OK) {
-        if (!(f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATE)) {
-            return fail(u, HUBUS_UPD_REASON_NOT_SUPPORTED);
+    /* The application answers, or the updater if the slave already runs it (after an interrupted update). */
+    for (i = 0; i < u->attempts; i++) {
+        if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_CAPS) {
+            break;
         }
+    }
+    if (i == u->attempts) {
+        return fail(u, HUBUS_UPD_REASON_NO_UPDATER);
+    }
+    if (f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) {
+        return HUBUS_OK;
+    }
+    if (!(f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATE)) {
+        return fail(u, HUBUS_UPD_REASON_NOT_SUPPORTED);
+    }
+    /* UPDATE_ENTER is fire-and-forget: if the application still answers, it was lost and is repeated. */
+    for (attempt = 0; attempt < u->attempts; attempt++) {
         r = hubus_master_send_command(u->m, HUBUS_TARGET_LEN_EXACT, u->mcid, HUBUS_OP_UPDATE_ENTER, key, 2);
         if (r != HUBUS_OK) {
             return r;
         }
+        for (i = 0; i < ENTER_TRIES; i++) {
+            delay_ms(u->m, ENTER_DELAY_MS);
+            if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_CAPS) {
+                if (f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) {
+                    return HUBUS_OK;
+                }
+                break;
+            }
+        }
     }
-    /* Either the application has been asked to switch, or the slave already runs its updater. */
-    if (wait_info(u, 1, r == HUBUS_OK ? ENTER_TRIES : 1u, ENTER_DELAY_MS, f) != HUBUS_OK) {
-        return fail(u, HUBUS_UPD_REASON_NO_UPDATER);
-    }
-    return HUBUS_OK;
+    return fail(u, HUBUS_UPD_REASON_NO_UPDATER);
 }
 
 /*
