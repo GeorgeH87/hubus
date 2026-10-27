@@ -85,6 +85,7 @@ All commands run inside WSL from the repository root (from Windows: `wsl -d hubu
 - `test_slave_core`: the slave state machine with exact wire traffic from a bit-level master (`test/support/rawmaster.h`).
 - `test_master`: the real master with real slave cores on the simulated wired-AND bus (startup, bursts, commands, commissioning, fragments, states).
 - `test_faults`: fault injection (bit errors, lost and extra clock edges, lost STOP and START, stuck line, noise in the arbitration, an event racing a START, duplicate MCID), against [§8](spec/08-faults.md).
+- `test_blind`: blind sections after a command ([§7.8](spec/07-slave.md#78-blind-sections)): a slave that ends its section at every possible point of foreign traffic (bursts with arbitration and handoff slots, state reads, commands) stays passive until the next START and disturbs nobody; the stale-level case the resynchronization prevents.
 - `test_slave_lib`: the public slave API on the host HAL.
 - `test_small_buffers`: the core with small compile-time buffers and without the state.
 - `test_slave_passive`, `test_slave_command_only`: the core without the event buffer, with and without the state ([§7.4](spec/07-slave.md#74-optional-parts)).

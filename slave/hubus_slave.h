@@ -35,6 +35,8 @@
  *   ctx                passed to the callbacks
  *   speed_class        0..15: edge response time this firmware guarantees, announced in SLAVE_INFO
  *                      (docs/spec/01-physical-layer.md section 1.5); 0 = not declared
+ *   blind_class        0..15: how long the firmware may be blind after a command addressed to it, announced in
+ *                      SLAVE_INFO (docs/spec/07-slave.md section 7.8); 0 = never blind
  */
 typedef hubus_core_config_t hubus_slave_config_t;
 
@@ -42,7 +44,7 @@ typedef hubus_core_config_t hubus_slave_config_t;
  * Configures the pins, starts the protocol engine, and enables the pin change
  * interrupts. Global interrupts stay as they are: the application calls sei()
  * once its own setup is done. Returns 1 on success, 0 for an invalid
- * configuration (MCID outside 1..63, info or state too long, speed class above 15); the slave then
+ * configuration (MCID outside 1..63, info or state too long, speed or blind class above 15); the slave then
  * stays silent.
  */
 uint8_t hubus_slave_init(const hubus_slave_config_t *cfg);
@@ -63,6 +65,24 @@ uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more);
 /* 1 while buffered data has not been read by the master. Fragmented transfers write the next fragment when this is 0. */
 uint8_t hubus_slave_is_pending(void);
 #endif /* HUBUS_ENABLE_EVENTS: a slave without the event buffer never speaks on its own */
+
+/*
+ * Blind section (docs/spec/07-slave.md section 7.8): timing-critical code that has to run with all interrupts
+ * disabled for longer than the speed class allows, for example a WS2812 frame. Call from the main loop with interrupts
+ * enabled, typically right after a command that needs it:
+ *
+ *   while (!hubus_slave_blind_begin()) { }  // waits until the slave neither drives DATA nor owes an answer
+ *   send_frame();                            // all interrupts disabled
+ *   hubus_slave_blind_end();                 // resynchronizes and enables interrupts again
+ *
+ * hubus_slave_blind_begin() returns 1 with all interrupts disabled, or 0 with them enabled when the slave is busy on
+ * the bus (try again). hubus_slave_blind_end() takes the current pin levels as the reference and ignores the bus until
+ * the next START, STOP, or RESET, so the frames it missed cannot be misread. The section has to end within the blind
+ * time announced with blind_class, counted from the STOP of the command; the master does not address the slave
+ * before that.
+ */
+uint8_t hubus_slave_blind_begin(void);
+void hubus_slave_blind_end(void);
 
 /* Pin change handler; called by the HAL vectors (and by host tests). */
 void hubus_slave_isr(void);

@@ -109,6 +109,9 @@ typedef struct {
     uint8_t info[6];
     unsigned commands;
     unsigned captures;
+    int blind_phase;      /* 1: command received, 2: blind after its STOP */
+    unsigned stop_mark;
+    uint64_t blind_end_ms;
 } sim_dev_t;
 
 static hubus_sim_t sim;
@@ -118,6 +121,7 @@ static unsigned n_dev;
 static hubusd_t *dmn;
 static hubusd_config_t cfg;
 static uint64_t clock_ms;
+static uint8_t dev_blind_mcid;  /* this device is blind for 4 ms after every command (blind class 5) */
 
 static void dev_capture(void *ctx)
 {
@@ -139,9 +143,35 @@ static void dev_command(void *ctx, uint8_t op, const uint8_t *args, uint8_t len)
     sim_dev_t *v = ctx;
 
     v->commands++;
+    if (v->mcid == dev_blind_mcid) {
+        v->blind_phase = 1;
+        v->stop_mark = sim.n_stop;
+        v->blind_end_ms = clock_ms + 4u;
+    }
     if (v->type == DEV_RELAY && op == 0x10 && len >= 1) {
         v->state = args[0] ? 1 : 0;
     }
+}
+
+/* The blind device sees nothing from the STOP of a command until its blind section ends, then resynchronizes. A frame
+ * the daemon sends it too early is lost, like on real hardware. */
+static int dev_blind_filter(hubus_sim_t *s, unsigned slave, uint8_t *clk, uint8_t *data, void *ctx)
+{
+    sim_dev_t *v = &dev[slave];
+
+    (void)ctx;
+    if (v->blind_phase == 1 && s->n_stop > v->stop_mark) {
+        v->blind_phase = 2; /* the STOP itself is seen */
+        return 1;
+    }
+    if (v->blind_phase == 2) {
+        if (clock_ms < v->blind_end_ms) {
+            return 0;
+        }
+        hubus_core_resync(&v->core, *clk, *data);
+        v->blind_phase = 0;
+    }
+    return 1;
 }
 
 static void set_temp(sim_dev_t *v, uint16_t raw)
@@ -170,6 +200,7 @@ static sim_dev_t *add_dev(uint8_t mcid, uint8_t type)
     c.on_status_capture = dev_capture;
     c.on_command = dev_command;
     c.speed_class = mcid == 3 ? 4u : 0u;
+    c.blind_class = mcid == dev_blind_mcid ? 5u : 0u;
     if (dev_with_state && type == DEV_RELAY) {
         c.state = &v->state;
         c.state_len = 1;
@@ -270,6 +301,8 @@ void setUp(void)
     n_msgs = 0;
     n_dev = 0;
     dev_with_state = 0;
+    dev_blind_mcid = 0;
+    sim.filter = dev_blind_filter;
     clock_ms = 100000;
     fail_publish = 0;
     dmn = NULL;
@@ -1242,6 +1275,100 @@ static void test_messages_from_another_thread(void)
     TEST_ASSERT_TRUE(dmn->stats.commands_executed + dmn->stats.queue_full + dmn->stats.commands_rejected > 0);
 }
 
+
+/* ---- blind time after a command ------------------------------------------------------------------------------------ */
+
+static void test_readback_waits_for_the_blind_time_and_a_reset_ends_it(void)
+{
+    unsigned resets;
+
+    dev_with_state = 1;
+    dev_blind_mcid = 3;
+    standard_setup(base_yaml);
+    assert_contains("hubus/slave/3/info", "\"blind_class\":5");
+    assert_contains("hubus/slave/5/info", "\"blind_class\":0");
+    n_msgs = 0;
+    say("hubus/slave/3/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+    TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase);
+    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* the readback waits */
+    TEST_ASSERT_TRUE(dmn->slave[3].blind_until_ms > clock_ms);
+
+    say("hubus/slave/3/set", "OFF"); /* a second command waits as well */
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+
+    resets = sim.n_reset;
+    clock_ms += 6; /* class 5: 4 ms, plus rounding and one tick */
+    settle();
+    TEST_ASSERT_TRUE(sim.n_reset > resets);
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/slave/3/state", "ON")); /* read back after the blind time */
+    TEST_ASSERT_EQUAL_UINT(2, dev[0].commands);                               /* then the queued command */
+    TEST_ASSERT_EQUAL_UINT8(0, dev[0].state);
+
+    clock_ms += 6;
+    settle();
+    assert_last("hubus/slave/3/state", "OFF");
+    TEST_ASSERT_EQUAL_UINT(0, dmn->slave[3].blind_until_ms);
+    TEST_ASSERT_EQUAL_UINT(1, dmn->slave[3].online);
+}
+
+static void test_other_slaves_are_served_while_one_is_blind(void)
+{
+    dev_with_state = 1;
+    dev_blind_mcid = 3;
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/slave/3/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase);
+
+    dev[1].state = 1; /* the button is pressed */
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 1, &dev[1].state, 1, 0));
+    say("hubus/slave/7/read", "");
+    settle();
+    assert_last("hubus/slave/5/state", "ON");
+    TEST_ASSERT_NOT_NULL(last("hubus/slave/7/state"));
+    TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase); /* all of it while the relay was still blind */
+
+    clock_ms += 6;
+    settle();
+    assert_last("hubus/slave/3/state", "ON");
+}
+
+static void test_pings_and_scans_skip_a_blind_slave(void)
+{
+    dev_blind_mcid = 3;
+    standard_setup("bus:\n"
+                   "  ping_interval_s: 1\n"
+                   "  ping_failures: 1\n"
+                   "  scan_interval_s: 1\n"
+                   "slaves:\n"
+                   "  - mcid: 3\n"
+                   "    name: Relay\n"
+                   "    readback: none\n"); /* a capture as readback would be a command again */
+    clock_ms += 6; /* the status capture at startup is a command too */
+    settle();
+    say("hubus/slave/3/cmd", "0x10 1");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase);
+    dmn->slave[3].next_ping_ms = clock_ms; /* ping and scan are due, but the relay is blind */
+    dmn->next_scan_ms = clock_ms;
+    settle();
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[3].online); /* a ping now would have gone unanswered */
+    TEST_ASSERT_EQUAL_UINT64(clock_ms, dmn->slave[3].next_ping_ms);
+    TEST_ASSERT_EQUAL_UINT64(clock_ms, dmn->next_scan_ms);
+    clock_ms += 6;
+    settle();
+    TEST_ASSERT_EQUAL_UINT64(0, dmn->slave[3].blind_until_ms);
+    TEST_ASSERT_TRUE(dmn->slave[3].next_ping_ms > clock_ms); /* pinged and scanned after the blind time */
+    TEST_ASSERT_TRUE(dmn->next_scan_ms > clock_ms);
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[3].online);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1278,6 +1405,9 @@ int main(void)
     RUN_TEST(test_scan_command);
     RUN_TEST(test_startup_reads_the_state_of_slaves_that_have_one);
     RUN_TEST(test_readback_after_set_uses_one_state_read);
+    RUN_TEST(test_readback_waits_for_the_blind_time_and_a_reset_ends_it);
+    RUN_TEST(test_other_slaves_are_served_while_one_is_blind);
+    RUN_TEST(test_pings_and_scans_skip_a_blind_slave);
     RUN_TEST(test_published_state_is_still_the_real_state_with_a_state_read);
     RUN_TEST(test_read_topic_reads_the_live_state_at_any_time);
     RUN_TEST(test_read_topic_rejects_slaves_without_a_state_or_configuration);

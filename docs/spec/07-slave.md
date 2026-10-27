@@ -16,6 +16,7 @@ A compliant slave:
 - transmits `MORE` and `GEN` in event frames and `000` in their place in `SLAVE_INFO` and state frames ([§4.1](04-frames.md#41-frame-structure));
 - with an event buffer: announces pending data on the idle bus ([§6.1](06-operation.md#61-idle-event-handshake)) and clears the buffer only after a complete response and the following STOP ([§3.6](03-transactions.md#36-transaction-end-and-buffer-clearing));
 - ignores unknown reserved opcodes and commands longer than it accepts ([§4.4](04-frames.md#44-command-opcodes));
+- with a blind class: begins a blind section only while it drives nothing, ends it within the announced time, and resynchronizes at its end ([§7.8](#78-blind-sections));
 - has no timeouts ([§7.6](#76-no-timeouts)).
 
 ## 7.2 MCID
@@ -42,7 +43,7 @@ stateDiagram-v2
     TX --> IGNORE: frame sent
 ```
 
-START leads from every state to `RX`; STOP and RESET lead from every state to `IDLE`. The diagram leaves these transitions out.
+START leads from every state to `RX`; STOP and RESET lead from every state to `IDLE`. The end of a blind section leads to `IGNORE` ([§7.8](#78-blind-sections)). The diagram leaves these transitions out.
 
 | State | Behavior |
 |---|---|
@@ -102,3 +103,29 @@ All timeouts, retries, fault detection, and recovery are master-side.
 - The protocol logic lives in a hardware-independent core shared by all devices and by the host tests; each device family has a small hardware abstraction layer for the pins and interrupts.
 - Both `CLK` and `DATA` raise pin change or edge interrupts. The handler compares the pins with their previous levels: a `CLK` edge is a bit event, a `DATA` change while `CLK` is high is START or STOP, and a `DATA` change while `CLK` is low (including the slave's own writes) is ignored.
 - Callbacks into the application (command, status capture) run in the interrupt handler and must be short.
+
+## 7.8 Blind Sections
+
+Some applications have to run timing-critical code with all interrupts disabled for longer than their speed class allows, for example a slave that sends a frame to a WS2812 LED strip (1.25 µs per bit, accurate to about 150 ns). Such a slave MAY become **blind** after a command addressed to it: for a bounded time it handles no `CLK` or `DATA` edges at all. The master keeps away from it for that time ([§6.9](06-operation.md#69-blind-time-after-a-command)); the rest of the bus goes on.
+
+**Blind class.** `SLAVE_INFO` byte 3, bits 7–4, announces the longest blind time, counted from the STOP of the command transaction to the end of the blind section ([§4.7](04-frames.md#47-slave-info-slave_info)):
+
+| Class | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Blind time at most (ms) | never blind | 0.25 | 0.5 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 |
+
+- Class `k` allows `0.25 ms · 2^(k−1)`. Like the speed class, the scale is coarse on purpose.
+- The class is a property of the firmware. It applies to every command addressed to the slave, exactly or through a group, including `STATUS_CAPTURE`; the master cannot know which opcodes make the slave blind.
+- A slave with class `0` is never blind. This is the default, and every slave that does not need it declares `0`.
+
+**Rules for the slave.**
+
+1. A blind section begins only while the slave drives nothing and owes nothing: between transactions or while it receives a frame, never while it signals an event, contends, or transmits. In the slave library these are the states `IDLE`, `RX`, and `IGNORE` ([§7.3](#73-state-machine)).
+2. It ends at the latest when the announced blind time after the STOP of the command has passed.
+3. At its end the slave **resynchronizes**: it takes the current levels of `CLK` and `DATA` as the reference for the next edge, releases `DATA`, and goes to `IGNORE` until the next START, STOP, or RESET.
+
+The third rule is what keeps the rest of the bus safe. The slave tells line conditions from bits by comparing the pins with the levels it saw last ([§7.7](#77-implementation-notes)). With the levels from before the blind section, the first `DATA` change after it could look like a START in the middle of somebody else's frame. The slave would then read the following bits as a header, and if that header passes the CRC by chance, it could execute a command that was never sent or contend in a handoff slot of a foreign arbitration. In `IGNORE` it cannot do either, and every START brings it back in step ([§2.5](02-line-conditions.md#25-resynchronization)).
+
+A slave that became pending during a blind section stays in `IGNORE` on an idle bus and announces itself only after the next STOP or RESET ([§6.1](06-operation.md#61-idle-event-handshake)). The master ends every blind time with a transaction or a RESET, so the announcement is only delayed.
+
+A blind section is not a timeout in the sense of [§7.6](#76-no-timeouts): the protocol logic still changes state only on edges and line conditions. The length of the section is a property of the application code, which the slave declares so that the master can plan around it.

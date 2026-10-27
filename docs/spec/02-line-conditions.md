@@ -35,3 +35,5 @@ STOP leaves `CLK` high until the master lowers it. A master that continues with 
 ## 2.5 Resynchronization
 
 Every START resynchronizes every slave. A slave that lost track of the bit stream, for example after a lost or an extra clock edge, ignores the rest of that frame (it fails the address match or the CRC check) and is back in sync at the next START ([§8.2](08-faults.md#82-fault-scenarios)).
+
+The same holds for a slave that saw no edges at all for a while, during a blind section after a command ([§7.8](07-slave.md#78-blind-sections)): it takes the current pin levels as its new reference and waits for the next START.

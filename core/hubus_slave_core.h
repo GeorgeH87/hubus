@@ -94,6 +94,7 @@ typedef struct {
     hubus_command_fn on_command;               /* application opcodes 0x10..0xFF, may be NULL */
     void *ctx;
     uint8_t speed_class;                       /* 0 (not declared) .. HUBUS_SPEED_CLASS_MAX, announced in SLAVE_INFO */
+    uint8_t blind_class;                       /* 0 (never blind) .. HUBUS_BLIND_CLASS_MAX, announced in SLAVE_INFO */
 } hubus_core_config_t;
 
 /* Result of hubus_core_write(). */
@@ -125,7 +126,7 @@ typedef struct hubus_slave_core {
 #endif
     hubus_command_fn on_command;
     void *ctx;
-    uint8_t speed_class; /* SLAVE_INFO byte 3 */
+    uint8_t timing; /* SLAVE_INFO byte 3: speed class and blind class */
 
     /* line */
     uint8_t clk;         /* last seen CLK level */
@@ -171,12 +172,34 @@ typedef struct hubus_slave_core {
 } hubus_slave_core_t;
 
 /* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), too much info data,
- * a state longer than HUBUS_MAX_PAYLOAD, or a speed class above HUBUS_SPEED_CLASS_MAX the core stays disabled (ignores
- * all traffic, never drives DATA) and 0 is returned. */
+ * a state longer than HUBUS_MAX_PAYLOAD, or a speed or blind class above 15 the core stays disabled (ignores all
+ * traffic, never drives DATA) and 0 is returned. */
 uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, uint8_t clk, uint8_t data);
 
 /* Feed the current pin levels (1 = high). Call after every pin change. */
 void hubus_core_pins(hubus_slave_core_t *c, uint8_t clk, uint8_t data);
+
+/*
+ * Blind sections (docs/spec/07-slave.md section 7.8): the caller feeds no pin events for a while, for example while it
+ * runs timing-critical code with interrupts disabled.
+ *
+ * hubus_core_can_blind(): 1 if a blind section may begin now: between transactions or while receiving, never while the
+ * slave drives DATA (event signaling, arbitration, transmission) or owes an answer.
+ *
+ * hubus_core_resync(): ends the blind section. Takes the current pin levels as the new reference, releases DATA, and
+ * ignores the bus until the next START, STOP, or RESET. With stale levels the first DATA change could look like a START
+ * in the middle of someone else's frame.
+ *
+ * Exclude pin events while calling either, and apply hubus_core_data_low() after the resync.
+ */
+static inline uint8_t hubus_core_can_blind(const hubus_slave_core_t *c)
+{
+    uint8_t st = *(const volatile uint8_t *)&c->state;
+
+    return st == HUBUS_ST_IDLE || st == HUBUS_ST_RX || st == HUBUS_ST_IGNORE;
+}
+
+void hubus_core_resync(hubus_slave_core_t *c, uint8_t clk, uint8_t data);
 
 /* Desired DATA drive: 1 = pull low, 0 = release. */
 static inline uint8_t hubus_core_data_low(const hubus_slave_core_t *c)

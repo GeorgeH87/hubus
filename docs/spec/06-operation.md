@@ -255,3 +255,14 @@ Pages and the application are protected by CRC-16/CCITT-FALSE (polynomial `0x102
 ### MCID
 
 The updater answers to the MCID of the application. The application hands it over when it switches; the updater keeps it for the next time it starts without a valid application. How it keeps it is up to the implementation; the HUBUS updater uses the last byte of the EEPROM ([slave library](../slave-library.md#firmware-update)).
+
+## 6.9 Blind Time After a Command
+
+A slave with a blind class other than `0` may ignore the bus for a bounded time after every command addressed to it ([§7.8](07-slave.md#78-blind-sections)). The master knows the class from `SLAVE_INFO` and plans around it:
+
+- **Start.** The blind time of every slave the command reached, with exact or group addressing, begins at the STOP of the command transaction.
+- **During the blind time** the master sends nothing that this slave would have to receive or answer: no command or request to it, no group command or group request whose prefix includes it, and no commissioning scan, in which it would look absent. A readback of the command waits until the blind time has passed.
+- **Other traffic goes on.** Transactions to other slaves, bursts, and idle event handshakes run as usual. The blind slave does not contend in a burst; data that is pending in it stays buffered.
+- **End.** After the blind time the master generates a RESET, or its next transaction follows directly. Either brings the slave out of `IGNORE`, and a slave that became pending meanwhile announces itself again. Then the deferred readback follows.
+
+A slave that stays blind longer than it announced behaves like a slave that missed a frame: no response, a retry, and eventually the usual offline handling ([§8.11](08-faults.md#811-blind-section-longer-than-announced)).

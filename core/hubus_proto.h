@@ -40,7 +40,7 @@
 #define HUBUS_INFO_VERSION 0u
 #define HUBUS_INFO_CAPS 1u
 #define HUBUS_INFO_MAX_CMD 2u
-#define HUBUS_INFO_SPEED 3u
+#define HUBUS_INFO_TIMING 3u /* speed class and blind class */
 #define HUBUS_INFO_APP 4u
 #define HUBUS_CAP_STATUS_CAPTURE 0x01u
 #define HUBUS_CAP_STATE 0x02u /* answers REQUEST_STATE */
@@ -48,9 +48,16 @@
 #define HUBUS_CAP_UPDATE 0x08u  /* application that switches to its updater on UPDATE_ENTER */
 #define HUBUS_CAP_UPDATER 0x10u /* this is the updater: takes the update commands */
 /* Byte 3, bits 3..0: speed class, the edge response time the firmware guarantees (docs/spec/01-physical-layer.md
- * section 1.5); 0 = not declared, 1..15 = slowest..fastest. Bits 7..4 are reserved. */
+ * section 1.5); 0 = not declared, 1..15 = slowest..fastest. */
 #define HUBUS_SPEED_CLASS_MASK 0x0Fu
 #define HUBUS_SPEED_CLASS_MAX 15u
+/* Byte 3, bits 7..4: blind class, how long the slave may ignore the bus after a command addressed to it
+ * (docs/spec/07-slave.md section 7.8); 0 = never blind, 1..15 = at most 250 us * 2^(class - 1). */
+#define HUBUS_BLIND_CLASS_SHIFT 4u
+#define HUBUS_BLIND_CLASS_MAX 15u
+#define HUBUS_BLIND_CLASS(info3) ((uint8_t)((uint8_t)(info3) >> HUBUS_BLIND_CLASS_SHIFT))
+/* Upper bound of the blind time of a class in microseconds, 0 for class 0. */
+#define HUBUS_BLIND_US(cls) ((cls) ? 250uL << ((cls) - 1u) : 0uL)
 
 /*
  * Firmware update (docs/spec/06-operation.md section 6.8). UPDATE_ENTER goes to the application, the other opcodes

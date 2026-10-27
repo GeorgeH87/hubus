@@ -93,6 +93,8 @@ typedef struct {
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;
     uint8_t needs_refresh;           /* came online: read its state (REQUEST_STATE, or STATUS_CAPTURE without a state) */
+    uint64_t blind_until_ms;         /* blind after a command until then (blind class in SLAVE_INFO), 0: reachable */
+    uint8_t readback_due;            /* readback of a command deferred to the end of the blind time */
 } hubusd_slave_t;
 
 typedef struct hubusd {

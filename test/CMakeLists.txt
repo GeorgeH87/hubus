@@ -30,6 +30,7 @@ hubus_test(test_gen)
 hubus_test(test_slave_core)
 hubus_test(test_master)
 hubus_test(test_faults)
+hubus_test(test_blind)
 hubus_test(test_slave_lib hubus_slave_host)
 
 # A test of the slave core in another build configuration: the core and the simulation are compiled again with the

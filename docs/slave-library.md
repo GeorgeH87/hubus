@@ -40,12 +40,13 @@ int main(void)
 
 | Function | Purpose |
 |---|---|
-| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 27 info bytes, a state longer than 31 bytes, or a speed class above 15. |
+| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 27 info bytes, a state longer than 31 bytes, or a speed or blind class above 15. |
 | `hubus_slave_write(data, len, more)` | Writes the event buffer: overwrites unread content, increments `GEN`, sets the pending flag, and announces the data ([§4.8](spec/04-frames.md#48-event-buffer), [§6.1](spec/06-operation.md#61-idle-event-handshake)). `more = 1` marks a fragment followed by more ([§4.11](spec/04-frames.md#411-fragments)). Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, `HUBUS_WRITE_BUSY` (the buffer is being transmitted, [§3.6](spec/03-transactions.md#36-transaction-end-and-buffer-clearing); retry later), or `HUBUS_WRITE_DISABLED` (init failed). Safe from the main loop and from callbacks. |
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
+| `hubus_slave_blind_begin()`, `hubus_slave_blind_end()` | Frame a blind section ([§7.8](spec/07-slave.md#78-blind-sections)): code that has to run with all interrupts disabled for longer than the speed class allows. `begin` returns 1 with interrupts disabled, or 0 while the slave drives `DATA` or owes an answer (try again). `end` resynchronizes with the current pin levels and enables interrupts again. Main loop only, with interrupts enabled. |
 | `hubus_slave_isr()` | The pin change handler. The HAL vectors call it; the application only calls it itself in host tests, where there are no interrupts. |
 
-The functions below the library are the hardware-independent core (`core/hubus_slave_core.h`), used by the library, the host tests, and the bus simulation: `hubus_core_init(core, cfg, clk, data)`, `hubus_core_pins(core, clk, data)` (feed the pin levels after every change), `hubus_core_data_low(core)` (the `DATA` drive to apply: 1 pulls low, 0 releases), `hubus_core_write()`, and `hubus_core_is_pending()`. Firmware does not call them; `hubus_core_config_t` is the same type as `hubus_slave_config_t`.
+The functions below the library are the hardware-independent core (`core/hubus_slave_core.h`), used by the library, the host tests, and the bus simulation: `hubus_core_init(core, cfg, clk, data)`, `hubus_core_pins(core, clk, data)` (feed the pin levels after every change), `hubus_core_data_low(core)` (the `DATA` drive to apply: 1 pulls low, 0 releases), `hubus_core_write()`, `hubus_core_is_pending()`, and for blind sections `hubus_core_can_blind()` and `hubus_core_resync(core, clk, data)`. Firmware does not call them; `hubus_core_config_t` is the same type as `hubus_slave_config_t`.
 
 Configuration (`hubus_slave_config_t`):
 
@@ -58,8 +59,20 @@ Configuration (`hubus_slave_config_t`):
 | `on_command` | Application commands, opcodes `0x10..0xFF`; may be `NULL` |
 | `ctx` | Passed to the callbacks |
 | `speed_class` | Speed class `0..15` of this firmware, announced in `SLAVE_INFO` byte 3; `0` (default): not declared ([§1.5](spec/01-physical-layer.md#15-speed-classes)) |
+| `blind_class` | Blind class `0..15`: the longest blind section after a command, announced in `SLAVE_INFO` byte 3; `0` (default): never blind ([§7.8](spec/07-slave.md#78-blind-sections)) |
 
 - The speed class depends on the whole firmware, not only on the device: the longest interrupt handler or interrupt-disabled section of the application adds to the library's own response time. Declare the highest class whose edge response time the firmware meets in every situation.
+- A blind section does not count toward the speed class. It is the place for timing-critical code after a command, such as sending a WS2812 frame:
+
+  ```c
+  /* in the main loop, after the command callback has set `show` */
+  while (!hubus_slave_blind_begin()) {
+  }
+  ws2812_send(frame, len);   /* interrupts disabled */
+  hubus_slave_blind_end();
+  ```
+
+  The section must end within the blind time of `blind_class`, counted from the STOP of the command, and it must not depend on further bus traffic. Code that is short enough for the speed class needs no blind section.
 - `hubus_slave_write()` and `hubus_slave_is_pending()` exist only with the event buffer; `on_status_capture` is ignored without it.
 - Callbacks run in the interrupt handler and must be short. Group commands are executed without any response; results go through the event buffer.
 - Writes from the main loop disable interrupts for the duration of the copy (at most 31 bytes).

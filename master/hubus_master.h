@@ -125,6 +125,12 @@ void hubus_master_init(hubus_master_t *m, const hubus_master_hal_t *hal, const h
  */
 hubus_status_t hubus_master_startup(hubus_master_t *m);
 
+/*
+ * RESET (docs/spec/06-operation.md section 6.5): every slave goes idle with DATA released and keeps its buffer. Also
+ * ends a blind time (section 6.9): a slave that resynchronized after its blind section waits for a line condition.
+ */
+hubus_status_t hubus_master_reset(hubus_master_t *m);
+
 /* Optional shutdown: RESET so that all slaves are idle with DATA released. */
 hubus_status_t hubus_master_shutdown(hubus_master_t *m);
 

@@ -160,6 +160,7 @@ void setUp(void)
     hubus_host_data = 1;
     hubus_host_data_low = 0;
     hubus_host_irq_on = 0;
+    hubus_host_cli = 0;
 }
 
 void tearDown(void) {}
@@ -328,6 +329,56 @@ static void test_write_limits_and_busy(void)
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_slave_write(&v, 1, 0));
 }
 
+static void test_blind_section_resynchronizes_on_the_current_levels(void)
+{
+    hubus_slave_config_t cfg = config(7);
+    const uint8_t cmd[] = {0x25};
+    const uint8_t v = 1;
+
+    TEST_ASSERT_TRUE(hubus_slave_init(&cfg));
+    start();
+    send_frame(HUBUS_M_SEND_COMMAND, HUBUS_TARGET_LEN_EXACT, 7, cmd, 1);
+    pull(1);
+    wire(1);
+    pull(0); /* STOP, CLK stays high */
+    TEST_ASSERT_TRUE(hubus_slave_blind_begin());
+    TEST_ASSERT_EQUAL_UINT8(1, hubus_host_cli);
+
+    /* the bus goes on without the slave: START and the first bits of a frame for slave 9 */
+    master_low = 1;
+    hubus_host_data = 0;
+    hubus_host_clk = 0;
+    master_low = 0;
+    hubus_host_data = 1; /* a 0 bit */
+    hubus_host_clk = 1;
+    hubus_host_clk = 0;
+    master_low = 1;
+    hubus_host_data = 0; /* a 1 bit, sampled at the next rising edge */
+    hubus_host_clk = 1;
+
+    hubus_slave_blind_end();
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_host_cli);
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_host_data_low);
+    hubus_slave_isr(); /* the pin change flag raised meanwhile: nothing changed since the resync */
+    wire(0);
+    pull(0);
+    wire(1);
+    wire(0);
+    stop(); /* the rest of the foreign frame passes without effect */
+    TEST_ASSERT_EQUAL_UINT(1, commands);
+
+    start();
+    send_frame(HUBUS_M_SEND_COMMAND, HUBUS_TARGET_LEN_EXACT, 7, cmd, 1);
+    stop();
+    TEST_ASSERT_EQUAL_UINT(2, commands);
+
+    /* no blind section while the slave signals an event */
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_slave_write(&v, 1, 0));
+    TEST_ASSERT_EQUAL_UINT8(1, hubus_host_data_low);
+    TEST_ASSERT_FALSE(hubus_slave_blind_begin());
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_host_cli);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -339,5 +390,6 @@ int main(void)
     RUN_TEST(test_application_command);
     RUN_TEST(test_group_request_arbitration_with_mcid_7);
     RUN_TEST(test_write_limits_and_busy);
+    RUN_TEST(test_blind_section_resynchronizes_on_the_current_levels);
     return UNITY_END();
 }

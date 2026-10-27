@@ -74,6 +74,7 @@ Which slaves the master has to respect:
 - `T_CLK_HIGH` respects every slave that still follows the frame: all slaves up to the prefix bit at which the slower ones reject it ([§4.5](04-frames.md#45-addressing)), then only the addressed ones. A slave that loses a bit in the header can misread the address and, rarely, pass the CRC check with a wrong frame. `T_TURNAROUND` respects the slaves that answer or contend.
 - Slaves the master does not know yet count as class `0`: during startup and the commissioning scan, in the idle event handshake, and in bursts and group requests whose prefix may include unknown MCIDs.
 - Firmware that declares no class sends `0`, which is always safe.
+- The class describes the slave outside its blind sections. A slave that has to run timing-critical code with interrupts disabled for longer than its class allows does so in a blind section after a command, announced separately ([§7.8](07-slave.md#78-blind-sections)); the master then keeps away from that slave instead of slowing down the whole bus.
 
 ## 1.6 Nodes
 

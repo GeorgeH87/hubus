@@ -52,6 +52,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Event buffer and state as independent build options.
 - [x] Protect buffer writes against the ISR (atomic access, refuse writes during transmission).
 - [x] Speed class in `SLAVE_INFO` byte 3 (`speed_class` in the configuration, [§1.5](docs/spec/01-physical-layer.md#15-speed-classes)).
+- [x] Blind sections after a command: blind class in `SLAVE_INFO` byte 3, `hubus_slave_blind_begin()`/`hubus_slave_blind_end()` with resynchronization, waiting and deferred readback in hubusd ([§7.8](docs/spec/07-slave.md#78-blind-sections), [§6.9](docs/spec/06-operation.md#69-blind-time-after-a-command)).
 - [x] Flash/RAM budget for the ATtiny85 reference build, checked with `avr-size` ([slave library](docs/slave-library.md#optional-parts)).
 - [ ] Optional: run in simavr and measure ISR cycles and stack depth (input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, and the buffer sizes of 128 B RAM devices; [open issues](docs/project/open-issues.md)).
 - [x] Remove the old ATtiny85-only implementation.

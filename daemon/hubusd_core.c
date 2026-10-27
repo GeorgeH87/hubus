@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "hubus_frame.h"
 #include "hubusd_json.h"
 
 #define PAYLOAD_MAX 1024
@@ -141,6 +142,58 @@ static int slave_readback(const hubusd_t *d, unsigned mcid)
     return rb;
 }
 
+/* Blind time after a command in milliseconds (docs/spec/06-operation.md section 6.9): the upper bound of the class,
+ * rounded up, plus one tick so that a partly elapsed millisecond never shortens it. 0: never blind. */
+static uint64_t blind_ms(const hubusd_slave_t *s)
+{
+    unsigned long us;
+
+    if (!s->have_info || s->info.len <= HUBUS_INFO_TIMING) {
+        return 0;
+    }
+    us = HUBUS_BLIND_US(HUBUS_BLIND_CLASS(s->info.payload[HUBUS_INFO_TIMING]));
+    return us ? (uint64_t)(us + 999u) / 1000u + 1u : 0u;
+}
+
+static int is_blind(const hubusd_t *d, unsigned mcid)
+{
+    return d->slave[mcid].blind_until_ms != 0;
+}
+
+/* 1 if a frame to `target_len`/`prefix` would reach a slave that is blind (6: exact). */
+static int target_blind(const hubusd_t *d, uint8_t target_len, uint8_t prefix)
+{
+    unsigned mcid;
+
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        if (is_blind(d, mcid) && hubus_mcid_match((uint8_t)mcid, prefix, target_len)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int any_blind(const hubusd_t *d)
+{
+    return target_blind(d, 0, 0);
+}
+
+/* A command reached the slaves of `target_len`/`prefix`: those with a blind class are blind from now on. */
+static void command_sent(hubusd_t *d, uint8_t target_len, uint8_t prefix)
+{
+    uint64_t now = now_ms(d);
+    unsigned mcid;
+
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        hubusd_slave_t *s = &d->slave[mcid];
+        uint64_t ms = blind_ms(s);
+
+        if (ms && hubus_mcid_match((uint8_t)mcid, prefix, target_len)) {
+            s->blind_until_ms = now + ms;
+        }
+    }
+}
+
 static void sanitize_id(const char *in, char *out, size_t size)
 {
     size_t i;
@@ -178,6 +231,19 @@ static int dequeue(hubusd_t *d, hubusd_request_t *r)
         *r = d->queue[d->q_head];
         d->q_head = (d->q_head + 1u) % HUBUSD_QUEUE_LEN;
         d->q_count--;
+        ok = 1;
+    }
+    pthread_mutex_unlock(&d->lock);
+    return ok;
+}
+
+static int peek(hubusd_t *d, hubusd_request_t *r)
+{
+    int ok = 0;
+
+    pthread_mutex_lock(&d->lock);
+    if (d->q_count > 0) {
+        *r = d->queue[d->q_head];
         ok = 1;
     }
     pthread_mutex_unlock(&d->lock);
@@ -409,7 +475,8 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
     jw_bool(&w, "update", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATE) != 0);
     jw_bool(&w, "updater", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) != 0);
     jw_uint(&w, "max_command", s->info.payload[HUBUS_INFO_MAX_CMD]);
-    jw_uint(&w, "speed_class", s->info.len > HUBUS_INFO_SPEED ? s->info.payload[HUBUS_INFO_SPEED] & HUBUS_SPEED_CLASS_MASK : 0u);
+    jw_uint(&w, "speed_class", s->info.len > HUBUS_INFO_TIMING ? s->info.payload[HUBUS_INFO_TIMING] & HUBUS_SPEED_CLASS_MASK : 0u);
+    jw_uint(&w, "blind_class", s->info.len > HUBUS_INFO_TIMING ? HUBUS_BLIND_CLASS(s->info.payload[HUBUS_INFO_TIMING]) : 0u);
     hex(&s->info.payload[HUBUS_INFO_APP], s->info.len > HUBUS_INFO_APP ? (unsigned)s->info.len - HUBUS_INFO_APP : 0u, app);
     jw_str(&w, "app_data", app);
     if (info_device_type(s) >= 0) {
@@ -908,8 +975,8 @@ static void refresh_states(hubusd_t *d)
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->bus == HUBUSD_BUS_OK; mcid++) {
         hubusd_slave_t *s = &d->slave[mcid];
 
-        if (!s->configured || !s->needs_refresh) {
-            continue;
+        if (!s->configured || !s->needs_refresh || is_blind(d, mcid)) {
+            continue; /* a blind slave keeps the flag for later */
         }
         s->needs_refresh = 0;
         if (s->online != 1) {
@@ -923,6 +990,7 @@ static void refresh_states(hubusd_t *d)
             if (r == HUBUS_ERR_LINE_FAULT) {
                 bus_fault(d, r);
             } else if (r == HUBUS_OK) {
+                command_sent(d, 6, (uint8_t)mcid);
                 any = 1;
             }
         }
@@ -1145,7 +1213,37 @@ static void capture_exact(hubusd_t *d, unsigned mcid)
         return;
     }
     d->stats.commands_executed++;
+    command_sent(d, 6, (uint8_t)mcid);
     run_burst(d);
+}
+
+/* Reads the state of `mcid` back after a command, in the way its readback setting asks for. */
+static void read_back(hubusd_t *d, unsigned mcid, const char *expected)
+{
+    const hubusd_slave_t *s = &d->slave[mcid];
+    hubus_status_t r;
+
+    if (slave_readback(d, mcid) == HUBUSD_READBACK_CACHE) {
+        /* no contact with the slave: report what the command establishes */
+        if (expected) {
+            hubusd_slave_t *w = &d->slave[mcid];
+
+            snprintf(w->last_state, sizeof w->last_state, "%s", expected);
+            pub_topic(d, 1, expected, "slave/%u/state", mcid);
+        }
+    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_has_state(s)) {
+        /* commands are never acknowledged: read the state back, in one transaction */
+        (void)read_state(d, mcid);
+    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_can_capture(s)) {
+        /* a slave without a state captures it into the buffer, which the burst collects */
+        r = hubus_master_status_capture(&d->master, 6, (uint8_t)mcid);
+        if (r == HUBUS_OK) {
+            command_sent(d, 6, (uint8_t)mcid);
+            run_burst(d);
+        } else if (r == HUBUS_ERR_LINE_FAULT) {
+            bus_fault(d, r);
+        }
+    }
 }
 
 /* `expected` is the state the command establishes (for readback: cache), NULL if it is not known. */
@@ -1167,25 +1265,64 @@ static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t
         return;
     }
     d->stats.commands_executed++;
-    if (slave_readback(d, mcid) == HUBUSD_READBACK_CACHE) {
-        /* no contact with the slave: report what the command establishes */
-        if (expected) {
-            hubusd_slave_t *w = &d->slave[mcid];
+    command_sent(d, 6, (uint8_t)mcid);
+    if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && is_blind(d, mcid)) {
+        d->slave[mcid].readback_due = 1; /* the slave cannot answer yet: read it back when its blind time ends */
+    } else {
+        read_back(d, mcid, expected);
+    }
+}
 
-            snprintf(w->last_state, sizeof w->last_state, "%s", expected);
-            pub_topic(d, 1, expected, "slave/%u/state", mcid);
+/* Blind times that have run out (docs/spec/06-operation.md section 6.9). A RESET brings the slaves back, since a
+ * slave that resynchronized ignores the bus until the next line condition; then the deferred readbacks follow. */
+static void end_blind_times(hubusd_t *d)
+{
+    uint64_t now = now_ms(d);
+    unsigned mcid;
+    int ended = 0;
+    hubus_status_t r;
+
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        hubusd_slave_t *s = &d->slave[mcid];
+
+        if (s->blind_until_ms && now >= s->blind_until_ms) {
+            s->blind_until_ms = 0;
+            ended = 1;
         }
-    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_has_state(s)) {
-        /* commands are never acknowledged: read the state back, in one transaction */
-        (void)read_state(d, mcid);
-    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_can_capture(s)) {
-        /* a slave without a state captures it into the buffer, which the burst collects */
-        r = hubus_master_status_capture(&d->master, 6, (uint8_t)mcid);
-        if (r == HUBUS_OK) {
-            run_burst(d);
-        } else if (r == HUBUS_ERR_LINE_FAULT) {
-            bus_fault(d, r);
+    }
+    if (!ended) {
+        return;
+    }
+    r = hubus_master_reset(&d->master);
+    if (r != HUBUS_OK) {
+        bus_fault(d, r);
+        return;
+    }
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->bus == HUBUSD_BUS_OK; mcid++) {
+        hubusd_slave_t *s = &d->slave[mcid];
+
+        if (s->readback_due && !is_blind(d, mcid)) {
+            s->readback_due = 0;
+            read_back(d, mcid, NULL);
         }
+    }
+}
+
+/* 1 if a queued request has to wait because it would reach a slave in its blind time. */
+static int request_waits(const hubusd_t *d, const hubusd_request_t *q)
+{
+    switch (q->kind) {
+    case HUBUSD_REQ_SET:
+    case HUBUSD_REQ_CAPTURE:
+    case HUBUSD_REQ_READ:
+    case HUBUSD_REQ_PROBE:
+        return is_blind(d, q->prefix);
+    case HUBUSD_REQ_RAW:
+        return target_blind(d, q->target_len, q->prefix);
+    case HUBUSD_REQ_SCAN:
+        return any_blind(d); /* a blind slave would look absent */
+    default:
+        return 0;
     }
 }
 
@@ -1254,6 +1391,7 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
                 }
             } else {
                 d->stats.commands_executed++;
+                command_sent(d, q->target_len, q->prefix);
                 if (q->opcode == HUBUS_OP_STATUS_CAPTURE) {
                     run_burst(d); /* the captured states are collected as usual */
                 }
@@ -1579,7 +1717,12 @@ int hubusd_step(hubusd_t *d)
         return busy;
     }
 
-    while (handled < 4 && dequeue(d, &q)) {
+    end_blind_times(d);
+    if (d->bus != HUBUSD_BUS_OK) {
+        return 1;
+    }
+    /* in order: a request for a slave in its blind time holds up the ones behind it */
+    while (handled < 4 && peek(d, &q) && !request_waits(d, &q) && dequeue(d, &q)) {
         exec_request(d, &q);
         handled++;
         busy = 1;
@@ -1604,7 +1747,7 @@ int hubusd_step(hubusd_t *d)
     }
 
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->cfg.bus.ping_interval_s; mcid++) {
-        if (d->slave[mcid].configured && now >= d->slave[mcid].next_ping_ms) {
+        if (d->slave[mcid].configured && now >= d->slave[mcid].next_ping_ms && !is_blind(d, mcid)) {
             ping(d, mcid, d->cfg.bus.ping_failures);
             refresh_states(d);
             publish_state(d, 0);
@@ -1618,7 +1761,7 @@ int hubusd_step(hubusd_t *d)
         hubusd_slave_t *s = &d->slave[mcid];
         unsigned interval = s->configured ? d->cfg.slaves[s->cfg_index].poll_interval_s : 0u;
 
-        if (interval && now >= s->next_poll_ms) {
+        if (interval && now >= s->next_poll_ms && !is_blind(d, mcid)) {
             s->next_poll_ms = now + (uint64_t)interval * 1000u;
             if (s->online == 1) {
                 s->needs_refresh = 1;
@@ -1628,7 +1771,7 @@ int hubusd_step(hubusd_t *d)
             }
         }
     }
-    if (d->bus == HUBUSD_BUS_OK && d->cfg.bus.scan_interval_s && now >= d->next_scan_ms) {
+    if (d->bus == HUBUSD_BUS_OK && d->cfg.bus.scan_interval_s && now >= d->next_scan_ms && !any_blind(d)) {
         d->next_scan_ms = now + (uint64_t)d->cfg.bus.scan_interval_s * 1000u;
         do_scan(d, 0);
         refresh_states(d);
