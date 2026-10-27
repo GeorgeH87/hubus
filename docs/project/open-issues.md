@@ -6,7 +6,7 @@ What is still open. The specification is complete except for values that can onl
 
 - **Status:** open. The specification part is resolved: all timing values are minimums, so jitter only slows the bus down ([§1.4](../spec/01-physical-layer.md#14-timing-parameters)).
 - **Problem:** a bit-banged clock in Linux user space has jitter and occasional long pauses; the minimums `T_CLK_LOW`, `T_COND`, and `T_TURNAROUND` must still be met reliably.
-- **Direction:** `libgpiod` in user space ([§1.5](../spec/01-physical-layer.md#15-nodes)). Measure the achievable clock rate and jitter on Pi 3, Pi 4, and Pi 5; use real-time priority if needed. `master/hubus_master_gpiod.c` uses the libgpiod v2 API (compile-tested against 2.2.1, not yet run on a Raspberry Pi). Whether a v1 variant is needed depends on the Raspberry Pi OS version of the target.
+- **Direction:** `libgpiod` in user space ([§1.6](../spec/01-physical-layer.md#16-nodes)). Measure the achievable clock rate and jitter on Pi 3, Pi 4, and Pi 5; use real-time priority if needed. `master/hubus_master_gpiod.c` uses the libgpiod v2 API (compile-tested against 2.2.1, not yet run on a Raspberry Pi). Whether a v1 variant is needed depends on the Raspberry Pi OS version of the target.
 
 ## H3: Concrete Timing Values
 
@@ -14,11 +14,21 @@ What is still open. The specification is complete except for values that can onl
 - **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, `T_SAMPLE`, the line-fault threshold, and the pull-up value have no measured values; the defaults of the master are conservative placeholders ([§1.4](../spec/01-physical-layer.md#14-timing-parameters)).
 - **Direction:** derive `T_CLK_LOW` from the measured interrupt latency of the slaves (for example in `simavr`), and freeze all values after the first hardware experiments.
 
+## Speed Classes on the Master
+
+- **Status:** open. Slaves announce their speed class in `SLAVE_INFO` ([§1.5](../spec/01-physical-layer.md#15-speed-classes)); the master library and hubusd do not evaluate it yet and keep using their configured minimums. hubusd only publishes it.
+- **Direction:** first derive the bus-wide minimums from the slowest known slave and warn when one slave slows down the whole bus; later, if measurements show a gain, clock the rest of a frame faster once the slower slaves have rejected its prefix. The microsecond values of the classes are checked against the measured response times ([H3](#h3-concrete-timing-values)).
+
 ## Stack Use on 128 B RAM Devices
 
 - **Status:** open.
 - **Problem:** the default buffer size of 20 bytes for devices with 128 B RAM rests on an estimate of the interrupt path's stack use (about 40–50 bytes, from the compiler's stack usage report), not on a measurement ([slave library](../slave-library.md#supported-devices)).
 - **Direction:** measure the maximum stack depth in `simavr`.
+
+## Firmware Update
+
+- **Status:** implemented for classic tinyAVR, tested in the bus simulation ([§6.8](../spec/06-operation.md#68-firmware-update)); not yet run on an ATtiny85.
+- **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule); updates from hubusd, which today only shows the capability bits, so that the service does not have to be stopped.
 
 ## D3: Fairness Strategy
 

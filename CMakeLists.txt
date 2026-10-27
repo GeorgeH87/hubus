@@ -50,7 +50,7 @@ endif()
 # ---------------------------------------------------------------------------
 # master/: protocol master on a HAL (libgpiod HAL for the Raspberry Pi)
 # ---------------------------------------------------------------------------
-add_library(hubus_master STATIC master/hubus_master.c)
+add_library(hubus_master STATIC master/hubus_master.c master/hubus_update.c)
 target_include_directories(hubus_master PUBLIC master)
 target_link_libraries(hubus_master PUBLIC hubus_core)
 target_compile_options(hubus_master PRIVATE ${HUBUS_WARNINGS})

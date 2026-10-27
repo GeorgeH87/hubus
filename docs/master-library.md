@@ -48,6 +48,7 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 | `HUBUS_ERR_LINE` | The readback of `DATA` differs from what the master transmitted; the recovery sequence was run. |
 | `HUBUS_ERR_LINE_FAULT` | `DATA` stays low for `line_fault_ticks` ticks: a hardware fault ([§6.6](spec/06-operation.md#66-startup-shutdown-and-recovery)). |
 | `HUBUS_ERR_STACK` | The pending mask stack overflowed (corrupted arbitration); the master recovers. |
+| `HUBUS_ERR_UPDATE` | A firmware update was refused or failed; `hubus_update_result_t` tells why ([firmware update](#firmware-update)). |
 
 ## Setup
 
@@ -73,7 +74,7 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 
 ## Raspberry Pi Hardware Layer
 
-`hubus_master_gpiod.h` implements the HAL on the Linux GPIO character device with the libgpiod v2 API ([§1.5](spec/01-physical-layer.md#15-nodes)). `DATA` is requested as open-drain output and needs an external pull-up.
+`hubus_master_gpiod.h` implements the HAL on the Linux GPIO character device with the libgpiod v2 API ([§1.6](spec/01-physical-layer.md#16-nodes)). `DATA` is requested as open-drain output and needs an external pull-up.
 
 | Function | Purpose |
 |---|---|
@@ -115,6 +116,33 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 
 `m->counters` (`hubus_master_counters_t`) counts polls, requests, commands, `no_response`, `crc_errors`, `mismatches`, `line_errors`, `line_faults`, and `recoveries`; `m->mcid_counters[mcid]` (`hubus_mcid_counters_t`) counts `frames`, `crc_errors`, `no_response`, `duplicates`, `gaps`, and `lost` per slave. hubusd publishes them as [statistics](daemon.md#statistics-and-diagnosis).
 
+## Firmware Update
+
+`master/hubus_update.h` updates the firmware of a slave that carries the updater ([§6.8](spec/06-operation.md#68-firmware-update), [slave library](slave-library.md#firmware-update)).
+
+| Function | Purpose |
+|---|---|
+| `hubus_master_update(m, mcid, &img, progress, ctx, &res)` | Switches the slave to its updater (`UPDATE_ENTER`, unless the updater already runs), checks the image against the updater information, invalidates the old application, writes every page with a readback of the result, writes the info page, and starts the new application. Blocks for the whole update, about 10 s for 6 KB with the default timing; nothing else runs on the bus meanwhile. Returns `HUBUS_OK` once the new application answers. |
+| `hubus_ihex_parse(text, len, out, size, &img_len)` | Reads an Intel HEX file (`avr-objcopy -O ihex`) into `out`, filled with `FF` where the file has no data; `img_len` is one past the highest address with data. Returns 0, or -1 for a malformed file or a bad checksum. |
+| `hubus_update_reason_str(reason)` | Text of a failure reason. |
+
+`hubus_update_image_t` holds `data` and `len` (the image from the start of the application area; for the ATtiny85 the HEX file of the application as built) and `signature` (three bytes such as `1E 93 0B`; all zero skips the check). `progress(ctx, done, total)` is called after every page and may be `NULL`.
+
+`hubus_update_result_t` tells what happened: `reason` (below), `page` (the page that failed), `last_result` (the updater's last write result), `pages` (pages written, including the invalidated and the final info page), and `retries` (repeated pages). A page is tried `retry_budget + 1` times, at least three.
+
+| `reason` | Meaning |
+|---|---|
+| `HUBUS_UPD_REASON_NOT_SUPPORTED` | The slave announces neither capability bit 3 nor 4. |
+| `HUBUS_UPD_REASON_NO_UPDATER` | No answer from the updater after `UPDATE_ENTER`: no updater installed, or no slave at this MCID. |
+| `HUBUS_UPD_REASON_BAD_INFO` | The updater information or state is not usable. |
+| `HUBUS_UPD_REASON_SIGNATURE` | The device signature differs from `img.signature`. |
+| `HUBUS_UPD_REASON_TOO_LARGE` | The image is empty or does not fit in front of the info page. |
+| `HUBUS_UPD_REASON_BAD_IMAGE` | With the reset vector rule: the image does not start with `RJMP`. |
+| `HUBUS_UPD_REASON_WRITE` | A page failed every attempt. The slave stays in its updater; the update can be repeated. |
+| `HUBUS_UPD_REASON_NOT_STARTED` | After `UPDATE_LEAVE` the updater answered again: the application did not check out. |
+
+These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are. The command line example has `hubus_master_example update <mcid> <file.hex>`.
+
 ## Protocol Helpers
 
 The hardware-independent code in `core/` is shared by the master, the slave, and the tests. Applications rarely call it directly.
@@ -123,6 +151,6 @@ The hardware-independent code in `core/` is shared by the master, the slave, and
 |---|---|
 | `hubus_proto.h` | Protocol constants: message types, opcodes, `SLAVE_INFO` layout, capability bits, limits. |
 | `hubus_frame.h` | `hubus_frame_encode()` / `hubus_frame_decode()` (header, payload, CRC8), `hubus_header_pack()` / `hubus_header_unpack()`, `hubus_mcid_match()` and `hubus_prefix_mask()` for prefix addressing ([§4.5](spec/04-frames.md#45-addressing)). |
-| `hubus_crc.h` | CRC8: `hubus_crc8()` for a buffer, `hubus_crc8_update()` / `hubus_crc8_final()` byte by byte ([§4.12](spec/04-frames.md#412-integrity-check-crc8)). |
+| `hubus_crc.h` | CRC8: `hubus_crc8()` for a buffer, `hubus_crc8_update()` / `hubus_crc8_final()` byte by byte ([§4.12](spec/04-frames.md#412-integrity-check-crc8)). CRC-16 of the firmware update: `hubus_crc16()`, `hubus_crc16_update()` ([§6.8](spec/06-operation.md#68-firmware-update)). |
 | `hubus_gen.h` | `GEN` evaluation per MCID: `hubus_gen_reset()`, `hubus_gen_eval()`, `hubus_gen_lost()`. |
 | `hubus_arb.h` | Arbitration: `hubus_arb_decode()` derives the winner and the pending masks from the sampled slots; `hubus_mask_stack_*()` is the pending mask stack ([§5.5](spec/05-arbitration.md)). |

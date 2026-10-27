@@ -16,6 +16,12 @@ void hubus_slave_isr(void)
 
     hubus_core_pins(&g_core, clk, data);
     apply_data_drive();
+#if HUBUS_ENABLE_UPDATE
+    if (hubus_core_update_requested(&g_core)) {
+        g_core.update_req = 0;
+        hubus_hal_enter_updater(g_core.mcid); /* returns only without an installed updater */
+    }
+#endif
 }
 
 HUBUS_HAL_ISRS()

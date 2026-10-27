@@ -12,7 +12,7 @@
 | [3. Transactions](spec/03-transactions.md) | Transaction types, turnaround slot, response detection, transaction end |
 | [4. Frames](spec/04-frames.md) | Header, message types, opcodes, addressing, `SLAVE_INFO`, event buffer, `GEN`, state, fragments, CRC8 |
 | [5. Arbitration](spec/05-arbitration.md) | Arbitration and handoff slots, winner, pending masks, worked example |
-| [6. Operation](spec/06-operation.md) | Idle event handshake, burst, state reads, commissioning scan, reset, startup and recovery |
+| [6. Operation](spec/06-operation.md) | Idle event handshake, burst, state reads, commissioning scan, reset, startup and recovery, firmware update |
 | [7. Slave requirements](spec/07-slave.md) | Responsibilities, state machine, optional parts, no timeouts |
 | [8. Faults](spec/08-faults.md) | Fault scenarios and accepted rare cases |
 | **Implementation and operation** | |

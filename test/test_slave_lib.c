@@ -189,7 +189,7 @@ static void test_init_with_invalid_mcid_leaves_the_slave_silent(void)
     cfg.mcid = 64;
     TEST_ASSERT_FALSE(hubus_slave_init(&cfg));
     cfg = config(5);
-    cfg.info_len = 29; /* only 28 application bytes fit next to the 3 protocol bytes */
+    cfg.info_len = 28; /* only 27 application bytes fit next to the 4 protocol bytes */
     TEST_ASSERT_FALSE(hubus_slave_init(&cfg));
 }
 
@@ -233,7 +233,7 @@ static void test_request_info(void)
     turnaround();
     n = recv_frame(buf);
     stop();
-    TEST_ASSERT_EQUAL_UINT(3 + 3 + sizeof info, n);
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP + sizeof info, n);
     TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, NULL));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
     TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, buf[2 + HUBUS_INFO_MAX_CMD]);

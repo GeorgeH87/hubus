@@ -108,7 +108,7 @@ Every command is validated (MCID range, `TARGET_LEN`, payload size against the m
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
-| `hubus/slave/<n>/info` | yes | protocol version, capabilities (`events`, `status_capture`, `state`), accepted command size, application bytes, device type, firmware, serial number, profile |
+| `hubus/slave/<n>/info` | yes | protocol version, capabilities (`events`, `status_capture`, `state`, `update`: can switch to its updater, `updater`: the updater runs), speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), accepted command size, application bytes, device type, firmware, serial number, profile |
 | `hubus/slave/<n>/state` | yes | interpreted value (`ON`/`OFF`, a number), so clients get the last value after a reconnect |
 | `hubus/slave/<n>/data` | no | every received frame except duplicates: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `wrapped`, `gap`, or `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |
@@ -227,4 +227,5 @@ flowchart LR
 - The daemon reports only what the protocol carries: `SLAVE_INFO`, states, and event data. Counters inside a slave appear only if its firmware writes them into its event buffer or state.
 - The timing defaults are conservative placeholders until measured on hardware ([open issues](project/open-issues.md)).
 - Only the libgpiod v2 API is supported.
+- Firmware updates ([§6.8](spec/06-operation.md#68-firmware-update)) are not run by the daemon: it shows which slaves can be updated (`update` in `info`) and which wait in their updater (`updater`), and the raw `cmd` topic refuses the update opcodes. To update, stop the service and run `hubus_master_example update <mcid> <file.hex>` ([master library](master-library.md#firmware-update)).
 - Not yet run on a Raspberry Pi with real slaves; tested against the bus simulation, with a fake MQTT client and end to end with a real broker ([development](development.md#daemon-tests)).

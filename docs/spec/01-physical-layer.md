@@ -46,12 +46,36 @@ The master defines all timing; slaves have no time base and no timing constants 
 | line-fault threshold | Number of clock ticks after which a `DATA` line that stays low is a hardware fault; at least one maximum frame length ([§6.6](06-operation.md#66-startup-shutdown-and-recovery)). |
 
 - All values are **minimums**. A slower or jittery clock only slows the bus down; it never violates the protocol. This is what allows a user-space bit-banged master.
-- Slaves differ in interrupt latency (device family, CPU clock; some devices run at 1 MHz by default). The master configures the minimums for the slowest slave on the bus.
+- Slaves differ in interrupt latency (device family, CPU clock, the application's own interrupts; some devices run at 1 MHz by default). The master configures the minimums for the slowest slave on the bus; each slave declares its latency as a speed class ([§1.5](#15-speed-classes)).
 - A response timeout is not needed: a missing response is visible in the first bit after the turnaround slot ([§3.4](03-transactions.md#34-response-detection)).
 - The bus is intentionally moderate in speed. Robust sampling and valid frames take priority over throughput.
 - The concrete values are frozen after hardware measurements ([open issues, H2 and H3](../project/open-issues.md)).
 
-## 1.5 Nodes
+## 1.5 Speed Classes
+
+Every slave declares in `SLAVE_INFO` how fast it reacts to the bus ([§4.7](04-frames.md#47-slave-info-slave_info)). The speed class is a property of the firmware, not of the device: besides the CPU clock and the library's interrupt handler, the application's own interrupts and sections with interrupts disabled determine it. An ATtiny85 whose application runs a 100 µs timer interrupt is slower than the same device without it.
+
+The class bounds the **edge response time** `R`: the longest time from a `CLK` edge or a `DATA` change until the slave has handled it completely, including the evaluation of a frame and the application callbacks this calls.
+
+| Class | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `R` at most (µs) | not declared | 1024 | 724 | 512 | 362 | 256 | 181 | 128 | 90 | 64 | 45 | 32 | 22 | 16 | 11 | 8 |
+
+Class `0` means that the master applies its configured minimums.
+
+- `R` halves every two classes: class `k` allows `8 µs · 2^((15−k)/2)`, rounded down. Odd classes are exact powers of two.
+- A slave declares the highest class whose `R` it meets in every situation; in doubt the next slower one. A slave slower than class 1 declares `0`, and the master is configured for it.
+- The scale is coarse on purpose: all timing values are minimums and the master clock is jittery ([§1.4](#14-timing-parameters)), so a finer scale would promise a precision the bus does not have.
+- Derived timing: `T_CLK_LOW`, `T_CLK_HIGH`, `T_COND`, and `T_TURNAROUND` each at least `R` of the slaves they have to respect, plus the master's own margin.
+
+Which slaves the master has to respect:
+
+- Every slave watches every edge, also of frames that are not addressed to it, because it tells line conditions from bits by the order of the edges ([§7.7](07-slave.md#77-implementation-notes)). A slave that misses a complete `CLK` low phase sees a `DATA` change while `CLK` is high and takes it for START or STOP. `T_CLK_LOW` and `T_COND` therefore always respect the slowest slave on the bus.
+- `T_CLK_HIGH` respects every slave that still follows the frame: all slaves up to the prefix bit at which the slower ones reject it ([§4.5](04-frames.md#45-addressing)), then only the addressed ones. A slave that loses a bit in the header can misread the address and, rarely, pass the CRC check with a wrong frame. `T_TURNAROUND` respects the slaves that answer or contend.
+- Slaves the master does not know yet count as class `0`: during startup and the commissioning scan, in the idle event handshake, and in bursts and group requests whose prefix may include unknown MCIDs.
+- Firmware that declares no class sends `0`, which is always safe.
+
+## 1.6 Nodes
 
 **Master:** a Raspberry Pi 3 or newer (including Zero 2 W, Pi 4, Pi 400, Pi 5, and the Compute Modules).
 
@@ -62,7 +86,7 @@ The master defines all timing; slaves have no time base and no timing constants 
 
 **Slaves:** tinyAVR microcontrollers. Supported devices, pins, and resource limits are part of the slave library ([slave library: supported devices](../slave-library.md#supported-devices)).
 
-## 1.6 Layout Notes
+## 1.7 Layout Notes
 
 - Keep `CLK` and `DATA` short and clean in early prototypes, and add decoupling capacitors near each microcontroller.
 - Abnormal line states are resolved by the master (clock ticks, RESET), never by slave timeouts ([§6.6](06-operation.md#66-startup-shutdown-and-recovery)).

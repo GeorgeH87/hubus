@@ -104,6 +104,32 @@ static void test_single_bit_errors_detected(void)
     }
 }
 
+
+/* CRC-16/CCITT-FALSE against its check value and a textbook bit loop. */
+static void test_crc16(void)
+{
+    uint8_t data[64];
+    size_t n, i;
+
+    TEST_ASSERT_EQUAL_HEX16(HUBUS_CRC16_CHECK, hubus_crc16((const uint8_t *)"123456789", 9));
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, hubus_crc16(NULL, 0));
+    for (i = 0; i < sizeof data; i++) {
+        data[i] = (uint8_t)(i * 73u + 5u);
+    }
+    for (n = 0; n <= sizeof data; n++) {
+        uint16_t ref = 0xFFFF;
+        int b;
+
+        for (i = 0; i < n; i++) {
+            ref ^= (uint16_t)(data[i] << 8);
+            for (b = 0; b < 8; b++) {
+                ref = (ref & 0x8000u) ? (uint16_t)((ref << 1) ^ 0x1021u) : (uint16_t)(ref << 1);
+            }
+        }
+        TEST_ASSERT_EQUAL_HEX16(ref, hubus_crc16(data, n));
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -113,5 +139,6 @@ int main(void)
     RUN_TEST(test_matches_reference);
     RUN_TEST(test_degenerate_frames_are_not_valid);
     RUN_TEST(test_single_bit_errors_detected);
+    RUN_TEST(test_crc16);
     return UNITY_END();
 }

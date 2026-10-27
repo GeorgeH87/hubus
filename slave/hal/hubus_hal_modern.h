@@ -59,6 +59,10 @@ static inline void hubus_hal_irq_enable(void)
     HUBUS_DATA_PORTSTRUCT.HUBUS_CAT3(PIN, HUBUS_DATA_PIN, CTRL) = PORT_ISC_BOTHEDGES_gc;
 }
 
+#if HUBUS_ENABLE_UPDATE
+#error "HUBUS_ENABLE_UPDATE: no updater for the tinyAVR 0/1/2-series yet (classic tinyAVR only)"
+#endif
+
 #define HUBUS_ATOMIC_BEGIN()         \
     uint8_t hubus_sreg_saved = SREG; \
     cli()

@@ -56,6 +56,7 @@ if(HUBUS_AVR)
         DEPENDS hubus_size_reference
         COMMENT "Checking flash/RAM budget")
 
+    add_subdirectory(${PROJECT_SOURCE_DIR}/updater ${CMAKE_BINARY_DIR}/updater)
     add_subdirectory(${PROJECT_SOURCE_DIR}/examples ${CMAKE_BINARY_DIR}/examples)
 else()
     # Host build of the slave library with the host HAL (pins are variables).

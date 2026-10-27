@@ -60,8 +60,11 @@ The first payload byte of `SEND_COMMAND` is the opcode; the remaining bytes are 
 | Opcode | Meaning |
 |---|---|
 | `0x00` | `STATUS_CAPTURE`: the application writes its current status into the event buffer, which sets the pending flag ([§4.8](#48-event-buffer)). Ignored by a slave without event buffer. |
-| `0x01..0x0F` | Reserved for protocol use. Slaves ignore unknown reserved opcodes. |
+| `0x01..0x04` | Firmware update: `UPDATE_ENTER` for an application with update support; `UPDATE_LOAD`, `UPDATE_WRITE`, and `UPDATE_LEAVE` for the updater ([§6.8](06-operation.md#68-firmware-update)). |
+| `0x05..0x0F` | Reserved for protocol use. |
 | `0x10..0xFF` | Application-defined, for example relay on/off. |
+
+Slaves ignore unknown reserved opcodes, including the update opcodes they do not take.
 
 A slave ignores a command whose payload exceeds the maximum it announces in `SLAVE_INFO` byte 2 ([§4.7](#47-slave-info-slave_info)). It still receives the complete frame and stays synchronized. The master must not send larger commands than a slave accepts.
 
@@ -105,9 +108,12 @@ Static metadata, typically a constant in flash.
 | Byte | Content |
 |---|---|
 | 0 | HUBUS protocol version (`0` in v0) |
-| 1 | Capabilities: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); the other bits are reserved (`0`). Bit 0 requires bit 2. |
+| 1 | Capabilities: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); bit 3 = application with firmware update, takes `UPDATE_ENTER`; bit 4 = the updater is running ([§6.8](06-operation.md#68-firmware-update)); bits 7–5 are reserved (`0`). Bit 0 requires bit 2; bits 3 and 4 exclude each other. |
 | 2 | Maximum command payload the slave accepts, in bytes (`1..31`; including the opcode) |
-| 3.. | Application-defined, for example device type, firmware version. SHOULD include a device-unique value, such as a serial number, so that the commissioning scan reliably detects duplicate MCIDs ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)). |
+| 3 | Bits 3–0: speed class `0..15`, `0` = not declared ([§1.5](01-physical-layer.md#15-speed-classes)); bits 7–4 are reserved (`0`). |
+| 4.. | Application-defined, for example device type, firmware version. SHOULD include a device-unique value, such as a serial number, so that the commissioning scan reliably detects duplicate MCIDs ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)). |
+
+The reserved bits are a reserve for later protocol functions: slaves send `0`, and masters ignore them.
 
 ## 4.8 Event Buffer
 

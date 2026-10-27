@@ -40,7 +40,7 @@ int main(void)
 
 | Function | Purpose |
 |---|---|
-| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 28 info bytes, or a state longer than 31 bytes. |
+| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 27 info bytes, a state longer than 31 bytes, or a speed class above 15. |
 | `hubus_slave_write(data, len, more)` | Writes the event buffer: overwrites unread content, increments `GEN`, sets the pending flag, and announces the data ([§4.8](spec/04-frames.md#48-event-buffer), [§6.1](spec/06-operation.md#61-idle-event-handshake)). `more = 1` marks a fragment followed by more ([§4.11](spec/04-frames.md#411-fragments)). Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, `HUBUS_WRITE_BUSY` (the buffer is being transmitted, [§3.6](spec/03-transactions.md#36-transaction-end-and-buffer-clearing); retry later), or `HUBUS_WRITE_DISABLED` (init failed). Safe from the main loop and from callbacks. |
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
 | `hubus_slave_isr()` | The pin change handler. The HAL vectors call it; the application only calls it itself in host tests, where there are no interrupts. |
@@ -52,12 +52,14 @@ Configuration (`hubus_slave_config_t`):
 | Field | Meaning |
 |---|---|
 | `mcid` | `1..63`, unique on the bus ([§7.2](spec/07-slave.md#72-mcid)) |
-| `info`, `info_len` | Application bytes of `SLAVE_INFO`, in flash (`PROGMEM`), 0..28 bytes; include a device-unique value ([§4.7](spec/04-frames.md#47-slave-info-slave_info)) |
+| `info`, `info_len` | Application bytes of `SLAVE_INFO`, in flash (`PROGMEM`), 0..27 bytes; include a device-unique value ([§4.7](spec/04-frames.md#47-slave-info-slave_info)) |
 | `state`, `state_len` | Live state for `REQUEST_STATE`: RAM the application keeps up to date, read while transmitting, 1..31 bytes; `NULL` for no state ([§4.10](spec/04-frames.md#410-state)) |
 | `on_status_capture` | Writes the current status with `hubus_slave_write()`; `NULL`: `STATUS_CAPTURE` not supported (capability bit 0 cleared) |
 | `on_command` | Application commands, opcodes `0x10..0xFF`; may be `NULL` |
 | `ctx` | Passed to the callbacks |
+| `speed_class` | Speed class `0..15` of this firmware, announced in `SLAVE_INFO` byte 3; `0` (default): not declared ([§1.5](spec/01-physical-layer.md#15-speed-classes)) |
 
+- The speed class depends on the whole firmware, not only on the device: the longest interrupt handler or interrupt-disabled section of the application adds to the library's own response time. Declare the highest class whose edge response time the firmware meets in every situation.
 - `hubus_slave_write()` and `hubus_slave_is_pending()` exist only with the event buffer; `on_status_capture` is ignored without it.
 - Callbacks run in the interrupt handler and must be short. Group commands are executed without any response; results go through the event buffer.
 - Writes from the main loop disable interrupts for the duration of the copy (at most 31 bytes).
@@ -87,7 +89,7 @@ The event buffer costs about 500 bytes of flash and 39 bytes of RAM (including t
 | `slave-sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
 
-The device types in their `SLAVE_INFO` (1 relay, 2 switch, 3 temperature) match the built-in profiles of [hubusd](daemon.md#device-profiles).
+The device types in their `SLAVE_INFO` (1 relay, 2 switch, 3 temperature) match the built-in profiles of [hubusd](daemon.md#device-profiles). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
 
 ## Configuration
 
@@ -99,11 +101,36 @@ Build options, set on the compiler command line; the CMake build takes them as c
 | `HUBUS_DATA_PORT`, `HUBUS_DATA_PIN` | Port letter and bit of `DATA` (for example `B`, `3`) |
 | `HUBUS_ENABLE_EVENTS` | Event buffer: `1` (default) or `0` |
 | `HUBUS_ENABLE_STATE` | State for `REQUEST_STATE`: `1` (default) or `0` |
+| `HUBUS_ENABLE_UPDATE` | Switch to the updater on `UPDATE_ENTER`: `0` (default) or `1`; needs `HUBUS_UPDATER_ADDR` and an installed updater ([firmware update](#firmware-update)) |
+| `HUBUS_UPDATER_ADDR` | Byte address of the updater, `0x1800` on the ATtiny85 (CMake cache variable of the same name) |
 | `HUBUS_TX_BUF_SIZE` | Event buffer size, `1..31`, default 31 (20 on 128 B RAM devices with the event buffer) |
 | `HUBUS_RX_BUF_SIZE` | Largest accepted command payload including the opcode, `1..31`, default 31 (20 on 128 B RAM devices with the event buffer); announced in `SLAVE_INFO` byte 2. Longer commands are received to the end and ignored ([§4.4](spec/04-frames.md#44-command-opcodes)). |
 | `HUBUS_CLK_PCGROUP`, `HUBUS_DATA_PCGROUP` | Pin change group of a pin on classic devices the HAL does not know (see below) |
 
 `DATA` needs an external pull-up to 3.3 V ([§1.1](spec/01-physical-layer.md#11-bus-lines)); the library never enables internal pull-ups.
+
+## Firmware Update
+
+A slave can receive new firmware over the bus if it carries the updater ([§6.8](spec/06-operation.md#68-firmware-update)). This is an optional part: the updater takes 2 KB of flash, so it suits devices with 8 KB or more. It exists for classic tinyAVR devices, built and tested for the ATtiny85; the tinyAVR 0/1/2-series has no updater yet, and `HUBUS_ENABLE_UPDATE` stops the build there.
+
+| ATtiny85 flash | Content |
+|---|---|
+| `0x0000..0x17BF` | application, at most 6080 bytes; word 0 jumps to the updater |
+| `0x17C0..0x17FF` | info page: length, CRC-16, and entry of the application |
+| `0x1800..0x1FFF` | updater (`updater/`, 2006 bytes) |
+
+**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and `HUBUS_UPDATER_ADDR=0x1800`, and keep it below `0x17C0`; nothing else changes in the firmware. The library then announces capability bit 3 and jumps to the updater on `UPDATE_ENTER`, with the MCID handed over in `GPIOR1`. This costs about 60 bytes of flash. Without an updater at that address the command is ignored. `example_switch_update` is the switch built this way, with a check that it fits.
+
+**Updater.** `build/avr-attiny85/updater/hubus_updater.hex`, linked to `0x1800`. It runs without interrupts, starts the application at reset if the info page checks out (a CRC-16 over the application, about 30 ms at 8 MHz), and otherwise waits for the master. Its MCID comes from the application and is kept in the last EEPROM byte; before an application has stored one, the build option `HUBUS_UPDATER_MCID` (default 63) applies. The application must not use that EEPROM byte.
+
+**Installing.** The first installation needs an in-system programmer, once: the updater, an application, and the fuses. `SELFPRGEN` (extended fuse bit 0) allows the updater to write flash; brown-out detection protects the write against a sinking supply ([§8.10](spec/08-faults.md#810-power-loss-during-a-firmware-update)); `WDTON` must stay unprogrammed. With the internal 8 MHz oscillator and BOD at 2.7 V:
+
+```sh
+avrdude -c usbasp -p t85 -U lfuse:w:0xE2:m -U hfuse:w:0xDD:m -U efuse:w:0xFE:m
+avrdude -c usbasp -p t85 -U flash:w:build/avr-attiny85/updater/hubus_updater.hex
+```
+
+The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master, which loads the application with `hubus_master_update()`, for example with `hubus_master_example update 5 example_switch_update.hex` ([master library](master-library.md#firmware-update)). Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
 
 ## Supported Devices
 

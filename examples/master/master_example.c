@@ -18,6 +18,7 @@
  *   state <mcid>               REQUEST_STATE: the live state of one slave (0 = every slave that has one)
  *   info <mcid>                REQUEST_INFO to a single MCID
  *   send <mcid> <opcode> [b..] SEND_COMMAND to one slave (0 = all), numbers in C syntax
+ *   update <mcid> <file.hex>   firmware update through the updater (docs/spec/06-operation.md section 6.8)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,7 @@
 #include <time.h>
 
 #include "hubus_master_gpiod.h"
+#include "hubus_update.h"
 
 static void print_state(void *ctx, const hubus_slave_frame_t *f)
 {
@@ -53,6 +55,13 @@ static void print_frame(void *ctx, const hubus_slave_frame_t *f, hubus_gen_resul
         printf(" %02X", f->payload[i]);
     }
     printf("\n");
+}
+
+static void print_progress(void *ctx, uint16_t done, uint16_t total)
+{
+    (void)ctx;
+    printf("\rpage %u of %u", done, total);
+    fflush(stdout);
 }
 
 static int fail(const char *what, hubus_status_t s)
@@ -113,7 +122,7 @@ int main(int argc, char **argv)
         }
     }
     if (i >= argc) {
-        fprintf(stderr, "usage: %s [options] scan|burst|monitor|capture <mcid>|state <mcid>|info <mcid>|send <mcid> <opcode> [bytes]\n", argv[0]);
+        fprintf(stderr, "usage: %s [options] scan|burst|monitor|capture <mcid>|state <mcid>|info <mcid>|send <mcid> <opcode> [bytes]|update <mcid> <file.hex>\n", argv[0]);
         return 2;
     }
 
@@ -227,6 +236,36 @@ int main(int argc, char **argv)
         s = hubus_master_send_command(&master, mcid ? HUBUS_TARGET_LEN_EXACT : 0, (uint8_t)mcid, (uint8_t)opcode, args,
                                       (uint8_t)n);
         rc = s == HUBUS_OK ? 0 : fail("send", s);
+    } else if (strcmp(argv[i], "update") == 0 && i + 2 < argc) {
+        static uint8_t image[65536];
+        static char text[4 * 65536];
+        hubus_update_image_t img;
+        hubus_update_result_t res;
+        FILE *fp = fopen(argv[i + 2], "rb");
+        size_t n = fp ? fread(text, 1, sizeof text, fp) : 0;
+        uint32_t len;
+
+        if (fp) {
+            fclose(fp);
+        }
+        if (!fp || n == sizeof text || hubus_ihex_parse(text, n, image, sizeof image, &len) != 0) {
+            fprintf(stderr, "update: cannot read Intel HEX file %s\n", argv[i + 2]);
+            rc = 1;
+            goto done;
+        }
+        memset(&img, 0, sizeof img);
+        img.data = image;
+        img.len = len;
+        s = hubus_master_update(&master, (uint8_t)number(argv[i + 1]), &img, print_progress, NULL, &res);
+        putchar('\n');
+        if (s == HUBUS_ERR_UPDATE) {
+            fprintf(stderr, "update: %s (page 0x%04X, last result %u)\n", hubus_update_reason_str(res.reason), res.page,
+                    res.last_result);
+            rc = 1;
+        } else {
+            printf("%u pages written, %u repeated\n", res.pages, res.retries);
+            rc = s == HUBUS_OK ? 0 : fail("update", s);
+        }
     } else {
         fprintf(stderr, "unknown command %s\n", argv[i]);
         rc = 2;

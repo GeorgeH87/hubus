@@ -51,7 +51,25 @@
 #define HUBUS_ENABLE_STATE 1
 #endif
 
-/* Application bytes of SLAVE_INFO follow 3 protocol bytes. */
+/*
+ * Firmware update (docs/spec/06-operation.md section 6.8), off by default:
+ *
+ *   HUBUS_ENABLE_UPDATE  application side: announces capability bit 3 and takes UPDATE_ENTER; the caller then hands
+ *                        over to the updater (hubus_core_update_requested()). Only for devices with an updater.
+ *   HUBUS_UPDATER        the updater itself: announces capability bit 4 and passes the update opcodes
+ *                        (UPDATE_LOAD and higher) to on_command.
+ */
+#ifndef HUBUS_ENABLE_UPDATE
+#define HUBUS_ENABLE_UPDATE 0
+#endif
+#ifndef HUBUS_UPDATER
+#define HUBUS_UPDATER 0
+#endif
+#if HUBUS_ENABLE_UPDATE && HUBUS_UPDATER
+#error "HUBUS_ENABLE_UPDATE is for the application, HUBUS_UPDATER for the updater: not both"
+#endif
+
+/* Application bytes of SLAVE_INFO follow 4 protocol bytes. */
 #define HUBUS_INFO_APP_MAX (HUBUS_MAX_PAYLOAD - HUBUS_INFO_APP)
 
 /* Read a byte of the static SLAVE_INFO data (flash on AVR). */
@@ -75,6 +93,7 @@ typedef struct {
     hubus_status_capture_fn on_status_capture; /* NULL: STATUS_CAPTURE not supported; ignored without HUBUS_ENABLE_EVENTS */
     hubus_command_fn on_command;               /* application opcodes 0x10..0xFF, may be NULL */
     void *ctx;
+    uint8_t speed_class;                       /* 0 (not declared) .. HUBUS_SPEED_CLASS_MAX, announced in SLAVE_INFO */
 } hubus_core_config_t;
 
 /* Result of hubus_core_write(). */
@@ -106,6 +125,7 @@ typedef struct hubus_slave_core {
 #endif
     hubus_command_fn on_command;
     void *ctx;
+    uint8_t speed_class; /* SLAVE_INFO byte 3 */
 
     /* line */
     uint8_t clk;         /* last seen CLK level */
@@ -145,11 +165,14 @@ typedef struct hubus_slave_core {
     uint8_t gen;
     uint8_t pending;
 #endif
+#if HUBUS_ENABLE_UPDATE
+    uint8_t update_req; /* valid UPDATE_ENTER received */
+#endif
 } hubus_slave_core_t;
 
 /* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), too much info data,
- * or a state longer than HUBUS_MAX_PAYLOAD the core stays disabled (ignores all traffic, never drives DATA) and 0 is
- * returned. */
+ * a state longer than HUBUS_MAX_PAYLOAD, or a speed class above HUBUS_SPEED_CLASS_MAX the core stays disabled (ignores
+ * all traffic, never drives DATA) and 0 is returned. */
 uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, uint8_t clk, uint8_t data);
 
 /* Feed the current pin levels (1 = high). Call after every pin change. */
@@ -160,6 +183,20 @@ static inline uint8_t hubus_core_data_low(const hubus_slave_core_t *c)
 {
     return c->data_low;
 }
+
+/* 1 between transactions (after STOP or RESET, also while signaling an event); polled from the main loop. */
+static inline uint8_t hubus_core_is_idle(const hubus_slave_core_t *c)
+{
+    return *(const volatile uint8_t *)&c->state <= HUBUS_ST_EVENT;
+}
+
+#if HUBUS_ENABLE_UPDATE
+/* 1 after a valid UPDATE_ENTER: the caller hands over to the updater at once. */
+static inline uint8_t hubus_core_update_requested(const hubus_slave_core_t *c)
+{
+    return c->update_req;
+}
+#endif
 
 #if HUBUS_ENABLE_EVENTS
 /*

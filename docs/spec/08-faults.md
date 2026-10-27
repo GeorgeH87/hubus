@@ -4,7 +4,7 @@
 
 - The master detects every fault and recovers from it ([§6.6](06-operation.md#66-startup-shutdown-and-recovery)); slaves have no timeouts and no recovery state ([§7.6](07-slave.md#76-no-timeouts)).
 - Every START resynchronizes all slaves ([§2.5](02-line-conditions.md#25-resynchronization)), and a frame with an invalid CRC is always discarded ([§4.12](04-frames.md#412-integrity-check-crc8)).
-- Corner cases that can only occur rarely and recover at the next master cycle are **accepted and documented** rather than prevented with additional slave logic. Sections 8.3 to 8.9 list them.
+- Corner cases that can only occur rarely and recover at the next master cycle are **accepted and documented** rather than prevented with additional slave logic. Sections 8.3 to 8.10 list them.
 
 ## 8.2 Fault Scenarios
 
@@ -53,3 +53,7 @@ A slave with neither a state nor an event buffer ([§7.4](07-slave.md#74-optiona
 ## 8.9 Master Stops Mid-Transaction
 
 If the master stops clocking in the middle of a transaction, for example because its process crashes, the slaves stay in their current state, possibly holding `DATA` low. The bus is blocked until the master restarts; its startup sequence releases the line, generates RESET, and collects the buffered data, which survives the reset ([§6.6](06-operation.md#66-startup-shutdown-and-recovery)).
+
+## 8.10 Power Loss During a Firmware Update
+
+An update interrupted at any point leaves the slave in its updater, because the old application is invalidated first and the info page that makes the new one valid is written last ([§6.8](06-operation.md#68-firmware-update)); the master repeats the update. One window remains on devices without a protected boot section, such as the ATtiny85: while the first page is erased and written again (about 9 ms), the reset vector does not point to the updater. A power loss in exactly this window leaves a device that only an in-system programmer recovers. This is accepted; the first page is written once per update, and brown-out detection keeps a sinking supply from corrupting the write.

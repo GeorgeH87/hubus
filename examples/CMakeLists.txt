@@ -11,7 +11,7 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
         ${PROJECT_SOURCE_DIR}/core/hubus_frame.c
         ${PROJECT_SOURCE_DIR}/slave/hubus_slave.c)
 
-    # hubus_example(name source events state)
+    # hubus_example(name source events state [extra definitions...])
     function(hubus_example name source events state)
         add_executable(example_${name} ${source} ${HUBUS_EXAMPLE_LIB_SOURCES})
         target_include_directories(example_${name} PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/slave)
@@ -19,7 +19,7 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
             HUBUS_CLK_PORT=${clk_port} HUBUS_CLK_PIN=${clk_pin}
             HUBUS_DATA_PORT=${data_port} HUBUS_DATA_PIN=${data_pin}
             HUBUS_TX_BUF_SIZE=${HUBUS_TX_BUF_SIZE} HUBUS_RX_BUF_SIZE=${HUBUS_RX_BUF_SIZE}
-            HUBUS_ENABLE_EVENTS=${events} HUBUS_ENABLE_STATE=${state})
+            HUBUS_ENABLE_EVENTS=${events} HUBUS_ENABLE_STATE=${state} ${ARGN})
         target_compile_options(example_${name} PRIVATE -Wall -Wextra)
         set_target_properties(example_${name} PROPERTIES SUFFIX ".elf")
         add_custom_command(TARGET example_${name} POST_BUILD
@@ -33,4 +33,16 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
     hubus_example(sensor          slave-sensor/sensor_example.c                  1      0)
     hubus_example(sensor_passive  slave-sensor-passive/sensor_passive_example.c  0      1)
     hubus_example(relay_simple    slave-relay-simple/relay_simple_example.c      0      0)
+
+    # The switch with firmware update: installed together with the updater, and loadable through it. It must end
+    # before the info page, the last page in front of the updater.
+    hubus_example(switch_update   slave-switch/switch_example.c                  1      1
+                  HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    math(EXPR app_space "${HUBUS_UPDATER_ADDR} - 64")
+    add_custom_target(example_switch_update_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:example_switch_update>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS example_switch_update
+        COMMENT "Checking that the application fits below the updater")
 endif()
