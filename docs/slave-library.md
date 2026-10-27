@@ -101,8 +101,9 @@ The event buffer costs about 500 bytes of flash and 39 bytes of RAM (including t
 | `slave-sensor` | temperature sensor: value collected with `STATUS_CAPTURE` | 1 | 0 |
 | `slave-sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
+| `slave-ledstrip` | WS2812B strip driven with raw frames, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
 
-The device types in their `SLAVE_INFO` (1 relay, 2 switch, 3 temperature) match the built-in profiles of [hubusd](daemon.md#device-profiles). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
+The device types in their `SLAVE_INFO` (1 relay, 2 switch, 3 temperature) match the built-in profiles of [hubusd](daemon.md#device-profiles). The LED strip (type 4) uses a custom profile for its button. The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
 
 ## Configuration
 
