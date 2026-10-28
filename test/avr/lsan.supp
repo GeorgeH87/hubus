@@ -1,0 +1,2 @@
+# simavr does not free the IRQs and ELF sections it allocates; our own allocations stay checked.
+leak:libsimavr

@@ -52,7 +52,10 @@ run_mutant "blind: resync keeps stale DATA level"    core/hubus_slave_core.c '/^
 run_mutant "blind: resync returns to IDLE"           core/hubus_slave_core.c '/^void hubus_core_resync/,/^}/s/    go_ignore(c);/    c->data_low = 0; c->state = HUBUS_ST_IDLE;/'
 run_mutant "blind: section allowed while signaling"  core/hubus_slave_core.h 's/return st == HUBUS_ST_IDLE || st == HUBUS_ST_RX/return st <= HUBUS_ST_RX/'
 run_mutant "blind: blind class not announced"        core/hubus_slave_core.c 's/(uint8_t)(cfg->blind_class << HUBUS_BLIND_CLASS_SHIFT)/0u/'
-run_mutant "oversized command executed"           core/hubus_slave_core.c 's/if (c->rx_len >= 1u \&\& c->rx_len <= HUBUS_RX_BUF_SIZE) {/if (c->rx_len >= 1u) {/'
+# The classic AVR HAL: only the firmware on the simulated ATtiny85 (test/avr) runs it.
+run_mutant "AVR HAL: DATA driven through PORT"         slave/hal/hubus_hal_classic.h 's/        HUBUS_DATA_DDRREG |= (uint8_t)_BV(HUBUS_DATA_PIN);/        HUBUS_DATA_PORTREG |= (uint8_t)_BV(HUBUS_DATA_PIN);/'
+run_mutant "AVR HAL: no pin change interrupt for CLK"  slave/hal/hubus_hal_classic.h 's/    HUBUS_PCMSK(HUBUS_CLK_PCGROUP) |= (uint8_t)_BV(HUBUS_CLK_PIN);/    (void)0;/'
+run_mutant "oversized command executed"          core/hubus_slave_core.c 's/if (c->rx_len >= 1u \&\& c->rx_len <= HUBUS_RX_BUF_SIZE) {/if (c->rx_len >= 1u) {/'
 run_mutant "CRC polynomial"                        core/hubus_crc.c 's/HUBUS_CRC_POLY)/0x07)/'
 run_mutant "prefix mask off by one"                core/hubus_frame.h 's/(0x3Fu << (HUBUS_MCID_BITS - target_len))/(0x3Fu << (HUBUS_MCID_BITS - target_len + 1))/'
 run_mutant "mask stack is FIFO"                    core/hubus_arb.c 's/\*m = s->item\[--s->n\];/*m = s->item[0]; { uint8_t i; for (i = 1; i < s->n; i++) s->item[i - 1] = s->item[i]; } s->n--;/'

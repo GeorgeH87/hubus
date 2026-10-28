@@ -68,6 +68,9 @@ target_compile_options(test_update PRIVATE ${HUBUS_TEST_WARNINGS})
 add_test(NAME test_update COMMAND test_update)
 set_tests_properties(test_update PROPERTIES TIMEOUT 120)
 
+# The slave firmware on simulated AVR devices (simavr).
+add_subdirectory(avr)
+
 if(HUBUSD_LIB_AVAILABLE)
     hubus_test(test_daemon_config hubusd_lib)
     hubus_test(test_daemon_core hubusd_lib)

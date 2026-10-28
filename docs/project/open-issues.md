@@ -12,7 +12,8 @@ What is still open. The specification is complete except for values that can onl
 
 - **Status:** open.
 - **Problem:** `T_CLK`, `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, `T_SAMPLE`, the line-fault threshold, and the pull-up value have no measured values; the defaults of the master are conservative placeholders ([§1.4](../spec/01-physical-layer.md#14-timing-parameters)).
-- **Direction:** derive `T_CLK_LOW` from the measured interrupt latency of the slaves (for example in `simavr`), and freeze all values after the first hardware experiments.
+- **Direction:** derive `T_CLK_LOW` from the measured interrupt latency of the slaves, and freeze all values after the first hardware experiments.
+- **Measured in `simavr`** ([AVR tests](../development.md#avr-tests)): the ATtiny85 at 8 MHz with the test firmware answers every edge within 53 µs (speed class 9); the bus works down to a half period of 50 µs and fails at 45 µs. The master defaults (50 µs) are therefore not conservative for this device but just enough. The longest response is the start of an answer after the turnaround slot (`T_TURNAROUND`, default 200 µs); a few ordinary edges, at byte boundaries with the bitwise CRC, already take more than 45 µs.
 
 ## Speed Classes on the Master
 
@@ -21,9 +22,10 @@ What is still open. The specification is complete except for values that can onl
 
 ## Stack Use on 128 B RAM Devices
 
-- **Status:** open.
-- **Problem:** the default buffer size of 20 bytes for devices with 128 B RAM rests on an estimate of the interrupt path's stack use (about 40–50 bytes, from the compiler's stack usage report), not on a measurement ([slave library](../slave-library.md#supported-devices)).
-- **Direction:** measure the maximum stack depth in `simavr`.
+- **Status:** measured; the default is unchanged.
+- **Problem:** the default buffer size of 20 bytes for devices with 128 B RAM rested on an estimate of the interrupt path's stack use (about 40–50 bytes, from the compiler's stack usage report) ([slave library](../slave-library.md#supported-devices)).
+- **Measured in `simavr`** ([AVR tests](../development.md#avr-tests)): 34 bytes of stack in total on the ATtiny85, of which 32 in the interrupt handler, with short callbacks (one of them writes the event buffer). The application's own callbacks and interrupts add to it.
+- **Direction:** decide whether 128 B devices can keep larger buffers; a test firmware for the ATtiny25 would measure it on the device itself.
 
 ## Firmware Update
 

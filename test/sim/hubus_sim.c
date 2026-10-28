@@ -205,8 +205,12 @@ static uint8_t hal_read_data(void *ctx)
 static void hal_delay(void *ctx, uint32_t ns)
 {
     hubus_sim_t *sim = ctx;
+    uint64_t until = sim->time_ns + ns;
 
-    sim->time_ns += ns;
+    if (sim->advance) {
+        sim->advance(sim, until, sim->advance_ctx);
+    }
+    sim->time_ns = until;
 }
 
 hubus_master_hal_t hubus_sim_master_hal(hubus_sim_t *sim)
