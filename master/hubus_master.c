@@ -280,7 +280,7 @@ hubus_status_t hubus_master_startup(hubus_master_t *m)
     return recover(m);
 }
 
-hubus_status_t hubus_master_shutdown(hubus_master_t *m)
+hubus_status_t hubus_master_reset(hubus_master_t *m)
 {
     uint8_t saved_hold = m->hold;
     hubus_status_t r;
@@ -289,6 +289,11 @@ hubus_status_t hubus_master_shutdown(hubus_master_t *m)
     r = cond_reset(m);
     m->hold = saved_hold;
     return r;
+}
+
+hubus_status_t hubus_master_shutdown(hubus_master_t *m)
+{
+    return hubus_master_reset(m);
 }
 
 hubus_status_t hubus_master_check_event(hubus_master_t *m, uint8_t *event)

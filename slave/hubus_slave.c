@@ -38,6 +38,23 @@ uint8_t hubus_slave_init(const hubus_slave_config_t *cfg)
     return ok;
 }
 
+uint8_t hubus_slave_blind_begin(void)
+{
+    hubus_hal_cli();
+    if (!hubus_core_can_blind(&g_core)) {
+        hubus_hal_sei();
+        return 0;
+    }
+    return 1;
+}
+
+void hubus_slave_blind_end(void)
+{
+    hubus_core_resync(&g_core, hubus_hal_read_clk(), hubus_hal_read_data());
+    apply_data_drive();
+    hubus_hal_sei(); /* a pin change flag raised meanwhile runs the ISR, which finds the levels unchanged */
+}
+
 #if HUBUS_ENABLE_EVENTS
 uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more)
 {

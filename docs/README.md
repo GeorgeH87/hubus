@@ -17,6 +17,7 @@
 | [8. Faults](spec/08-faults.md) | Fault scenarios and accepted rare cases |
 | **Implementation and operation** | |
 | [Slave library](slave-library.md) | API, optional parts, configuration, supported devices, footprint, examples |
+| [Example: LED strip and push button](example-ledstrip.md) | One ATtiny85 driving a WS2812B strip with raw frames and reporting a button; the frame goes out in a blind section |
 | [Master library](master-library.md) | API of the master: HAL, startup, bursts, transactions, commissioning, diagnosis, protocol helpers |
 | [hubusd](daemon.md) | The master as an MQTT service: installation, configuration, topics, Home Assistant |
 | [Development](development.md) | Toolchain, build and test, documentation tools |

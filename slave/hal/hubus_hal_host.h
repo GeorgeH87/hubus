@@ -13,6 +13,7 @@ extern uint8_t hubus_host_clk;
 extern uint8_t hubus_host_data;     /* resolved DATA line level, 1 = high */
 extern uint8_t hubus_host_data_low; /* DATA drive of the slave, 1 = pulled low */
 extern uint8_t hubus_host_irq_on;
+extern uint8_t hubus_host_cli;          /* 1 while the library has disabled all interrupts (blind section) */
 extern uint8_t hubus_host_updater_mcid; /* MCID handed to the updater, 0 = none */
 
 static inline void hubus_hal_init(void) { hubus_host_data_low = 0; }
@@ -24,6 +25,8 @@ static inline void hubus_hal_enter_updater(uint8_t mcid) { hubus_host_updater_mc
 
 #define HUBUS_ATOMIC_BEGIN() ((void)0)
 #define HUBUS_ATOMIC_END() ((void)0)
+static inline void hubus_hal_cli(void) { hubus_host_cli = 1; }
+static inline void hubus_hal_sei(void) { hubus_host_cli = 0; }
 #define HUBUS_HAL_ISRS()
 
 #endif /* HUBUS_HAL_HOST_H */

@@ -68,6 +68,9 @@ static inline void hubus_hal_irq_enable(void)
     cli()
 #define HUBUS_ATOMIC_END() (SREG = hubus_sreg_saved)
 
+static inline void hubus_hal_cli(void) { cli(); }
+static inline void hubus_hal_sei(void) { sei(); }
+
 /* Defined in hubus_slave.c; called from every vector. */
 void hubus_slave_isr(void);
 

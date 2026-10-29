@@ -57,3 +57,7 @@ If the master stops clocking in the middle of a transaction, for example because
 ## 8.10 Power Loss During a Firmware Update
 
 An update interrupted at any point leaves the slave in its updater, because the old application is invalidated first and the info page that makes the new one valid is written last ([§6.8](06-operation.md#68-firmware-update)); the master repeats the update. One window remains on devices without a protected boot section, such as the ATtiny85: while the first page is erased and written again (about 9 ms), the reset vector does not point to the updater. A power loss in exactly this window leaves a device that only an in-system programmer recovers. This is accepted; the first page is written once per update, and brown-out detection keeps a sinking supply from corrupting the write.
+
+## 8.11 Blind Section Longer Than Announced
+
+A slave whose blind section lasts longer than its blind class allows ([§7.8](07-slave.md#78-blind-sections)) misses the frames the master sends it after the announced time. It answers no request, and a command to it is lost; the master sees missing responses, retries, and marks the slave offline after repeated misses, exactly as for a slave that is temporarily unplugged. The other slaves are not affected, since the slave resynchronizes at the end of its section and waits for the next START. The fix is a higher blind class in the firmware.

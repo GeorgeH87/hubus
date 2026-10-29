@@ -57,6 +57,7 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 | `hubus_master_cfg_default(cfg)` | Fills the configuration with conservative defaults ([timing](daemon.md#timing) lists the fields and values). |
 | `hubus_master_init(m, hal, cfg)` | Initialises the master and drives `CLK` low and `DATA` released. A `t_sample_ns` above `t_clk_high_ns` is limited to it, and a `t_turnaround_ns` below `t_clk_low_ns` is raised to it. |
 | `hubus_master_startup(m)` | Startup sequence: clock until `DATA` is high, then RESET ([§6.6](spec/06-operation.md#66-startup-shutdown-and-recovery)). Also the recovery after a fault. Does not collect data: call `hubus_master_burst()` afterwards. |
+| `hubus_master_reset(m)` | RESET ([§6.5](spec/06-operation.md#65-communication-stack-reset)): every slave goes idle with `DATA` released and keeps its buffer. Also ends a blind time ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)). |
 | `hubus_master_shutdown(m)` | Optional: RESET, so that all slaves are idle with `DATA` released. |
 
 `hubus_master_cfg_t`: `t_clk_low_ns`, `t_clk_high_ns`, `t_sample_ns`, `t_cond_ns`, `t_turnaround_ns` (all minimums in nanoseconds), `line_fault_ticks`, `retry_budget`, `follow_more`, `max_fragments`, `dup_fail_threshold`, `line_problem_count`. `hubusd` exposes them as the [`timing` section](daemon.md#timing).

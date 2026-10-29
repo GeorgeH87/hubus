@@ -10,6 +10,7 @@
 #define HUBUS_ENABLE_UPDATE 1
 #define hubus_core_init app_core_init
 #define hubus_core_pins app_core_pins
+#define hubus_core_resync app_core_resync
 #include "../../core/hubus_slave_core.c"
 
 #include "update_app_core.h"

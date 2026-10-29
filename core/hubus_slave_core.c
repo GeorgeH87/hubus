@@ -250,8 +250,8 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
 #endif
         } else if (i == HUBUS_INFO_MAX_CMD) {
             b = HUBUS_RX_BUF_SIZE;
-        } else if (i == HUBUS_INFO_SPEED) {
-            b = c->speed_class;
+        } else if (i == HUBUS_INFO_TIMING) {
+            b = c->timing;
         } else {
             b = HUBUS_INFO_READ(&c->info[i - HUBUS_INFO_APP]);
         }
@@ -398,10 +398,11 @@ uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, u
     c->data = data ? 1u : 0u;
     if (cfg->mcid < HUBUS_MCID_MIN || cfg->mcid > HUBUS_MCID_MAX ||
         cfg->info_len > HUBUS_INFO_APP_MAX || (cfg->info_len > 0u && cfg->info == NULL) ||
-        cfg->state_len > HUBUS_MAX_PAYLOAD || cfg->speed_class > HUBUS_SPEED_CLASS_MAX) {
+        cfg->state_len > HUBUS_MAX_PAYLOAD || cfg->speed_class > HUBUS_SPEED_CLASS_MAX ||
+        cfg->blind_class > HUBUS_BLIND_CLASS_MAX) {
         return 0;
     }
-    c->speed_class = cfg->speed_class;
+    c->timing = (uint8_t)(cfg->speed_class | (uint8_t)(cfg->blind_class << HUBUS_BLIND_CLASS_SHIFT));
     c->info = cfg->info;
     c->info_len = cfg->info_len;
 #if HUBUS_ENABLE_STATE
@@ -415,6 +416,16 @@ uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, u
     c->ctx = cfg->ctx;
     c->mcid = cfg->mcid;
     return 1;
+}
+
+void hubus_core_resync(hubus_slave_core_t *c, uint8_t clk, uint8_t data)
+{
+    if (!c->mcid) {
+        return;
+    }
+    c->clk = clk ? 1u : 0u;
+    c->data = data ? 1u : 0u;
+    go_ignore(c);
 }
 
 void hubus_core_pins(hubus_slave_core_t *c, uint8_t clk, uint8_t data)

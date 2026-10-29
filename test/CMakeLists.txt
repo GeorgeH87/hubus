@@ -30,6 +30,7 @@ hubus_test(test_gen)
 hubus_test(test_slave_core)
 hubus_test(test_master)
 hubus_test(test_faults)
+hubus_test(test_blind)
 hubus_test(test_slave_lib hubus_slave_host)
 
 # A test of the slave core in another build configuration: the core and the simulation are compiled again with the
@@ -66,6 +67,9 @@ target_link_libraries(test_update PRIVATE unity)
 target_compile_options(test_update PRIVATE ${HUBUS_TEST_WARNINGS})
 add_test(NAME test_update COMMAND test_update)
 set_tests_properties(test_update PROPERTIES TIMEOUT 120)
+
+# The slave firmware on simulated AVR devices (simavr).
+add_subdirectory(avr)
 
 if(HUBUSD_LIB_AVAILABLE)
     hubus_test(test_daemon_config hubusd_lib)

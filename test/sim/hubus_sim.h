@@ -72,6 +72,12 @@ struct hubus_sim {
 
     hubus_sim_read_filter_fn read_filter;
     void *read_filter_ctx;
+
+    /* Slaves that run in time (simulated microcontrollers, test/avr/): called by every master delay with its end
+     * time. The hook runs those slaves up to `until_ns`, advances `time_ns` as it goes, and settles the line after
+     * each of their DATA changes. NULL: slaves react instantly. */
+    void (*advance)(hubus_sim_t *sim, uint64_t until_ns, void *ctx);
+    void *advance_ctx;
     unsigned master_reads; /* number of DATA reads by the master so far */
 
     FILE *trace; /* optional text trace */
