@@ -84,6 +84,31 @@ uint8_t hubus_slave_is_pending(void);
 uint8_t hubus_slave_blind_begin(void);
 void hubus_slave_blind_end(void);
 
+/*
+ * Interruptible section (docs/slave-library.md): long timing-critical work that runs in short pieces with all
+ * interrupts disabled, gives way to the bus, and is repeated later, for example a WS2812 frame of an animation. The
+ * slave is never blind; a piece only delays the reaction to an edge, so the longest piece counts towards the speed
+ * class.
+ *
+ *   if (hubus_slave_short_begin()) {        // 1: bus between transactions, interrupts disabled
+ *       for (each piece) {
+ *           if (hubus_slave_short_interrupted()) {
+ *               break;                       // an edge waits: give up the rest
+ *           }
+ *           send_piece();                    // interrupts still disabled
+ *       }
+ *       hubus_slave_short_end();             // interrupts on; the ISR handles the edge
+ *   }
+ *
+ * hubus_slave_short_begin() returns 1 with all interrupts disabled if the bus is between transactions and no edge
+ * waits, else 0 with interrupts enabled (try again later). hubus_slave_short_interrupted() returns 1 once a CLK or
+ * DATA change waits for the ISR: the caller then ends the section without delay. Unlike a blind section it needs no
+ * announcement to the master, and nothing the master sends is missed.
+ */
+uint8_t hubus_slave_short_begin(void);
+uint8_t hubus_slave_short_interrupted(void);
+void hubus_slave_short_end(void);
+
 /* Pin change handler; called by the HAL vectors (and by host tests). */
 void hubus_slave_isr(void);
 

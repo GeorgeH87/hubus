@@ -134,6 +134,7 @@ typedef struct hubus_slave_core {
     uint8_t data_low;    /* output: 1 = pull DATA low, 0 = release */
 #if HUBUS_ENABLE_EVENTS
     uint8_t armed;       /* STOP/RESET seen: a pending slave announces itself at the next falling CLK edge */
+    uint8_t hold;        /* command received with a blind class: no announcement before the next START or RESET */
 #endif
 
     uint8_t state;

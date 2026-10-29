@@ -38,3 +38,13 @@ add_dependencies(test_avr_slave hubus_avr_test_firmware)
 add_test(NAME test_avr_slave COMMAND test_avr_slave)
 set_tests_properties(test_avr_slave PROPERTIES TIMEOUT 300 LABELS avr
     ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=0")
+
+add_executable(test_avr_ledstrip test_avr_ledstrip.c)
+target_link_libraries(test_avr_ledstrip PRIVATE hubus_avr_sim)
+target_include_directories(test_avr_ledstrip PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+target_compile_definitions(test_avr_ledstrip PRIVATE HUBUS_AVR_FW_DIR="${HUBUS_AVR_FW_DIR}")
+target_compile_options(test_avr_ledstrip PRIVATE ${HUBUS_TEST_WARNINGS})
+add_dependencies(test_avr_ledstrip hubus_avr_test_firmware)
+add_test(NAME test_avr_ledstrip COMMAND test_avr_ledstrip)
+set_tests_properties(test_avr_ledstrip PROPERTIES TIMEOUT 300 LABELS avr
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=0")

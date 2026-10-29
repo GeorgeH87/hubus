@@ -161,6 +161,7 @@ void setUp(void)
     hubus_host_data_low = 0;
     hubus_host_irq_on = 0;
     hubus_host_cli = 0;
+    hubus_host_edge = 0;
 }
 
 void tearDown(void) {}
@@ -379,6 +380,37 @@ static void test_blind_section_resynchronizes_on_the_current_levels(void)
     TEST_ASSERT_EQUAL_UINT8(0, hubus_host_cli);
 }
 
+static void test_short_section_only_between_transactions(void)
+{
+    hubus_slave_config_t cfg = config(7);
+    const uint8_t cmd[] = {0x25};
+
+    TEST_ASSERT_TRUE(hubus_slave_init(&cfg));
+    TEST_ASSERT_TRUE(hubus_slave_short_begin());
+    TEST_ASSERT_EQUAL_UINT8(1, hubus_host_cli);
+    TEST_ASSERT_FALSE(hubus_slave_short_interrupted());
+    hubus_host_edge = 1; /* an edge arrives while interrupts are disabled */
+    TEST_ASSERT_TRUE(hubus_slave_short_interrupted());
+    hubus_slave_short_end();
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_host_cli);
+
+    /* not while an edge waits */
+    TEST_ASSERT_FALSE(hubus_slave_short_begin());
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_host_cli);
+    hubus_host_edge = 0;
+
+    /* not within a transaction */
+    start();
+    TEST_ASSERT_FALSE(hubus_slave_short_begin());
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_host_cli);
+    send_frame(HUBUS_M_SEND_COMMAND, HUBUS_TARGET_LEN_EXACT, 7, cmd, 1);
+    TEST_ASSERT_FALSE(hubus_slave_short_begin());
+    stop();
+    TEST_ASSERT_EQUAL_UINT(1, commands);
+    TEST_ASSERT_TRUE(hubus_slave_short_begin());
+    hubus_slave_short_end();
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -391,5 +423,6 @@ int main(void)
     RUN_TEST(test_group_request_arbitration_with_mcid_7);
     RUN_TEST(test_write_limits_and_busy);
     RUN_TEST(test_blind_section_resynchronizes_on_the_current_levels);
+    RUN_TEST(test_short_section_only_between_transactions);
     return UNITY_END();
 }

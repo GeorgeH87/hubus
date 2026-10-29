@@ -27,3 +27,11 @@ hubus_fw(fw_slave_5       5    1      1)
 hubus_fw(fw_slave_6       6    1      1)
 hubus_fw(fw_passive_9     9    0      1)
 hubus_fw(fw_command_10    10   0      0)
+
+# The LED strip example (MCID 11) as it is shipped, with its WS2812B output on PB0.
+add_executable(fw_ledstrip ${HUBUS_ROOT}/examples/slave-ledstrip/ledstrip_example.c
+    ${HUBUS_ROOT}/examples/slave-ledstrip/ledvm.c ${HUBUS_FW_LIB_SOURCES})
+target_include_directories(fw_ledstrip PRIVATE ${HUBUS_ROOT}/core ${HUBUS_ROOT}/slave)
+target_compile_definitions(fw_ledstrip PRIVATE HUBUS_ENABLE_EVENTS=1 HUBUS_ENABLE_STATE=1 HUBUS_TX_BUF_SIZE=3)
+target_compile_options(fw_ledstrip PRIVATE -Wall -Wextra $<$<BOOL:${HUBUS_WERROR}>:-Werror>)
+set_target_properties(fw_ledstrip PROPERTIES SUFFIX ".elf")

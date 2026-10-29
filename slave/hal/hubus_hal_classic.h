@@ -89,6 +89,22 @@
 #define HUBUS_PC_ENABLE(group) (GIMSK |= (uint8_t)_BV(PCIE))
 #endif
 
+/* Interrupt flag of a group: set by a pin change also while interrupts are disabled. */
+#define HUBUS_PCIF_N_(group) PCIF##group
+#define HUBUS_PCIF_N(group) HUBUS_PCIF_N_(group)
+#if defined(PCIF0)
+#define HUBUS_PCIF_BIT(group) HUBUS_PCIF_N(group)
+#else
+#define HUBUS_PCIF_BIT(group) PCIF
+#endif
+#if defined(PCIFR)
+#define HUBUS_PC_FLAG(group) (PCIFR & _BV(HUBUS_PCIF_BIT(group)))
+#elif defined(EIFR)
+#define HUBUS_PC_FLAG(group) (EIFR & _BV(HUBUS_PCIF_BIT(group)))
+#else
+#define HUBUS_PC_FLAG(group) (GIFR & _BV(HUBUS_PCIF_BIT(group)))
+#endif
+
 /* Interrupt vector of a group. */
 #if defined(PCINT0_vect)
 #define HUBUS_PC_VECT(group) HUBUS_PCINT_VECT_N(group)
@@ -169,6 +185,17 @@ static inline void hubus_hal_enter_updater(uint8_t mcid)
 
 static inline void hubus_hal_cli(void) { cli(); }
 static inline void hubus_hal_sei(void) { sei(); }
+
+/* 1 if a pin change of the group is waiting for the ISR (with interrupts disabled). Pins that the application enables
+ * in the same PCMSK count as well. */
+static inline uint8_t hubus_hal_edge_pending(void)
+{
+#if HUBUS_DATA_PCGROUP == HUBUS_CLK_PCGROUP
+    return HUBUS_PC_FLAG(HUBUS_CLK_PCGROUP) ? 1u : 0u;
+#else
+    return (HUBUS_PC_FLAG(HUBUS_CLK_PCGROUP) || HUBUS_PC_FLAG(HUBUS_DATA_PCGROUP)) ? 1u : 0u;
+#endif
+}
 
 /* Defined in hubus_slave.c; called from every vector. */
 void hubus_slave_isr(void);

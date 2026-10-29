@@ -55,6 +55,26 @@ void hubus_slave_blind_end(void)
     hubus_hal_sei(); /* a pin change flag raised meanwhile runs the ISR, which finds the levels unchanged */
 }
 
+uint8_t hubus_slave_short_begin(void)
+{
+    hubus_hal_cli();
+    if (!hubus_core_is_idle(&g_core) || hubus_hal_edge_pending()) {
+        hubus_hal_sei();
+        return 0;
+    }
+    return 1;
+}
+
+uint8_t hubus_slave_short_interrupted(void)
+{
+    return hubus_hal_edge_pending();
+}
+
+void hubus_slave_short_end(void)
+{
+    hubus_hal_sei(); /* the ISR handles a waiting pin change now */
+}
+
 #if HUBUS_ENABLE_EVENTS
 uint8_t hubus_slave_write(const uint8_t *data, uint8_t len, uint8_t more)
 {

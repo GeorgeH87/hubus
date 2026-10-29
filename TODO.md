@@ -76,6 +76,8 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 
 - [x] Slave examples for every combination of event buffer and state: switch, relay, sensor, passive sensor, relay without feedback. Compile-tested for the ATtiny85, not run on hardware.
 - [x] Master example application (scan, burst, state, info, commands). Compiles; not run on a Raspberry Pi yet.
+- [x] LED strip: fixed frames in a blind section, and animations from bytecode the master sends, shown in an interruptible section. Run on simulated ATtiny85 devices with the WS2812B signal decoded; not run on hardware.
+- [ ] LED strip on the master: compile formulas to bytecode and send them (today only raw `cmd` messages).
 
 ## 8. Continuous Integration
 

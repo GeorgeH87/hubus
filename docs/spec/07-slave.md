@@ -58,7 +58,7 @@ START leads from every state to `RX`; STOP and RESET lead from every state to `I
 | Line condition | Slave action, from any state |
 |---|---|
 | START | Release `DATA`, discard any partial frame, arbitration, or transmission, and receive from bit 0. |
-| STOP | Release `DATA`, go to `IDLE`. After a complete `SLAVE_DATA` response to `REQUEST_DATA` in this transaction, clear the pending flag, which empties the event buffer ([§3.6](03-transactions.md#36-transaction-end-and-buffer-clearing)). Arm the announcement at the next falling edge ([§6.1](06-operation.md#61-idle-event-handshake)). |
+| STOP | Release `DATA`, go to `IDLE`. After a complete `SLAVE_DATA` response to `REQUEST_DATA` in this transaction, clear the pending flag, which empties the event buffer ([§3.6](03-transactions.md#36-transaction-end-and-buffer-clearing)). Arm the announcement at the next falling edge ([§6.1](06-operation.md#61-idle-event-handshake)), except after a command to a slave with a blind class ([§7.8](#78-blind-sections)). |
 | RESET | Release `DATA`, reset the communication stack, go to `IDLE`; buffer, `GEN`, and pending flag are kept ([§6.5](06-operation.md#65-communication-stack-reset)). |
 
 There is no recovery state in a slave: after a CRC failure or a frame that does not match, it ignores the rest and waits for the next START.
@@ -127,5 +127,7 @@ Some applications have to run timing-critical code with all interrupts disabled 
 The third rule is what keeps the rest of the bus safe. The slave tells line conditions from bits by comparing the pins with the levels it saw last ([§7.7](#77-implementation-notes)). With the levels from before the blind section, the first `DATA` change after it could look like a START in the middle of somebody else's frame. The slave would then read the following bits as a header, and if that header passes the CRC by chance, it could execute a command that was never sent or contend in a handoff slot of a foreign arbitration. In `IGNORE` it cannot do either, and every START brings it back in step ([§2.5](02-line-conditions.md#25-resynchronization)).
 
 A slave that became pending during a blind section stays in `IGNORE` on an idle bus and announces itself only after the next STOP or RESET ([§6.1](06-operation.md#61-idle-event-handshake)). The master ends every blind time with a transaction or a RESET, so the announcement is only delayed.
+
+For the same reason a slave with a blind class keeps quiet after every command addressed to it: from the command until the next START or RESET it announces no pending data, neither at the STOP of the command transaction nor when the application writes the event buffer. An announcement holds `DATA` low until the master clocks again, and rule 1 forbids a blind section meanwhile; the section would slip into a later transaction, past the announced time, and the slave would miss a frame meant for it. This applies to every command, since the master cannot tell which one makes the slave blind, and it also delays an announcement that was already due.
 
 A blind section is not a timeout in the sense of [§7.6](#76-no-timeouts): the protocol logic still changes state only on edges and line conditions. The length of the section is a property of the application code, which the slave declares so that the master can plan around it.

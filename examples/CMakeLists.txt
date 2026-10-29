@@ -50,6 +50,12 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
         DEPENDS example_switch_update
         COMMENT "Checking that the application fits below the updater")
 
-    # 2-byte event buffer: the RAM goes to the LED frame buffer
-    hubus_example(ledstrip        slave-ledstrip/ledstrip_example.c              1      1 TX_BUF 2)
+    # 3-byte event buffer: the RAM goes to the LED frame buffer and the animation program
+    hubus_example(ledstrip        "slave-ledstrip/ledstrip_example.c;slave-ledstrip/ledvm.c" 1 1 TX_BUF 3)
+    add_custom_target(example_ledstrip_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:example_ledstrip>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=8192 -DMAX_RAM=384
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS example_ledstrip
+        COMMENT "Checking that the LED strip leaves room for the stack")
 endif()

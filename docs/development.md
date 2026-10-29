@@ -86,8 +86,9 @@ All commands run inside WSL from the repository root (from Windows: `wsl -d hubu
 - `test_slave_core`: the slave state machine with exact wire traffic from a bit-level master (`test/support/rawmaster.h`).
 - `test_master`: the real master with real slave cores on the simulated wired-AND bus (startup, bursts, commands, commissioning, fragments, states).
 - `test_faults`: fault injection (bit errors, lost and extra clock edges, lost STOP and START, stuck line, noise in the arbitration, an event racing a START, duplicate MCID), against [§8](spec/08-faults.md).
-- `test_blind`: blind sections after a command ([§7.8](spec/07-slave.md#78-blind-sections)): a slave that ends its section at every possible point of foreign traffic (bursts with arbitration and handoff slots, state reads, commands) stays passive until the next START and disturbs nobody; the stale-level case the resynchronization prevents.
-- `test_slave_lib`: the public slave API on the host HAL.
+- `test_blind`: blind sections after a command ([§7.8](spec/07-slave.md#78-blind-sections)): a slave that ends its section at every possible point of foreign traffic (bursts with arbitration and handoff slots, state reads, commands) stays passive until the next START and disturbs nobody; the stale-level case the resynchronization prevents. A pending slave with a blind class keeps quiet after a command until the next START or RESET.
+- `test_slave_lib`: the public slave API on the host HAL, including the interruptible section.
+- `test_ledvm`: the animation bytecode of the LED strip example: the program check, every instruction with its 16-bit semantics, outputs and layouts, the documented programs, and arbitrary code under the sanitizers.
 - `test_small_buffers`: the core with small compile-time buffers and without the state.
 - `test_slave_passive`, `test_slave_command_only`: the core without the event buffer, with and without the state ([§7.4](spec/07-slave.md#74-optional-parts)).
 
@@ -101,7 +102,8 @@ The host tests run the slave core compiled for the host. `test_avr_slave` (label
 - Measurements, printed with `-V` and checked against limits: the longest interrupt handler, the longest edge response (pin change to the end of the handler that processed it, the `R` of [§1.5](spec/01-physical-layer.md#15-speed-classes)), the deepest stack, and the shortest clock half period at which the bus still works. The test firmware declares speed class 9 (64 µs); with every master minimum set to 64 µs the bus must work.
 - Two mutants of `tools/mutation-check.sh` break the classic HAL; only this test catches them.
 - Measured with the test firmware (ATtiny85, 8 MHz): longest response 423 cycles (53 µs), at the falling edge after the turnaround slot of an exact request, where the answer starts; stack 34 bytes, of which 32 in the interrupt handler, callbacks included. The bus works down to a half period of 50 µs and fails at 45 µs.
-- Not covered: the tinyAVR 0/1/2-series (no simulator), the updater (`SPM`), and the examples, which sleep in their main loop.
+- `test_avr_ledstrip`: the LED strip example as shipped, with its WS2812B output on PB0 decoded bit by bit: the power-up frame, `SHOW`, programs with parameters and time, refused programs, and an animation on a busy bus, where frames are given up but no transaction is lost. Checks the WS2812B bit timing, the low phases inside a frame, and the response time.
+- Not covered: the tinyAVR 0/1/2-series (no simulator), the updater (`SPM`), and the other examples, which sleep in their main loop.
 
 ### Daemon Tests
 
