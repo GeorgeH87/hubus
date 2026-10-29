@@ -9,7 +9,8 @@
  *   hubus_hal_irq_enable()    enable the pin change interrupts for CLK and DATA
  *   HUBUS_HAL_ISRS()          defines the interrupt vectors; each calls hubus_slave_isr()
  *   HUBUS_ATOMIC_BEGIN/END()  critical section against the ISR
- *   hubus_hal_cli/sei()       disable / enable all interrupts (blind sections)
+ *   hubus_hal_cli/sei()       disable / enable all interrupts (blind and short sections)
+ *   hubus_hal_edge_pending()  1 if a CLK or DATA change waits for the ISR (short sections)
  *
  * The HAL is chosen from the compiler device macro (-mmcu=...):
  *   classic tinyAVR (ATtiny25/85, 24/84, 441/841, 48/88, 261/861, ...)  hubus_hal_classic.h

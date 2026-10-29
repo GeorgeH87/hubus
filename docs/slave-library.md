@@ -44,6 +44,7 @@ int main(void)
 | `hubus_slave_write(data, len, more)` | Writes the event buffer: overwrites unread content, increments `GEN`, sets the pending flag, and announces the data ([§4.8](spec/04-frames.md#48-event-buffer), [§6.1](spec/06-operation.md#61-idle-event-handshake)). `more = 1` marks a fragment followed by more ([§4.11](spec/04-frames.md#411-fragments)). Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, `HUBUS_WRITE_BUSY` (the buffer is being transmitted, [§3.6](spec/03-transactions.md#36-transaction-end-and-buffer-clearing); retry later), or `HUBUS_WRITE_DISABLED` (init failed). Safe from the main loop and from callbacks. |
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
 | `hubus_slave_blind_begin()`, `hubus_slave_blind_end()` | Frame a blind section ([§7.8](spec/07-slave.md#78-blind-sections)): code that has to run with all interrupts disabled for longer than the speed class allows. `begin` returns 1 with interrupts disabled, or 0 while the slave drives `DATA` or owes an answer (try again). `end` resynchronizes with the current pin levels and enables interrupts again. Main loop only, with interrupts enabled. |
+| `hubus_slave_short_begin()`, `hubus_slave_short_interrupted()`, `hubus_slave_short_end()` | Frame an interruptible section: long timing-critical work in short pieces with all interrupts disabled, which gives way to the bus. `begin` returns 1 with interrupts disabled if the bus is between transactions and no edge waits, else 0 with interrupts enabled (try again). `interrupted` returns 1 once a `CLK` or `DATA` change waits for the interrupt handler; the caller then stops. `end` enables interrupts again. Main loop only. |
 | `hubus_slave_isr()` | The pin change handler. The HAL vectors call it; the application only calls it itself in host tests, where there are no interrupts. |
 
 The functions below the library are the hardware-independent core (`core/hubus_slave_core.h`), used by the library, the host tests, and the bus simulation: `hubus_core_init(core, cfg, clk, data)`, `hubus_core_pins(core, clk, data)` (feed the pin levels after every change), `hubus_core_data_low(core)` (the `DATA` drive to apply: 1 pulls low, 0 releases), `hubus_core_write()`, `hubus_core_is_pending()`, and for blind sections `hubus_core_can_blind()` and `hubus_core_resync(core, clk, data)`. Firmware does not call them; `hubus_core_config_t` is the same type as `hubus_slave_config_t`.
@@ -72,7 +73,20 @@ Configuration (`hubus_slave_config_t`):
   hubus_slave_blind_end();
   ```
 
-  The section must end within the blind time of `blind_class`, counted from the STOP of the command, and it must not depend on further bus traffic. Code that is short enough for the speed class needs no blind section.
+  The section must end within the blind time of `blind_class`, counted from the STOP of the command, and it must not depend on further bus traffic. Code that is short enough for the speed class needs no blind section. With a blind class the slave does not announce pending data between a command and the next START or RESET, so that an announcement cannot hold up the blind section ([§7.8](spec/07-slave.md#78-blind-sections)).
+- An interruptible section is the alternative for work that repeats on its own, without a command, such as the frames of an animation. The slave is never blind: before each piece the code checks for a waiting edge, and gives up the rest of the work when one arrives. The longest piece adds to the response time and counts toward the speed class; nothing is announced to the master.
+
+  ```c
+  /* in the main loop, whenever a new frame is ready */
+  if (hubus_slave_short_begin()) {        /* 0 while the bus is busy: try again later */
+      for (i = 0; i < len && !hubus_slave_short_interrupted(); i++) {
+          ws2812_byte(frame[i]);          /* interrupts disabled, about 12 us */
+      }
+      hubus_slave_short_end();            /* the interrupt handler takes the edge now */
+  }
+  ```
+
+  The work has to tolerate being cut off: the LED strip example sends an interrupted frame again later ([LED strip](example-ledstrip.md#animations)).
 - `hubus_slave_write()` and `hubus_slave_is_pending()` exist only with the event buffer; `on_status_capture` is ignored without it.
 - Callbacks run in the interrupt handler and must be short. Group commands are executed without any response; results go through the event buffer.
 - Writes from the main loop disable interrupts for the duration of the copy (at most 31 bytes).
@@ -101,7 +115,7 @@ The event buffer costs about 500 bytes of flash and 39 bytes of RAM (including t
 | `slave-sensor` | temperature sensor: value collected with `STATUS_CAPTURE` | 1 | 0 |
 | `slave-sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
-| `slave-ledstrip` | WS2812B strip driven with raw frames, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
+| `slave-ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
 
 The device types in their `SLAVE_INFO` (1 relay, 2 switch, 3 temperature) match the built-in profiles of [hubusd](daemon.md#device-profiles). The LED strip (type 4) uses a custom profile for its button. The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
 

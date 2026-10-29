@@ -33,6 +33,14 @@ hubus_test(test_faults)
 hubus_test(test_blind)
 hubus_test(test_slave_lib hubus_slave_host)
 
+# The animation bytecode of the LED strip example.
+add_executable(test_ledvm test_ledvm.c ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip/ledvm.c)
+target_include_directories(test_ledvm PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+target_link_libraries(test_ledvm PRIVATE unity hubus_core)
+target_compile_options(test_ledvm PRIVATE ${HUBUS_TEST_WARNINGS})
+add_test(NAME test_ledvm COMMAND test_ledvm)
+set_tests_properties(test_ledvm PROPERTIES TIMEOUT 120)
+
 # A test of the slave core in another build configuration: the core and the simulation are compiled again with the
 # given definitions.
 function(hubus_core_variant_test name source)

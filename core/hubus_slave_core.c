@@ -33,6 +33,7 @@ static void on_start(hubus_slave_core_t *c)
 #if HUBUS_ENABLE_EVENTS
     c->tx_complete = 0;
     c->armed = 0;
+    c->hold = 0;
 #endif
     c->nbits = 0;
     c->idx = 0;
@@ -45,7 +46,7 @@ static void on_stop(hubus_slave_core_t *c)
 #if HUBUS_ENABLE_EVENTS
     /* START immediately followed by STOP is a RESET: tx_complete is already
      * cleared by the START, so buffer, GEN, and pending flag stay intact. */
-    c->armed = 1;
+    c->armed = (uint8_t)!c->hold;
     if (c->tx_complete) {
         c->pending = 0;
     }
@@ -73,6 +74,12 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
         go_ignore(c);
         if (c->rx_len >= 1u && c->rx_len <= HUBUS_RX_BUF_SIZE) {
             uint8_t op = c->cmd[0];
+
+#if HUBUS_ENABLE_EVENTS
+            /* A slave that may be blind now keeps quiet until the master ends the blind time (section 7.8): an
+             * announcement would hold DATA low and keep the blind section from beginning in time. */
+            c->hold = (uint8_t)(HUBUS_BLIND_CLASS(c->timing) != 0u);
+#endif
 #if HUBUS_ENABLE_EVENTS
             if (op == HUBUS_OP_STATUS_CAPTURE) {
                 if (c->on_status_capture) {
@@ -481,7 +488,7 @@ uint8_t hubus_core_write(hubus_slave_core_t *c, const uint8_t *data, uint8_t len
     c->tx_complete = 0; /* a complete response must not clear the new content */
     was_pending = c->pending;
     c->pending = 1;
-    if (!was_pending && c->state == HUBUS_ST_IDLE && !c->clk) {
+    if (!was_pending && c->state == HUBUS_ST_IDLE && !c->clk && !c->hold) {
         start_event(c);
     }
     return HUBUS_WRITE_OK;

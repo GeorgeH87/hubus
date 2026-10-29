@@ -71,6 +71,19 @@ static inline void hubus_hal_irq_enable(void)
 static inline void hubus_hal_cli(void) { cli(); }
 static inline void hubus_hal_sei(void) { sei(); }
 
+/* 1 if a CLK or DATA change is waiting for the ISR (with interrupts disabled). */
+static inline uint8_t hubus_hal_edge_pending(void)
+{
+#if HUBUS_CLK_PORT_ID == HUBUS_DATA_PORT_ID
+    return (HUBUS_CLK_VPORT.INTFLAGS & (uint8_t)(_BV(HUBUS_CLK_PIN) | _BV(HUBUS_DATA_PIN))) ? 1u : 0u;
+#else
+    return ((HUBUS_CLK_VPORT.INTFLAGS & (uint8_t)_BV(HUBUS_CLK_PIN)) ||
+            (HUBUS_DATA_VPORT.INTFLAGS & (uint8_t)_BV(HUBUS_DATA_PIN)))
+               ? 1u
+               : 0u;
+#endif
+}
+
 /* Defined in hubus_slave.c; called from every vector. */
 void hubus_slave_isr(void);
 

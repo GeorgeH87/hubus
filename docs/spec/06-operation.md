@@ -18,6 +18,8 @@ A slave with pending data ([§4.8](04-frames.md#48-event-buffer)) tells the mast
 1. The event buffer is written while no data was pending (the pending flag changes from 0 to 1). Overwriting data that is already pending does not signal again.
 2. At the first falling `CLK` edge after a STOP or RESET, if data is still pending. This is how a slave that was skipped in a burst, or whose buffer was written during a transaction, announces itself again.
 
+A slave with a blind class keeps quiet in both situations between a command addressed to it and the next START or RESET ([§7.8](07-slave.md#78-blind-sections)).
+
 A slave signals at most once per STOP: not again on the clock pulses of a handshake, and never on a falling edge that follows a START. Without this rule, pending slaves in different phases would keep each other's signals alive and the master could never see `DATA` released. Inside a burst `CLK` stays high between the transactions, so nobody signals there at all ([§2.4](02-line-conditions.md#24-back-to-back-transactions)).
 
 **Master side.**
@@ -263,6 +265,6 @@ A slave with a blind class other than `0` may ignore the bus for a bounded time 
 - **Start.** The blind time of every slave the command reached, with exact or group addressing, begins at the STOP of the command transaction.
 - **During the blind time** the master sends nothing that this slave would have to receive or answer: no command or request to it, no group command or group request whose prefix includes it, and no commissioning scan, in which it would look absent. A readback of the command waits until the blind time has passed.
 - **Other traffic goes on.** Transactions to other slaves, bursts, and idle event handshakes run as usual. The blind slave does not contend in a burst; data that is pending in it stays buffered.
-- **End.** After the blind time the master generates a RESET, or its next transaction follows directly. Either brings the slave out of `IGNORE`, and a slave that became pending meanwhile announces itself again. Then the deferred readback follows.
+- **End.** After the blind time the master generates a RESET, or its next transaction follows directly. Either brings the slave out of `IGNORE`, and a slave that became pending meanwhile, or that kept quiet after the command, announces itself again. Then the deferred readback follows.
 
 A slave that stays blind longer than it announced behaves like a slave that missed a frame: no response, a retry, and eventually the usual offline handling ([§8.11](08-faults.md#811-blind-section-longer-than-announced)).
