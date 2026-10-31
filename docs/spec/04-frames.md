@@ -103,17 +103,53 @@ Slaves send no acknowledgements and no error frames: commands are fire-and-forge
 
 ## 4.7 Slave Info (`SLAVE_INFO`)
 
-Static metadata, typically a constant in flash.
+Static metadata, typically a constant in flash. *(Draft: see "Master modules" in [decisions](../project/decisions.md#master-modules).)*
 
 | Byte | Content |
 |---|---|
 | 0 | HUBUS protocol version (`0` in v0) |
-| 1 | Capabilities: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state and answers `REQUEST_STATE`; bit 2 = has an event buffer (announces events, answers `REQUEST_DATA`); bit 3 = application with firmware update, takes `UPDATE_ENTER`; bit 4 = the updater is running ([§6.8](06-operation.md#68-firmware-update)); bits 7–5 are reserved (`0`). Bit 0 requires bit 2; bits 3 and 4 exclude each other. |
-| 2 | Maximum command payload the slave accepts, in bytes (`1..31`; including the opcode) |
-| 3 | Bits 3–0: speed class `0..15`, `0` = not declared ([§1.5](01-physical-layer.md#15-speed-classes)). Bits 7–4: blind class `0..15`, `0` = never blind after a command ([§7.8](07-slave.md#78-blind-sections)). |
-| 4.. | Application-defined, for example device type, firmware version. SHOULD include a device-unique value, such as a serial number, so that the commissioning scan reliably detects duplicate MCIDs ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)). |
+| 1 | Bits 3–0: speed class `0..15`, `0` = not declared ([§1.5](01-physical-layer.md#15-speed-classes)). Bits 7–4 are reserved (`0`). |
+| 2.. | **Hardware identifier** (HWID), 1 to 29 bytes, up to the end of the payload ([below](#hardware-identifier-hwid)) |
+
+The HWID is the only description of a slave. It selects the **master module** that is delivered with that firmware image ([§6.10](06-operation.md#610-master-modules)). Everything else about the slave is a fixed property of that module: the accepted command size, the commands and what they mean, whether the slave has a state or an event buffer, whether it supports `STATUS_CAPTURE`, its blind time, and whether it supports firmware update.
+
+The speed class stays on the bus because the master needs it before it can read the HWID: it sets the clock for the first `REQUEST_INFO` and for the whole bus.
 
 The reserved bits are a reserve for later protocol functions: slaves send `0`, and masters ignore them.
+
+### Hardware Identifier (HWID)
+
+The HWID tells the master **what** a slave is; the MCID tells it **where** the slave is on the bus. The two are independent: identical devices share a HWID (up to the serial number) and have different MCIDs.
+
+The fields run from the general to the specific, so that a prefix of the HWID stands for a set of devices ([§6.10](06-operation.md#610-master-modules)). The type decides which fields follow:
+
+| Byte | Field | Short form | Full form |
+|---|---|---|---|
+| 0 | **Type**: the kind of device, assigned centrally | `0x01..0x7F` | `0x80..0xFE` |
+| 1 | **Variant** of the type, for example a 1- or 4-channel relay | – | yes |
+| 2 | **Version** of the firmware image | – | yes |
+| 3 | **Hardware revision** of the board the image is built for | – | yes |
+| 4.. | **Serial number**, 0 to 25 bytes | – | optional |
+
+| Type | Meaning |
+|---|---|
+| `0x00` | Invalid. |
+| `0x01..0x7F` | **Short form**: the HWID is the type byte alone (`LEN = 3`). For devices with little flash or no need for more; a type in this range has no variant, version, revision, or serial number. |
+| `0x80..0xFE` | **Full form**: type, variant, version, and hardware revision (`LEN ≥ 6`), then the serial number, if any. |
+| `0xFF` | The **updater** ([§6.8](06-operation.md#68-firmware-update)); the updater information follows instead of the fields above. |
+
+- The length comes from `LEN`; there is no length field. A short form longer than one byte or a full form shorter than four bytes is invalid, and the master treats the slave like one without a module.
+- Types are assigned and kept in a central table by the development process. Variants are assigned per type; version and hardware revision count up from `0` per variant.
+- The serial number is a placeholder for a device-unique value. Its format belongs to the type; a device without one sends none. The master does not use it to select a module, but it lets the commissioning scan tell identical devices apart ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)).
+- Everything before the serial number is a property of the firmware image and is usually a constant in flash. A serial number differs per device and usually comes from EEPROM or the device's signature row.
+
+Examples, `SLAVE_INFO` payload in hex:
+
+| Payload | Slave |
+|---|---|
+| `00 03 05` | short form, type `0x05`, speed class 3 |
+| `00 03 81 02 07 01` | type `0x81`, variant 2, version 7, hardware revision 1, no serial number |
+| `00 03 81 02 07 01 00 00 2A 17` | the same with the 4-byte serial number `00002A17` |
 
 ## 4.8 Event Buffer
 

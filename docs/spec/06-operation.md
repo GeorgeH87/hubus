@@ -78,11 +78,11 @@ Duplicate MCIDs are a configuration fault. Only the master detects them; slaves 
 
 **Commissioning scan.** The master enumerates the slaves with group `REQUEST_INFO`, using the burst algorithm ([§6.2](#62-burst)) with `REQUEST_INFO` instead of `REQUEST_DATA`. Every matching slave contends, so the winner's `SLAVE_INFO` arrives in the same transaction: about one transaction per slave, and empty MCID groups are never visited.
 
-- A valid `SLAVE_INFO`: the slave is present; its protocol version, capabilities, and speed class are known ([§4.7](04-frames.md#47-slave-info-slave_info)).
+- A valid `SLAVE_INFO`: the slave is present; its protocol version, speed class, and hardware identifier are known ([§4.7](04-frames.md#47-slave-info-slave_info)).
 - No contender: no slave in that group.
 - Repeated CRC failures for a winner: suspected duplicate MCID or a line problem. The master repeats the request for that MCID with exact addressing within its retry budget.
 
-Two slaves with the same MCID win an arbitration together and both send their frame; the overlapping frames fail the CRC if their contents differ. With a device-unique value in `SLAVE_INFO` ([§4.7](04-frames.md#47-slave-info-slave_info)) the scan therefore detects duplicates reliably.
+Two slaves with the same MCID win an arbitration together and both send their frame; the overlapping frames fail the CRC if their contents differ. `SLAVE_INFO` differs as far as the hardware identifier differs ([§4.7](04-frames.md#47-slave-info-slave_info)): with a serial number the scan detects duplicates reliably, without one only between slaves of different HWIDs. Two identical slaves without a serial number (short form, or full form without serial) with the same MCID send identical frames and stay unnoticed; this rare configuration fault is accepted.
 
 A single MCID can be checked at any time with an exactly addressed `REQUEST_INFO`. There is no procedure that asks all 63 MCIDs one by one.
 
@@ -260,7 +260,7 @@ The updater answers to the MCID of the application. The application hands it ove
 
 ## 6.9 Blind Time After a Command
 
-A slave with a blind class other than `0` may ignore the bus for a bounded time after every command addressed to it ([§7.8](07-slave.md#78-blind-sections)). The master knows the class from `SLAVE_INFO` and plans around it:
+A slave with a blind time may ignore the bus for a bounded time after every command addressed to it ([§7.8](07-slave.md#78-blind-sections)). The master knows the time from the slave's module ([§6.10](#610-master-modules)) and plans around it:
 
 - **Start.** The blind time of every slave the command reached, with exact or group addressing, begins at the STOP of the command transaction.
 - **During the blind time** the master sends nothing that this slave would have to receive or answer: no command or request to it, no group command or group request whose prefix includes it, and no commissioning scan, in which it would look absent. A readback of the command waits until the blind time has passed.
@@ -268,3 +268,34 @@ A slave with a blind class other than `0` may ignore the bus for a bounded time 
 - **End.** After the blind time the master generates a RESET, or its next transaction follows directly. Either brings the slave out of `IGNORE`, and a slave that became pending meanwhile, or that kept quiet after the command, announces itself again. Then the deferred readback follows.
 
 A slave that stays blind longer than it announced behaves like a slave that missed a frame: no response, a retry, and eventually the usual offline handling ([§8.11](08-faults.md#811-blind-section-longer-than-announced)).
+
+## 6.10 Master Modules
+
+*(Draft: see "Master modules" in [decisions](../project/decisions.md#master-modules).)*
+
+Every slave firmware image is delivered together with a **master module**: the master-side code and data for that image. The module is selected by the hardware identifier (HWID) in `SLAVE_INFO` ([§4.7](04-frames.md#47-slave-info-slave_info)).
+
+**Selection.** A module declares one or more match rules. A rule is a byte pattern and a mask of the same length.
+
+- A HWID matches a rule if it is at least as long as the pattern and agrees with it in every bit set in the mask. Bytes after the pattern are ignored.
+- A **prefix rule** ("starts with") has a mask of all ones: `81 02` matches every HWID that starts with type `0x81`, variant 2, whatever version, revision, and serial number follow.
+- A **mask rule** leaves out fields in the middle: pattern `81 02 00 01`, mask `FF FF 00 FF` matches every version of variant 2 on hardware revision 1.
+- A short-form HWID is matched by its type byte alone, for example `05`.
+- If several rules match, the one with the most mask bits set wins, so a module for a single version overrides one for the whole variant. If two rules of different modules match with the same number of bits, the slave is not taken into operation and the conflict is reported.
+- Rules never cover the serial number: a module is for a kind of device, not for one device.
+
+| Rule (pattern / mask) | Matches |
+|---|---|
+| `05` / `FF` | the short-form type `0x05` |
+| `81` / `FF` | every device of type `0x81` |
+| `81 02` / `FF FF` | variant 2 of type `0x81`, every version and revision |
+| `81 02 07` / `FF FF FF` | version 7 of that variant, every revision |
+| `81 02 00 01` / `FF FF 00 FF` | every version of that variant on hardware revision 1 |
+
+**Contents and special cases.**
+
+- **Fixed properties.** A module states what the master needs to know about its slave: the accepted command size, the commands and the meaning of their bytes, the layout of state and events, whether the slave has a state, an event buffer, or `STATUS_CAPTURE`, its blind time ([§6.9](#69-blind-time-after-a-command)), whether it supports firmware update ([§6.8](#68-firmware-update)), and any timing the application needs. None of this is transmitted on the bus.
+- **Device functions.** Everything that is specific to the device, such as compiling LED strip animations into bytecode, lives in the module and not in the master core.
+- **Unknown HWID.** A slave whose HWID matches no rule, or whose HWID is invalid, is not taken into operation: the master reports it in the commissioning scan and sends it no commands. Only the speed class is used, so that it does not slow the bus beyond what its firmware needs.
+- **Type `0xFF`** is the updater. The updater is one generic module for all devices; the device-specific values come from the updater information ([§6.8](#68-firmware-update)).
+- **Changes.** Slave and module change together. A change that the master does not need to know about keeps its module, as long as the module's rule covers the new version or revision. A change that affects what the master relies on comes with a module whose rule is more specific, or with a new variant or type. The table of types is maintained centrally.
