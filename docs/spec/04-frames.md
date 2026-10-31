@@ -107,15 +107,14 @@ Static metadata, typically a constant in flash. *(Draft: see "Master modules" in
 
 | Byte | Content |
 |---|---|
-| 0 | HUBUS protocol version (`0` in v0) |
-| 1 | Bits 3–0: speed class `0..15`, `0` = not declared ([§1.5](01-physical-layer.md#15-speed-classes)). Bits 7–4 are reserved (`0`). |
-| 2.. | **Hardware identifier** (HWID), 1 to 29 bytes, up to the end of the payload ([below](#hardware-identifier-hwid)) |
+| 0 | Bits 7–4: HUBUS protocol version `0..15` (`0` in v0). Bits 3–0: speed class `0..15`, `0` = not declared ([§1.5](01-physical-layer.md#15-speed-classes)). |
+| 1.. | **Hardware identifier** (HWID), 1 to 30 bytes, up to the end of the payload ([below](#hardware-identifier-hwid)) |
 
 The HWID is the only description of a slave. It selects the **master module** that is delivered with that firmware image ([§6.10](06-operation.md#610-master-modules)). Everything else about the slave is a fixed property of that module: the accepted command size, the commands and what they mean, whether the slave has a state or an event buffer, whether it supports `STATUS_CAPTURE`, its blind time, and whether it supports firmware update.
 
 The speed class stays on the bus because the master needs it before it can read the HWID: it sets the clock for the first `REQUEST_INFO` and for the whole bus.
 
-The reserved bits are a reserve for later protocol functions: slaves send `0`, and masters ignore them.
+The protocol version is the first field on the wire. A later version may lay out everything after it differently; a master reads the version first and does not interpret a `SLAVE_INFO` of a version it does not know, apart from the speed class.
 
 ### Hardware Identifier (HWID)
 
@@ -129,13 +128,13 @@ The fields run from the general to the specific, so that a prefix of the HWID st
 | 1 | **Variant** of the type, for example a 1- or 4-channel relay | – | yes |
 | 2 | **Version** of the firmware image | – | yes |
 | 3 | **Hardware revision** of the board the image is built for | – | yes |
-| 4.. | **Serial number**, 0 to 25 bytes | – | optional |
+| 4.. | **Serial number**, 0 to 26 bytes | – | optional |
 
 | Type | Meaning |
 |---|---|
 | `0x00` | Invalid. |
-| `0x01..0x7F` | **Short form**: the HWID is the type byte alone (`LEN = 3`). For devices with little flash or no need for more; a type in this range has no variant, version, revision, or serial number. |
-| `0x80..0xFE` | **Full form**: type, variant, version, and hardware revision (`LEN ≥ 6`), then the serial number, if any. |
+| `0x01..0x7F` | **Short form**: the HWID is the type byte alone (`LEN = 2`). For devices with little flash or no need for more; a type in this range has no variant, version, revision, or serial number. |
+| `0x80..0xFE` | **Full form**: type, variant, version, and hardware revision (`LEN ≥ 5`), then the serial number, if any. |
 | `0xFF` | The **updater** ([§6.8](06-operation.md#68-firmware-update)); the updater information follows instead of the fields above. |
 
 - The length comes from `LEN`; there is no length field. A short form longer than one byte or a full form shorter than four bytes is invalid, and the master treats the slave like one without a module.
@@ -147,9 +146,9 @@ Examples, `SLAVE_INFO` payload in hex:
 
 | Payload | Slave |
 |---|---|
-| `00 03 05` | short form, type `0x05`, speed class 3 |
-| `00 03 81 02 07 01` | type `0x81`, variant 2, version 7, hardware revision 1, no serial number |
-| `00 03 81 02 07 01 00 00 2A 17` | the same with the 4-byte serial number `00002A17` |
+| `03 05` | protocol version 0, speed class 3, short form, type `0x05` |
+| `03 81 02 07 01` | type `0x81`, variant 2, version 7, hardware revision 1, no serial number |
+| `03 81 02 07 01 00 00 2A 17` | the same with the 4-byte serial number `00002A17` |
 
 ## 4.8 Event Buffer
 
