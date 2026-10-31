@@ -162,32 +162,32 @@ sequenceDiagram
 
 ## 6.8 Firmware Update
 
-A slave MAY be able to receive a new application over the bus. This is an optional part ([§7.4](07-slave.md#74-optional-parts)): it needs a second firmware on the device, the **updater**, which takes the new application page by page and writes it into flash. Devices without enough flash leave it out; a slave announces in `SLAVE_INFO` byte 1 which side it is ([§4.7](04-frames.md#47-slave-info-slave_info)):
+A slave MAY be able to receive a new application over the bus. This is an optional part ([§7.4](07-slave.md#74-optional-parts)): it needs a second firmware on the device, the **updater**, which takes the new application page by page and writes it into flash. Devices without enough flash leave it out. The master tells the two sides apart by the hardware identifier ([§4.7](04-frames.md#47-slave-info-slave_info)):
 
-| Capability bit | Meaning |
+| Side | Recognised by |
 |---|---|
-| 3, update | The running application switches to its updater on `UPDATE_ENTER`. |
-| 4, updater | The updater is running and takes the update commands. |
+| **Application** with update support | its module ([§6.10](#610-master-modules)): switching to the updater on `UPDATE_ENTER` is a fixed property of the image, not announced on the bus |
+| **Updater** | HWID type `0xFF`, followed by the updater information ([below](#updater-information)) |
 
-A slave never sets both. The updater is a slave like any other: same MCID, same protocol, no event buffer, a state, and its own `SLAVE_INFO`.
+The updater is a slave like any other: same MCID, same protocol, no event buffer, a state, and its own `SLAVE_INFO`.
 
 ### Commands
 
 | Opcode | Name | Arguments | Taken by | Effect |
 |---|---|---|---|---|
-| `0x01` | `UPDATE_ENTER` | `0x55 0x50` | application (bit 3) | Switch to the updater at once. Only with exact addressing (`TARGET_LEN = 6`) and exactly these two key bytes; otherwise ignored. |
+| `0x01` | `UPDATE_ENTER` | `0x55 0x50` application with update support | Switch to the updater at once. Only with exact addressing (`TARGET_LEN = 6`) and exactly these two key bytes; otherwise ignored. |
 | `0x02` | `UPDATE_LOAD` | `offset data…` | updater | Copy `data` into the page buffer at `offset`. A load that does not fit into the page is ignored. |
 | `0x03` | `UPDATE_WRITE` | `addr_hi addr_lo crc_hi crc_lo` | updater | Write the page buffer to the flash page at byte address `addr`, after the STOP of the transaction. |
 | `0x04` | `UPDATE_LEAVE` | – | updater | Reset after the STOP of the transaction; the updater then starts the application if it is valid. |
 
-- Every other slave ignores these opcodes as unknown reserved opcodes ([§4.4](04-frames.md#44-command-opcodes)), so a misdirected command does no harm. An application without bit 3 ignores `UPDATE_ENTER`; the updater ignores `0x10..0xFF`.
+- Every other slave ignores these opcodes as unknown reserved opcodes ([§4.4](04-frames.md#44-command-opcodes)), so a misdirected command does no harm. An application without update support ignores `UPDATE_ENTER`; the updater ignores `0x10..0xFF`.
 - The exact addressing and the key keep a broadcast or a stray frame from switching slaves into their updaters.
 - `UPDATE_WRITE` checks before writing: `addr` is the start of a page inside the application area, the CRC-16 ([below](#integrity)) of the whole page buffer equals `crc`, and with the reset vector rule the page at address 0 starts with the required jump. Otherwise nothing is written.
 - A flash write halts the CPU on classic tinyAVR devices. The updater writes only after the STOP, and the master keeps the bus quiet for the write time the updater announces: no clock, no transaction.
 
 ### Updater Information
 
-The application bytes of the updater's `SLAVE_INFO`, multi-byte values big-endian:
+The updater's `SLAVE_INFO` is byte 0 (protocol version and speed class, [§4.7](04-frames.md#47-slave-info-slave_info)), the HWID type `0xFF`, and then these 13 bytes (`LEN = 15`), multi-byte values big-endian. Byte numbers count from the first byte after `0xFF`:
 
 | Byte | Content |
 |---|---|
@@ -224,10 +224,10 @@ sequenceDiagram
     participant M as Master
     participant S as Slave
     M->>S: REQUEST_INFO
-    S-->>M: application, capability bit 3
+    S-->>M: application HWID (module: update support)
     M->>S: UPDATE_ENTER 0x55 0x50 (exact)
     Note over S: jumps to its updater
-    M->>S: REQUEST_INFO (repeated until bit 4)
+    M->>S: REQUEST_INFO (repeated until type 0xFF)
     S-->>M: updater: signature, page size, area, write time
     M->>S: LOAD … WRITE info page with FF (invalidate)
     loop every page of the image, the first page last
@@ -239,10 +239,10 @@ sequenceDiagram
     M->>S: LOAD … WRITE info page
     M->>S: UPDATE_LEAVE
     Note over S: reset, checks the application, starts it
-    M->>S: REQUEST_INFO (repeated until bit 4 is gone)
+    M->>S: REQUEST_INFO (repeated until the application's HWID)
 ```
 
-1. The master reads `SLAVE_INFO`. With bit 3 it sends `UPDATE_ENTER` and asks again until the updater answers (bit 4); if the application still answers, the command was lost and the master repeats it. With bit 4 the updater already runs.
+1. The master reads `SLAVE_INFO`. If the application's module states update support, it sends `UPDATE_ENTER` and asks again until the updater answers (type `0xFF`); if the application still answers, the command was lost and the master repeats it. With type `0xFF` the updater already runs.
 2. It checks the image against the updater information: signature, size (at most the application area without the info page), and with the reset vector rule a first word that is an `RJMP`.
 3. It writes the info page with `FF` first: from now on the old application is invalid, and an interruption leaves the slave in its updater.
 4. It writes every page of the image, the first page last, and after each write reads the state: the result must be `1`, the address that of the page, and the counter one higher than before. Otherwise it loads and writes the page again, within its retry budget.
