@@ -72,8 +72,8 @@ int main(int argc, char **argv)
 
         hubus_module_set_init(&modules);
         plugins = hubusd_load_modules(cfg, &modules, hubusd_report_module, NULL);
-        printf("%s: ok (%u slaves, %u custom profiles, %u modules, %u of them plugins)\n", path, cfg->n_slaves,
-               cfg->n_profiles, (unsigned)modules.n, (unsigned)plugins);
+        printf("%s: ok (%u slaves, %u modules, %u of them plugins)\n", path, cfg->n_slaves,
+               (unsigned)modules.n, (unsigned)plugins);
         hubus_module_set_unload(&modules);
         free(cfg);
         return 0;

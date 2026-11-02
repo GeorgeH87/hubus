@@ -119,7 +119,7 @@ The event buffer costs about 490 bytes of flash and 41 bytes of RAM (including t
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
 | `slave-ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
 
-Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#device-profiles); the types `0x81` relay, `0x82` switch, and `0x83` temperature also select a built-in profile. The LED strip (`0x84`) uses a custom profile for its button. The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
+Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#entities); their modules also state the entities of each device ([hubusd](daemon.md#entities)). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
 
 ## Configuration
 

@@ -27,12 +27,12 @@ Without hardware, `build/host/test/hubusd_sim -c config.yaml` runs the same daem
 
 ## Configuration
 
-One YAML file, `/etc/hubus/hubusd.yaml` by default (`-c` overrides it); `daemon/hubusd.example.yaml` documents every option. It holds the GPIO chip and lines, the real-time priority, the timing minimums and retry budget of the master, the MQTT broker (host, port, credentials, TLS, base topic, discovery prefix, client id), intervals, the slaves, and custom profiles.
+One YAML file, `/etc/hubus/hubusd.yaml` by default (`-c` overrides it); `daemon/hubusd.example.yaml` documents every option. It holds the GPIO chip and lines, the real-time priority, the timing minimums and retry budget of the master, the MQTT broker (host, port, credentials, TLS, base topic, discovery prefix, client id), intervals, the slaves.
 
 - The file is validated at start. Errors name the line, and the daemon refuses to start; unknown keys are warnings.
 - The MQTT password can come from `password`, `password_file`, or the environment variable `HUBUSD_MQTT_PASSWORD` (which wins), so the main file can be shared.
 - `modules.dir` names a directory of module plugins (`*.so`, [master library](master-library.md#loading-plugins)) for slaves that are not among the built-in ones. They are read once at the start, in the order of their names; a restart picks up changes. A plugin that is invalid, whose name is in use, whose rules conflict with a module that was loaded before, or that others could have changed is refused and logged. Root or the user of the service must own the directory and the files, and nobody else may write them: a plugin runs with the rights of the service. `hubusd --check` loads the plugins too and reports the same.
-- `SIGHUP` (`systemctl reload hubusd`) reloads the slave list, the profiles, the `bus` section (readback, intervals), `mqtt.stats_interval_s`, and `mqtt.discovery`. GPIO, timing, and the broker connection need a restart.
+- `SIGHUP` (`systemctl reload hubusd`) reloads the slave list, the `bus` section (readback, intervals), `mqtt.stats_interval_s`, and `mqtt.discovery`. GPIO, timing, and the broker connection need a restart.
 
 Minimal file for the example:
 
@@ -77,7 +77,7 @@ To adapt the bus:
 
 The `gpio` section selects the chip by label (`chip`, preferred) or device path (`path`), the offsets of `clk` and `data` (different lines), `realtime` (`SCHED_FIFO` priority 1 to 99, 0 = off, needs `CAP_SYS_NICE`), and `internal_pullup` (the SoC pull-up on `DATA`, for bench tests only; use an external pull-up).
 
-A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [examples](slave-library.md#examples) are built in, others come as plugins ([`modules.dir`](#configuration)). A slave whose HWID has no module or is invalid is reported and gets no commands. The type also selects a profile (`0x81` relay, `0x82` switch, `0x83` temperature), so `profile:` is optional for them. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
+A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [examples](slave-library.md#examples) are built in, others come as plugins ([`modules.dir`](#configuration)). A slave whose HWID has no module or is invalid is reported and gets no commands. Its module also lists its [entities](#entities), which become its topics and Home Assistant entities. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
 
 ## MQTT Topics
 
@@ -87,7 +87,7 @@ A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](sp
 
 | Topic | Payload | Effect |
 |---|---|---|
-| `hubus/slave/<n>/set` | `ON` / `OFF` | Command according to the profile (relay: opcode `0x10`). Afterwards the state is published according to `readback` (below). |
+| `hubus/slave/<n>/<key>/set` | `ON` / `OFF` | Command to the entity `<key>` of the slave, a switch: the command stated by its module (relay: opcode `0x10`). Afterwards the state is published according to `readback` (below). |
 | `hubus/slave/<n>/cmd` | `0x10 1 2` | Raw command: opcode, then argument bytes (numbers, separated by spaces or commas). Opcode `0x00` (status capture) or `0x10..0xFF`. |
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon collects and publishes it. |
 | `hubus/slave/<n>/read` | any | `REQUEST_STATE`: reads the live state of a slave that has one in one transaction and publishes it. Rejected for slaves without a state. |
@@ -110,8 +110,8 @@ Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, pa
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `module`, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
-| `hubus/slave/<n>/info` | yes | from the bus: protocol version, speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), the whole `hwid`, device type, and for the full form `variant`, `firmware`, `revision`, `serial`; `updater`: the updater runs. From the module: `module`, `events`, `status_capture`, `state`, `update`, `max_command`, `blind` ([§7.8](spec/07-slave.md#78-blind-sections)). And the `profile`. |
-| `hubus/slave/<n>/state` | yes | interpreted value (`ON`/`OFF`, a number), so clients get the last value after a reconnect |
+| `hubus/slave/<n>/info` | yes | from the bus: protocol version, speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), the whole `hwid`, device type, and for the full form `variant`, `firmware`, `revision`, `serial`; `updater`: the updater runs. From the module: `module`, `events`, `status_capture`, `state`, `update`, `max_command`, `blind` ([§7.8](spec/07-slave.md#78-blind-sections)). And the keys of its `entities`. |
+| `hubus/slave/<n>/<key>/state` | yes | value of the entity `<key>` (`ON`/`OFF`, a number), so clients get the last value after a reconnect |
 | `hubus/slave/<n>/data` | no | every received frame except duplicates: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `wrapped`, `gap`, or `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |
 
@@ -171,36 +171,25 @@ A slave without an event buffer, for example a sensor that is only read, never a
 
 With `mqtt.discovery: true` (default) the daemon publishes retained discovery messages under `<discovery prefix>/<component>/<object>/config` (prefix `homeassistant` by default):
 
-- relay profile: `switch`; switch profile: `binary_sensor`; temperature profile: `sensor` with device class `temperature`;
+- one entity per entity of the module, of the kind it states: `switch`, `binary_sensor`, or `sensor`, with unit and device class where it has them (`light` entities follow with the functions of a module). Its object id is `hubus_<n>_<key>`; a module with one entity gives it the name of the device, one with several gives each its own name;
 - each slave is a device with MCID, firmware version, and serial number, grouped under the **HUBUS master** device and available only while master and slave are online;
 - the master device has diagnostic sensors: uptime, bus errors, retries, duplicate frames, lost buffer contents, rejected commands, bus state. The diagnosis is on `hubus/master/diagnosis`.
 
 Removing a slave from the configuration and sending `SIGHUP` removes its entities. `mqtt.discovery_cleanup: true` also clears discovery entries of unconfigured MCIDs at every start.
 
-## Device Profiles
+## Entities
 
-The protocol does not define what payload bytes mean, so the daemon interprets them with a profile: the built-in `relay` (type `0x81`), `switch` (`0x82`), and `temperature` (`0x83`), or custom profiles in the `profiles:` section, without recompiling:
+The protocol does not define what payload bytes mean. The module of a slave does: it lists the **entities** of the slave, each with a key, a name, a kind of Home Assistant entity (`switch`, `binary_sensor`, `sensor`), a unit and device class, where its value lies in a frame (offset, 1 or 2 bytes, byte order, sign, `value = raw * scale + add`, decimals), and for a switch the commands for `ON` and `OFF` ([§6.10](spec/06-operation.md#610-master-modules), [master library](master-library.md#master-modules)). hubusd turns every entity into topics under `hubus/slave/<n>/<key>/` and, with discovery, into an entity of Home Assistant. Nothing is configured for it: a new device brings a module with its entities, as a [plugin](master-library.md#loading-plugins).
 
-```yaml
-profiles:
-  dimmer:
-    component: switch              # switch | binary_sensor | sensor
-    device_type: 0xA0              # type byte of the hardware identifier
-    on:  {opcode: 0x30, args: [255]}
-    off: {opcode: 0x30, args: [0]}
-  pressure:
-    component: sensor
-    byte_offset: 0
-    byte_length: 2
-    byte_order: big
-    scale: 0.1                     # value = raw * scale + offset
-    offset: 900
-    decimals: 1
-    unit: hPa
-    device_class: pressure
-```
+The modules of the examples are built in:
 
-A slave without a profile stays usable through the raw topics (`data`, `cmd`, `capture`). The built-in temperature profile converts the raw ADC value of the ATtiny85 internal sensor as `raw - 273` °C; accurate values need a per-device calibration.
+| Module | Entities |
+|---|---|
+| `relay`, `relay-simple` | `relay`, a switch (opcode `0x10`, argument `1` or `0`); `relay-simple` has no state to read, so its value comes from the cache ([readback](#state-after-a-command-readback)) |
+| `switch`, `switch-update`, `ledstrip` | `button`, a binary sensor (the first byte of the state) |
+| `temperature`, `temperature-passive` | `temperature`, a sensor in °C with device class `temperature`: the raw ADC value of the ATtiny85 internal sensor as `raw - 273`; accurate values need a calibration per device |
+
+A slave without entities stays usable through the raw topics (`data`, `cmd`, `capture`, `read`). The entities of earlier versions had the topics `hubus/slave/<n>/state` and `hubus/slave/<n>/set`; the discovery entries they left are removed by `mqtt.discovery_cleanup: true` at the next start.
 
 ## How It Works
 

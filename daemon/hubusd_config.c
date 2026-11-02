@@ -172,23 +172,6 @@ static void read_readback(ctx_t *c, yn_t *map, const char *key, int *out)
     }
 }
 
-static void read_double(ctx_t *c, yn_t *map, const char *key, double *out)
-{
-    yn_t *n = scalar(c, map, key);
-    char *end;
-    double v;
-
-    if (!n) {
-        return;
-    }
-    v = strtod(n->text, &end);
-    if (!*n->text || *end != '\0') {
-        fail(c, n->line, "'%s' must be a number, got '%s'", key, n->text);
-        return;
-    }
-    *out = v;
-}
-
 static void warn_unknown(ctx_t *c, yn_t *map, const char *where)
 {
     unsigned i;
@@ -197,7 +180,10 @@ static void warn_unknown(ctx_t *c, yn_t *map, const char *where)
         return;
     }
     for (i = 0; i < map->n; i++) {
-        if (!map->used[i]) {
+        if (!map->used[i] && (strcmp(map->key[i], "profile") == 0 || strcmp(map->key[i], "profiles") == 0)) {
+            warn(c, map->key_line[i], "'%s' in '%s' is no longer supported and ignored: the entities of a slave come from its module",
+                 map->key[i], where);
+        } else if (!map->used[i]) {
             warn(c, map->key_line[i], "unknown key '%s' in '%s' is ignored", map->key[i], where);
         }
     }
@@ -391,160 +377,6 @@ static void load_modules(ctx_t *c, yn_t *root)
     warn_unknown(c, s, "modules");
 }
 
-static void load_cmd(ctx_t *c, yn_t *parent, const char *key, hubusd_cmd_t *cmd)
-{
-    yn_t *s = section(c, parent, key);
-    yn_t *args;
-    long op = 0;
-
-    if (!s) {
-        return;
-    }
-    if (!yn_get(s, "opcode")) {
-        fail(c, s->line, "'%s' needs an 'opcode'", key);
-        return;
-    }
-    read_int(c, s, "opcode", 0x10, 0xFF, &op);
-    cmd->opcode = (uint8_t)op;
-    args = yn_get(s, "args");
-    if (args) {
-        unsigned i;
-
-        if (args->type != YN_SEQ) {
-            fail(c, args->line, "'args' must be a list of bytes");
-        } else if (args->n > HUBUSD_CMD_MAX_ARGS) {
-            fail(c, args->line, "'args' has more than %d bytes", HUBUSD_CMD_MAX_ARGS);
-        }
-        for (i = 0; !c->failed && args && i < args->n; i++) {
-            long v;
-
-            if (args->item[i]->type != YN_SCALAR || !parse_long(args->item[i]->text, &v) || v < 0 || v > 255) {
-                fail(c, args->item[i]->line, "argument bytes must be numbers between 0 and 255");
-            } else {
-                cmd->args[i] = (uint8_t)v;
-                cmd->n_args = (uint8_t)(i + 1u);
-            }
-        }
-    }
-    cmd->valid = 1;
-    warn_unknown(c, s, key);
-}
-
-static void load_profile(ctx_t *c, const char *name, yn_t *s)
-{
-    hubusd_config_t *cfg = c->cfg;
-    hubusd_profile_t *p;
-    yn_t *n;
-    long v;
-    unsigned i;
-
-    if (cfg->n_profiles >= HUBUSD_MAX_PROFILES) {
-        fail(c, s->line, "too many profiles (maximum %d)", HUBUSD_MAX_PROFILES);
-        return;
-    }
-    if (strlen(name) >= HUBUSD_PROFILE_NAME_LEN || !*name) {
-        fail(c, s->line, "profile name '%s' is empty or too long", name);
-        return;
-    }
-    if (hubusd_builtin_profile(name)) {
-        fail(c, s->line, "profile '%s' is built in and cannot be redefined", name);
-        return;
-    }
-    for (i = 0; i < cfg->n_profiles; i++) {
-        if (strcmp(cfg->profiles[i].name, name) == 0) {
-            fail(c, s->line, "profile '%s' is defined twice", name);
-            return;
-        }
-    }
-    p = &cfg->profiles[cfg->n_profiles];
-    hubusd_profile_init(p);
-    snprintf(p->name, sizeof p->name, "%s", name);
-
-    n = scalar(c, s, "component");
-    if (!n) {
-        if (!c->failed) {
-            fail(c, s->line, "profile '%s' needs a 'component' (switch, binary_sensor, sensor)", name);
-        }
-        return;
-    }
-    if (strcmp(n->text, "switch") == 0) {
-        p->component = HUBUSD_COMP_SWITCH;
-    } else if (strcmp(n->text, "binary_sensor") == 0) {
-        p->component = HUBUSD_COMP_BINARY_SENSOR;
-    } else if (strcmp(n->text, "sensor") == 0) {
-        p->component = HUBUSD_COMP_SENSOR;
-    } else {
-        fail(c, n->line, "unknown component '%s' (switch, binary_sensor, sensor)", n->text);
-        return;
-    }
-    v = -1;
-    read_int(c, s, "device_type", 0, 255, &v);
-    p->device_type = (int)v;
-    v = p->byte_offset;
-    read_int(c, s, "byte_offset", 0, 30, &v);
-    p->byte_offset = (uint8_t)v;
-    v = p->byte_len;
-    read_int(c, s, "byte_length", 1, 2, &v);
-    p->byte_len = (uint8_t)v;
-    {
-        int b = 0;
-        read_bool(c, s, "signed", &b);
-        p->is_signed = (uint8_t)b;
-    }
-    n = scalar(c, s, "byte_order");
-    if (n) {
-        if (strcmp(n->text, "big") == 0) {
-            p->big_endian = 1;
-        } else if (strcmp(n->text, "little") != 0) {
-            fail(c, n->line, "byte_order must be 'big' or 'little'");
-        }
-    }
-    read_double(c, s, "scale", &p->scale);
-    read_double(c, s, "offset", &p->add);
-    v = p->decimals;
-    read_int(c, s, "decimals", 0, 6, &v);
-    p->decimals = (uint8_t)v;
-    read_str(c, s, "unit", p->unit, sizeof p->unit);
-    read_str(c, s, "device_class", p->device_class, sizeof p->device_class);
-    load_cmd(c, s, "on", &p->on);
-    load_cmd(c, s, "off", &p->off);
-    if (!c->failed && p->component == HUBUSD_COMP_SWITCH && (!p->on.valid || !p->off.valid)) {
-        fail(c, s->line, "switch profile '%s' needs 'on' and 'off' commands", name);
-    }
-    if (!c->failed && (unsigned)p->byte_offset + p->byte_len > HUBUS_MAX_PAYLOAD) {
-        fail(c, s->line, "byte_offset + byte_length exceed the payload");
-    }
-    warn_unknown(c, s, name);
-    cfg->n_profiles++;
-}
-
-static void load_profiles(ctx_t *c, yn_t *root)
-{
-    yn_t *s = section(c, root, "profiles");
-    unsigned i;
-
-    for (i = 0; s && !c->failed && i < s->n; i++) {
-        if (s->item[i]->type != YN_MAP) {
-            fail(c, s->item[i]->line, "profile '%s' must be a mapping", s->key[i]);
-        } else {
-            s->used[i] = 1;
-            load_profile(c, s->key[i], s->item[i]);
-        }
-    }
-}
-
-const hubusd_profile_t *hubusd_config_profile(const hubusd_config_t *cfg, const char *name)
-{
-    unsigned i;
-
-    for (i = 0; i < cfg->n_profiles; i++) {
-        if (strcmp(cfg->profiles[i].name, name) == 0) {
-            return &cfg->profiles[i];
-        }
-    }
-    return hubusd_builtin_profile(name);
-}
-
 static void load_slaves(ctx_t *c, yn_t *root)
 {
     hubusd_config_t *cfg = c->cfg;
@@ -564,7 +396,6 @@ static void load_slaves(ctx_t *c, yn_t *root)
         hubusd_slave_cfg_t *sl;
         long mcid = 0;
         long rb;
-        yn_t *prof;
 
         if (e->type != YN_MAP) {
             fail(c, e->line, "each slave must be a mapping with at least 'mcid'");
@@ -593,11 +424,6 @@ static void load_slaves(ctx_t *c, yn_t *root)
         sl->readback = -1;
         snprintf(sl->name, sizeof sl->name, "HUBUS slave %ld", mcid);
         read_str(c, e, "name", sl->name, sizeof sl->name);
-        read_str(c, e, "profile", sl->profile, sizeof sl->profile);
-        prof = yn_get(e, "profile");
-        if (!c->failed && sl->profile[0] && !hubusd_config_profile(cfg, sl->profile)) {
-            fail(c, prof ? prof->line : e->line, "unknown profile '%s'", sl->profile);
-        }
         rb = -1;
         if (yn_get(e, "readback")) {
             int b = HUBUSD_READBACK_SLAVE;
@@ -649,9 +475,6 @@ int hubusd_config_parse(const char *text, size_t len, hubusd_config_t *cfg, char
     }
     if (!c.failed) {
         load_modules(&c, root);
-    }
-    if (!c.failed) {
-        load_profiles(&c, root);
     }
     if (!c.failed) {
         load_slaves(&c, root);

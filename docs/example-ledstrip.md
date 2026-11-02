@@ -188,16 +188,10 @@ A compiler from formulas to bytecode in hubusd is not implemented yet.
 
 The commands of one frame or program are separate queue entries: if the queue overflows, part of a frame can be lost ([hubusd](daemon.md#how-it-works)). A topic that takes a whole frame would avoid that; it is not implemented yet. A lost program piece is caught by the CRC.
 
-The button appears in Home Assistant with a custom profile:
+The button is the entity `button` of the module `ledstrip`, a binary sensor with the topic `hubus/slave/11/button/state`; it appears in Home Assistant without any configuration:
 
 ```yaml
-profiles:
-  ledstrip:
-    component: binary_sensor
-    device_type: 0x84
-    byte_offset: 0
 slaves:
   - mcid: 11
     name: Hall strip
-    profile: ledstrip
 ```

@@ -182,7 +182,7 @@ static const hubus_module_t module = {
 const hubus_module_t *hubus_module_entry(void) { return &module; }
 ```
 
-Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperature.c`. A device that needs code adds functions to the structure, such as `on_set`, which gets a typed `hubus_value_t` and sends commands through `hubus_module_host_t`. They never run in the bus thread. `test/test_module.c` has a complete example.
+Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperature.c`. The keys of the entities are part of MQTT topics, so they have only letters, digits, `_` and `-` (at most 23), and a module has at most 8 entities. A device that needs code adds functions to the structure, such as `on_set`, which gets a typed `hubus_value_t` and sends commands through `hubus_module_host_t`. They never run in the bus thread. `test/test_module.c` has a complete example.
 
 | Function | Purpose |
 |---|---|
@@ -190,6 +190,8 @@ Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperatur
 | `hubus_module_validate(module)` | Checks a module before its first use: interface version, rules, properties, blind times, entities, functions. The compiler cannot check what comes from a plugin. |
 | `hubus_module_select(modules, n, hwid, len, &out)` | `HUBUS_MODULE_FOUND` with the module of the rule with the most mask bits, `HUBUS_MODULE_UNKNOWN`, `HUBUS_MODULE_INVALID`, or `HUBUS_MODULE_CONFLICT`. |
 | `hubus_module_select_info(modules, n, payload, len, &out)` | The same from a `SLAVE_INFO` payload; a protocol version this master does not know counts as invalid. |
+| `hubus_module_find_entity(module, key)` | Index of the entity with this key, or `-1`. |
+| `hubus_entity_decode(entity, data, len, out, size)` | The value of an entity in a frame as text: a number with the decimals of the entity for a sensor, otherwise `ON` or `OFF`. Returns 0 if the frame is too short or the entity has no value in a frame. |
 | `hubus_module_conflicts(a, b)` | Whether rules of two modules have the same number of mask bits and can match the same HWID: `select` would find no winner. |
 | `hubus_module_has_blind_time(module)` | Whether the slave can be blind after any command; it then keeps quiet until the master ends that phase. |
 | `hubus_module_blind_ms(module, opcode)` | The blind time after a command: the value for the opcode, otherwise the general one ([§7.8](spec/07-slave.md#78-blind-sections)). |

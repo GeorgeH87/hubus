@@ -21,6 +21,7 @@
 #define HUBUSD_VERSION "0.1.0"
 #define HUBUSD_QUEUE_LEN 32
 #define HUBUSD_TEXT_LEN 96
+#define HUBUSD_KEY_LEN (HUBUS_ENTITY_KEY_MAX + 1u)
 
 typedef struct {
     void *ctx;
@@ -44,7 +45,7 @@ typedef enum {
 
 typedef enum {
     HUBUSD_REQ_NONE,
-    HUBUSD_REQ_SET,      /* text from a `set` topic, interpreted with the slave profile */
+    HUBUSD_REQ_SET,      /* text from the `set` topic of an entity (key) */
     HUBUSD_REQ_RAW,      /* opcode and arguments */
     HUBUSD_REQ_CAPTURE,  /* STATUS_CAPTURE */
     HUBUSD_REQ_READ,     /* REQUEST_STATE: read the live state of one slave */
@@ -61,6 +62,7 @@ typedef struct {
     uint8_t opcode;
     uint8_t n_args;
     uint8_t args[HUBUS_MAX_PAYLOAD];
+    char key[HUBUSD_KEY_LEN]; /* SET: the entity */
     char text[HUBUSD_TEXT_LEN];
 } hubusd_request_t;
 
@@ -82,7 +84,6 @@ typedef struct {
 typedef struct {
     uint8_t configured;
     uint8_t cfg_index;
-    const hubusd_profile_t *profile; /* resolved profile or NULL (raw topics only) */
     const hubus_module_t *module;    /* selected by the HWID; NULL: unknown, not taken into operation */
     int online;                      /* -1 unknown, 0 offline, 1 online */
     unsigned ping_failures;
@@ -91,7 +92,7 @@ typedef struct {
     uint64_t last_seen_ms;
     uint64_t next_ping_ms;
     uint64_t next_poll_ms;           /* next periodic state read (slave option poll_interval_s) */
-    char last_state[32];
+    char last_state[HUBUS_MODULE_ENTITIES_MAX][32]; /* published value per entity of the module */
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;
     uint8_t needs_refresh;           /* came online: read its state (REQUEST_STATE, or STATUS_CAPTURE without a state) */
@@ -151,7 +152,7 @@ void hubusd_handle_message(hubusd_t *d, const char *topic, const void *payload, 
 /* MQTT thread: connection (re-)established; retained state is republished by the bus thread. */
 void hubusd_on_connect(hubusd_t *d);
 
-/* Any thread: replace the slave list and profiles with a new configuration (SIGHUP). Takes ownership. */
+/* Any thread: replace the slave list with a new configuration (SIGHUP). Takes ownership. */
 void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg);
 
 /* Topics the MQTT client has to subscribe to; calls `fn` for every topic filter. */

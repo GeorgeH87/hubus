@@ -19,6 +19,8 @@
 
 #define HUBUS_RULE_MAX_LEN HUBUS_HWID_FULL_MIN_LEN /* rules never cover the serial number */
 #define HUBUS_MODULE_CMD_MAX_ARGS 8u
+#define HUBUS_MODULE_ENTITIES_MAX 8u /* per module */
+#define HUBUS_ENTITY_KEY_MAX 23u     /* characters; letters, digits, '_' and '-': it is part of an MQTT topic */
 
 /* Number of elements of an array, for the counts in the structures below. */
 #define HUBUS_MODULE_LEN(array) ((uint8_t)(sizeof(array) / sizeof((array)[0])))
@@ -212,6 +214,14 @@ hubus_module_error_t hubus_module_validate(const hubus_module_t *module);
  * result is HUBUS_MODULE_FOUND. */
 hubus_module_match_t hubus_module_select(const hubus_module_t *const *modules, size_t n_modules, const uint8_t *hwid,
                                          uint8_t len, const hubus_module_t **out);
+
+/* Index of the entity with this key, -1 if the module has none. */
+int hubus_module_find_entity(const hubus_module_t *module, const char *key);
+
+/* The value of an entity in a frame of the slave, as text: a sensor gives a number with the decimals of the entity, the
+ * other components "ON" or "OFF" (value not zero). Returns the length of the text, 0 if the frame is too short, the entity
+ * has no value in a frame, or `out` is too small. */
+size_t hubus_entity_decode(const hubus_entity_t *entity, const uint8_t *data, uint8_t len, char *out, size_t out_size);
 
 /* True if a rule of `a` and a rule of `b` have the same number of mask bits and can match the same HWID: select would
  * find no winner for it. Modules whose rules differ in the number of mask bits do not conflict, the more specific wins. */

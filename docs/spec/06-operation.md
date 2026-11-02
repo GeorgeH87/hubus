@@ -296,6 +296,7 @@ Every slave firmware image is delivered together with a **master module**: the m
 **Contents and special cases.**
 
 - **Fixed properties.** A module states what the master needs to know about its slave: the accepted command size, the commands and the meaning of their bytes, the layout of state and events, whether the slave has a state, an event buffer, or `STATUS_CAPTURE`, its blind time, optionally per opcode ([§6.9](#69-blind-time-after-a-command)), whether it supports firmware update ([§6.8](#68-firmware-update)), and any timing the application needs. None of this is transmitted on the bus.
+- **Entities.** A module lists what a user sees of its slave: the entities with their kind, unit, the position and format of their value in a frame, and the commands that switch them. Their keys name the topics of a master that publishes them; the protocol does not define them.
 - **Device functions.** Everything that is specific to the device, such as compiling LED strip animations into bytecode, lives in the module and not in the master core.
 - **Unknown HWID.** A slave whose HWID matches no rule, or whose HWID is invalid, is not taken into operation: the master reports it in the commissioning scan and sends it no commands. Only the speed class is used, so that it does not slow the bus beyond what its firmware needs.
 - **Type `0xFF`** is the updater. The updater is one generic module for all devices; the device-specific values come from the updater information ([§6.8](#68-firmware-update)).

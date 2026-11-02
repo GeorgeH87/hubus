@@ -97,7 +97,7 @@ static void assert_contains(const char *topic, const char *needle)
 
 /* ---- simulated devices (behave like the example firmware) ---------------------------- */
 
-enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97, DEV_NO_PROFILE = 0x98 };
+enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97, DEV_NO_ENTITIES = 0x98 };
 
 /* ---- modules of the test devices ---------------------------------------------------------------------------------- */
 
@@ -116,7 +116,7 @@ enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97,
         __VA_ARGS__                        \
     }
 
-enum { VARIANT_PLAIN = 1, VARIANT_STATE = 2, VARIANT_BLIND = 3, VARIANT_STATE_BLIND = 4, VARIANT_BLIND_SHOW_ONLY = 5, VARIANT_NO_READBACK = 6 };
+enum { VARIANT_PLAIN = 1, VARIANT_STATE = 2, VARIANT_BLIND = 3, VARIANT_STATE_BLIND = 4, VARIANT_BLIND_SHOW_ONLY = 5, VARIANT_NO_READBACK = 6, VARIANT_TWO_ENTITIES = 7, VARIANT_SWITCH_SECOND = 8 };
 #define OP_BLIND_ONLY 0x42u
 
 VARIANT_RULE(relay_plain, DEV_RELAY, VARIANT_PLAIN);
@@ -125,19 +125,66 @@ VARIANT_RULE(relay_blind, DEV_RELAY, VARIANT_BLIND);
 VARIANT_RULE(relay_state_blind, DEV_RELAY, VARIANT_STATE_BLIND);
 VARIANT_RULE(relay_show_only, DEV_RELAY, VARIANT_BLIND_SHOW_ONLY);
 VARIANT_RULE(relay_no_readback, DEV_RELAY, VARIANT_NO_READBACK);
-VARIANT_RULE(no_profile, DEV_NO_PROFILE, VARIANT_PLAIN);
+VARIANT_RULE(no_entities, DEV_NO_ENTITIES, VARIANT_PLAIN);
+VARIANT_RULE(temp_two, DEV_TEMP, VARIANT_TWO_ENTITIES);
+VARIANT_RULE(relay_second, DEV_RELAY, VARIANT_SWITCH_SECOND);
 VARIANT_RULE(switch_plain, DEV_SWITCH, VARIANT_PLAIN);
 VARIANT_RULE(temp_plain, DEV_TEMP, VARIANT_PLAIN);
 VARIANT_RULE(temp_state, DEV_TEMP, VARIANT_STATE);
 static const hubus_module_blind_t show_only_blind[] = {{.opcode = OP_BLIND_ONLY, .ms = 4}};
 
-DEVICE_MODULE(relay_plain, false);
-DEVICE_MODULE(relay_state, true);
-DEVICE_MODULE(relay_blind, false, .blind_default_ms = 4);
-DEVICE_MODULE(relay_state_blind, true, .blind_default_ms = 4);
-DEVICE_MODULE(relay_show_only, true, .blind_ops = show_only_blind, .n_blind_ops = 1);
-DEVICE_MODULE(no_profile, false);
-DEVICE_MODULE(switch_plain, false);
+/* What the daemon makes of the bytes of the devices: a relay with one state byte, a button, and a sensor. */
+static const hubus_entity_t relay_entity[] = {{
+    .key = "relay",
+    .name = "Relay",
+    .component = HUBUS_COMPONENT_SWITCH,
+    .decode = {.offset = 0, .len = 1, .scale = 1.0},
+    .on = {.used = true, .opcode = 0x10, .n_args = 1, .args = {1}},
+    .off = {.used = true, .opcode = 0x10, .n_args = 1, .args = {0}},
+}};
+static const hubus_entity_t button_entity[] = {
+    {.key = "button", .name = "Button", .component = HUBUS_COMPONENT_BINARY_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
+};
+static const hubus_entity_t temp_entity[] = {{
+    .key = "temperature",
+    .name = "Temperature",
+    .component = HUBUS_COMPONENT_SENSOR,
+    .device_class = HUBUS_DEVICE_CLASS_TEMPERATURE,
+    .unit = HUBUS_UNIT_CELSIUS,
+    .decode = {.offset = 0, .len = 2, .big_endian = true, .scale = 1.0, .add = -273.0},
+}};
+/* Two entities from one frame: the temperature and whether the low byte of the raw value is not zero. */
+static const hubus_entity_t two_entities[] = {
+    {
+        .key = "temperature",
+        .name = "Temperature",
+        .component = HUBUS_COMPONENT_SENSOR,
+        .device_class = HUBUS_DEVICE_CLASS_TEMPERATURE,
+        .unit = HUBUS_UNIT_CELSIUS,
+        .decode = {.offset = 0, .len = 2, .big_endian = true, .scale = 1.0, .add = -273.0},
+    },
+    {.key = "low-byte", .name = "Low byte", .component = HUBUS_COMPONENT_BINARY_SENSOR, .decode = {.offset = 1, .len = 1, .scale = 1.0}},
+};
+/* The switch is the second entity: what the cache reports for it must not end up with the first. */
+static const hubus_entity_t switch_second_entities[] = {
+    {.key = "button", .name = "Button", .component = HUBUS_COMPONENT_BINARY_SENSOR, .decode = {.offset = 1, .len = 1, .scale = 1.0}},
+    {
+        .key = "relay",
+        .name = "Relay",
+        .component = HUBUS_COMPONENT_SWITCH,
+        .on = {.used = true, .opcode = 0x10, .n_args = 1, .args = {1}},
+        .off = {.used = true, .opcode = 0x10, .n_args = 1, .args = {0}},
+    },
+};
+#define ENTITIES(array) .entities = (array), .n_entities = HUBUS_MODULE_LEN(array)
+
+DEVICE_MODULE(relay_plain, false, ENTITIES(relay_entity));
+DEVICE_MODULE(relay_state, true, ENTITIES(relay_entity));
+DEVICE_MODULE(relay_blind, false, .blind_default_ms = 4, ENTITIES(relay_entity));
+DEVICE_MODULE(relay_state_blind, true, .blind_default_ms = 4, ENTITIES(relay_entity));
+DEVICE_MODULE(relay_show_only, true, .blind_ops = show_only_blind, .n_blind_ops = 1, ENTITIES(relay_entity));
+DEVICE_MODULE(no_entities, false);
+DEVICE_MODULE(switch_plain, false, ENTITIES(button_entity));
 static const hubus_module_t relay_no_readback = {
     HUBUS_MODULE_INIT,
     .name = "relay_no_readback",
@@ -145,12 +192,15 @@ static const hubus_module_t relay_no_readback = {
     .n_rules = 1,
     .max_command = HUBUS_MAX_PAYLOAD,
     .has_events = true,
+    ENTITIES(relay_entity),
 };
-DEVICE_MODULE(temp_plain, false);
-DEVICE_MODULE(temp_state, true);
+DEVICE_MODULE(temp_plain, false, ENTITIES(temp_entity));
+DEVICE_MODULE(temp_state, true, ENTITIES(temp_entity));
+DEVICE_MODULE(temp_two, false, ENTITIES(two_entities));
+DEVICE_MODULE(relay_second, false, ENTITIES(switch_second_entities));
 
 static const hubus_module_t *const test_modules[] = {
-    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_profile, &switch_plain, &temp_plain, &temp_state,
+    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_entities, &switch_plain, &temp_plain, &temp_state, &temp_two, &relay_second,
 };
 
 
@@ -177,6 +227,7 @@ static hubusd_t *dmn;
 static hubusd_config_t cfg;
 static uint64_t clock_ms;
 static uint8_t dev_force_variant; /* of slave 3; 0: from the other settings */
+static uint8_t dev_variant_seven; /* of slave 7; 0: from the other settings */
 static int dev_blind_op;          /* the only opcode that makes the blind device blind; -1: every opcode */
 static uint8_t dev_nine_type;     /* type of slave 9 in the standard setup */
 static uint8_t dev_blind_mcid;  /* this device is blind for 4 ms after a command */
@@ -245,6 +296,9 @@ static uint8_t dev_variant(uint8_t mcid, uint8_t type)
 
     if (mcid == 3 && dev_force_variant) {
         return dev_force_variant;
+    }
+    if (mcid == 7 && dev_variant_seven) {
+        return dev_variant_seven;
     }
     if (mcid == dev_blind_mcid) {
         return state ? VARIANT_STATE_BLIND : VARIANT_BLIND;
@@ -377,6 +431,7 @@ void setUp(void)
     dev_blind_mcid = 0;
     dev_blind_op = -1;
     dev_force_variant = 0;
+    dev_variant_seven = 0;
     dev_nine_type = DEV_UNKNOWN;
     sim.filter = dev_blind_filter;
     clock_ms = 100000;
@@ -417,7 +472,7 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
 
     assert_contains("hubus/slave/3/info", "\"device_type\":129");
     assert_contains("hubus/slave/3/info", "\"serial\":\"00000003\"");
-    assert_contains("hubus/slave/3/info", "\"profile\":\"relay\"");
+    assert_contains("hubus/slave/3/info", "\"entities\":[\"relay\"]");
     assert_contains("hubus/slave/3/info", "\"status_capture\":true");
     assert_contains("hubus/slave/3/info", "\"update\":false");
     assert_contains("hubus/slave/3/info", "\"updater\":false");
@@ -427,10 +482,10 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
     TEST_ASSERT_TRUE(last_msg("hubus/slave/3/info")->retain);
 
     /* initial state is read back from the slaves */
-    assert_last("hubus/slave/3/state", "OFF");
-    assert_last("hubus/slave/5/state", "OFF");
-    assert_last("hubus/slave/7/state", "25");
-    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/state")->retain);
+    assert_last("hubus/slave/3/relay/state", "OFF");
+    assert_last("hubus/slave/5/button/state", "OFF");
+    assert_last("hubus/slave/7/temperature/state", "25");
+    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/relay/state")->retain);
 }
 
 static void test_unknown_slave_is_reported_in_master_state_only(void)
@@ -439,36 +494,36 @@ static void test_unknown_slave_is_reported_in_master_state_only(void)
     assert_contains("hubus/master/state", "\"unknown_slaves\":[{\"mcid\":9,\"device_type\":151,\"serial\":\"00000009\"}]");
     TEST_ASSERT_TRUE(count_containing("hubus/master/log", "unconfigured slave found at MCID 9") >= 1);
     TEST_ASSERT_NULL(last("hubus/slave/9/info"));
-    TEST_ASSERT_NULL(last("hubus/slave/9/state"));
+    TEST_ASSERT_NULL(last("hubus/slave/9/relay/state"));
 }
 
 static void test_discovery_messages(void)
 {
     standard_setup(base_yaml);
 
-    assert_contains("homeassistant/switch/hubus_3/config", "\"command_topic\":\"hubus/slave/3/set\"");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"state_topic\":\"hubus/slave/3/state\"");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"unique_id\":\"hubus_3\"");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"name\":null");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"availability_mode\":\"all\"");
-    assert_contains("homeassistant/switch/hubus_3/config", "{\"topic\":\"hubus/master/status\"}");
-    assert_contains("homeassistant/switch/hubus_3/config", "{\"topic\":\"hubus/slave/3/availability\"}");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"name\":\"Garden relay\"");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"serial_number\":\"00000003\"");
-    assert_contains("homeassistant/switch/hubus_3/config", "\"sw_version\":\"1\"");
-    TEST_ASSERT_TRUE(last_msg("homeassistant/switch/hubus_3/config")->retain);
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"command_topic\":\"hubus/slave/3/relay/set\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"state_topic\":\"hubus/slave/3/relay/state\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"unique_id\":\"hubus_3_relay\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"name\":null");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"availability_mode\":\"all\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "{\"topic\":\"hubus/master/status\"}");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "{\"topic\":\"hubus/slave/3/availability\"}");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"name\":\"Garden relay\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"serial_number\":\"00000003\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"sw_version\":\"1\"");
+    TEST_ASSERT_TRUE(last_msg("homeassistant/switch/hubus_3_relay/config")->retain);
 
-    assert_contains("homeassistant/binary_sensor/hubus_5/config", "\"payload_on\":\"ON\"");
-    TEST_ASSERT_NULL(strstr(last("homeassistant/binary_sensor/hubus_5/config"), "command_topic"));
+    assert_contains("homeassistant/binary_sensor/hubus_5_button/config", "\"payload_on\":\"ON\"");
+    TEST_ASSERT_NULL(strstr(last("homeassistant/binary_sensor/hubus_5_button/config"), "command_topic"));
 
-    assert_contains("homeassistant/sensor/hubus_7/config", "\"device_class\":\"temperature\"");
-    assert_contains("homeassistant/sensor/hubus_7/config", "\"unit_of_measurement\":\"\xC2\xB0" "C\"");
-    assert_contains("homeassistant/sensor/hubus_7/config", "\"state_class\":\"measurement\"");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"device_class\":\"temperature\"");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"unit_of_measurement\":\"\xC2\xB0" "C\"");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"state_class\":\"measurement\"");
 
     /* the master itself */
     assert_contains("homeassistant/sensor/hubusd_hubusd_uptime_s/config", "\"value_template\":\"{{ value_json.uptime_s }}\"");
     assert_contains("homeassistant/sensor/hubusd_hubusd_errors_total/config", "\"entity_category\":\"diagnostic\"");
-    TEST_ASSERT_NULL(last("homeassistant/switch/hubus_9/config"));
+    TEST_ASSERT_NULL(last("homeassistant/switch/hubus_9_relay/config"));
 }
 
 static void test_discovery_can_be_disabled(void)
@@ -484,10 +539,12 @@ static void test_discovery_can_be_disabled(void)
 static void test_discovery_cleanup_clears_unconfigured_mcids(void)
 {
     standard_setup("mqtt:\n  discovery_cleanup: true\nbus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 3\n");
-    TEST_ASSERT_EQUAL_UINT(1, count("homeassistant/switch/hubus_20/config"));
+    TEST_ASSERT_EQUAL_UINT(1, count("homeassistant/switch/hubus_20_relay/config")); /* once, though several modules have it */
+    assert_last("homeassistant/switch/hubus_20_relay/config", "");
+    TEST_ASSERT_EQUAL_UINT(1, count("homeassistant/switch/hubus_20/config")); /* the entry of earlier versions */
     assert_last("homeassistant/switch/hubus_20/config", "");
-    assert_last("homeassistant/sensor/hubus_63/config", "");
-    TEST_ASSERT_NOT_EQUAL(0, strlen(last("homeassistant/switch/hubus_3/config")));
+    assert_last("homeassistant/sensor/hubus_63_temperature/config", "");
+    TEST_ASSERT_NOT_EQUAL(0, strlen(last("homeassistant/switch/hubus_3_relay/config")));
 }
 
 static void test_custom_base_topic_and_prefix(void)
@@ -495,7 +552,7 @@ static void test_custom_base_topic_and_prefix(void)
     standard_setup("mqtt:\n  base_topic: home/bus\n  discovery_prefix: ha\nbus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 3\n");
     assert_last("home/bus/master/status", "online");
     assert_last("home/bus/slave/3/availability", "online");
-    assert_contains("ha/switch/hubus_3/config", "\"command_topic\":\"home/bus/slave/3/set\"");
+    assert_contains("ha/switch/hubus_3_relay/config", "\"command_topic\":\"home/bus/slave/3/relay/set\"");
     TEST_ASSERT_NULL(last("hubus/master/status"));
 }
 
@@ -509,7 +566,7 @@ static void test_button_press_is_published(void)
     n_msgs = 0;
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 1, &pressed, 1, 0));
     settle();
-    assert_last("hubus/slave/5/state", "ON");
+    assert_last("hubus/slave/5/button/state", "ON");
     assert_contains("hubus/slave/5/data", "\"data\":\"01\"");
     assert_contains("hubus/slave/5/data", "\"result\":\"normal\"");
     assert_contains("hubus/slave/5/data", "\"mcid\":5");
@@ -517,8 +574,8 @@ static void test_button_press_is_published(void)
 
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 1, &released, 1, 0));
     settle();
-    assert_last("hubus/slave/5/state", "OFF");
-    TEST_ASSERT_EQUAL_UINT(2, count("hubus/slave/5/state"));
+    assert_last("hubus/slave/5/button/state", "OFF");
+    TEST_ASSERT_EQUAL_UINT(2, count("hubus/slave/5/button/state"));
 }
 
 static void test_data_from_an_unconfigured_slave_is_ignored(void)
@@ -530,7 +587,7 @@ static void test_data_from_an_unconfigured_slave_is_ignored(void)
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 3, &v, 1, 0)); /* device 9 */
     settle();
     TEST_ASSERT_NULL(last("hubus/slave/9/data"));
-    TEST_ASSERT_NULL(last("hubus/slave/9/state"));
+    TEST_ASSERT_NULL(last("hubus/slave/9/relay/state"));
 }
 
 static void test_overwritten_events_are_flagged(void)
@@ -553,16 +610,16 @@ static void test_set_switches_the_relay_and_publishes_the_read_back_state(void)
 {
     standard_setup(base_yaml);
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
     TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
-    assert_last("hubus/slave/3/state", "ON"); /* read back from the slave, not echoed */
+    assert_last("hubus/slave/3/relay/state", "ON"); /* read back from the slave, not echoed */
 
-    say("hubus/slave/3/set", "off");
+    say("hubus/slave/3/relay/set", "off");
     settle();
     TEST_ASSERT_EQUAL_UINT8(0, dev[0].state);
-    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
 }
 
 static void test_published_state_is_the_real_state_not_the_command(void)
@@ -570,22 +627,22 @@ static void test_published_state_is_the_real_state_not_the_command(void)
     standard_setup(base_yaml);
     dev[0].core.on_command = NULL; /* the relay ignores commands (defective) */
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
-    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
 }
 
 static void test_readback_can_be_disabled(void)
 {
     standard_setup("bus:\n  readback: false\n  scan_interval_s: 0\nslaves:\n  - mcid: 3\n");
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
-    TEST_ASSERT_NULL(last("hubus/slave/3/state"));
+    TEST_ASSERT_NULL(last("hubus/slave/3/relay/state"));
     say("hubus/slave/3/capture", "");
     settle();
-    assert_last("hubus/slave/3/state", "ON");
+    assert_last("hubus/slave/3/relay/state", "ON");
 }
 
 static void test_cache_readback_reports_the_command_without_contacting_the_slave(void)
@@ -593,16 +650,16 @@ static void test_cache_readback_reports_the_command_without_contacting_the_slave
     standard_setup("bus:\n  readback: cache\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
     TEST_ASSERT_EQUAL_UINT(1, dev[0].captures); /* the initial state read at startup */
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
     TEST_ASSERT_EQUAL_UINT(1, dev[0].captures); /* no STATUS_CAPTURE after the command */
-    assert_last("hubus/slave/3/state", "ON");
-    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/state")->retain);
+    assert_last("hubus/slave/3/relay/state", "ON");
+    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/relay/state")->retain);
     TEST_ASSERT_EQUAL_UINT(0, count("hubus/slave/3/data"));
-    say("hubus/slave/3/set", "off");
+    say("hubus/slave/3/relay/set", "off");
     settle();
-    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
     TEST_ASSERT_EQUAL_UINT(1, dev[0].captures);
     /* an explicit capture still asks the slave */
     say("hubus/slave/3/capture", "");
@@ -614,9 +671,9 @@ static void test_cache_readback_does_not_know_about_a_defective_slave(void)
 {
     standard_setup("bus:\n  readback: cache\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
     dev[0].core.on_command = NULL; /* the relay ignores commands */
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
-    assert_last("hubus/slave/3/state", "ON"); /* the cache is optimistic; mode `slave` would show OFF */
+    assert_last("hubus/slave/3/relay/state", "ON"); /* the cache is optimistic; mode `slave` would show OFF */
     TEST_ASSERT_EQUAL_UINT8(0, dev[0].state);
 }
 
@@ -627,7 +684,7 @@ static void test_cache_readback_leaves_raw_commands_alone(void)
     say("hubus/slave/3/cmd", "0x10 1");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
-    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* the effect of a raw command is not known */
+    TEST_ASSERT_NULL(last("hubus/slave/3/relay/state")); /* the effect of a raw command is not known */
 }
 
 static void test_readback_mode_per_slave_overrides_the_bus_default(void)
@@ -635,10 +692,10 @@ static void test_readback_mode_per_slave_overrides_the_bus_default(void)
     standard_setup("bus:\n  readback: slave\n  scan_interval_s: 0\n  ping_interval_s: 0\n"
                    "slaves:\n  - mcid: 3\n    readback: cache\n  - mcid: 5\n");
     dev[0].core.on_command = NULL;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dev[0].captures);
-    assert_last("hubus/slave/3/state", "ON");
+    assert_last("hubus/slave/3/relay/state", "ON");
 }
 
 /* A relay with neither a state nor STATUS_CAPTURE (built without both): readback `slave` falls back to the cache. */
@@ -650,14 +707,34 @@ static void test_slave_that_cannot_be_read_back_reports_the_cached_state(void)
     dev[0].core.on_status_capture = NULL;
     start_daemon();
     settle();
-    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* nothing to read at startup */
-    say("hubus/slave/3/set", "ON");
+    TEST_ASSERT_NULL(last("hubus/slave/3/relay/state")); /* nothing to read at startup */
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
-    assert_last("hubus/slave/3/state", "ON");
-    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/state")->retain);
+    assert_last("hubus/slave/3/relay/state", "ON");
+    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/relay/state")->retain);
     TEST_ASSERT_EQUAL_UINT(0, dev[0].captures);
     TEST_ASSERT_EQUAL_UINT(0, dmn->master.counters.state_requests);
+}
+
+/* The cached state belongs to the entity that was switched; a reconnect publishes it again on that entity's topic. */
+static void test_the_cached_state_belongs_to_the_entity_that_was_switched(void)
+{
+    load("bus:\n  readback: cache\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    dev_force_variant = VARIANT_SWITCH_SECOND;
+    add_dev(3, DEV_RELAY);
+    start_daemon();
+    settle();
+    say("hubus/slave/3/relay/set", "ON");
+    settle();
+    assert_last("hubus/slave/3/relay/state", "ON");
+    TEST_ASSERT_NULL(last("hubus/slave/3/button/state"));
+    n_msgs = 0;
+    hubusd_on_connect(dmn);
+    settle();
+    assert_last("hubus/slave/3/relay/state", "ON");
+    TEST_ASSERT_TRUE(last_msg("hubus/slave/3/relay/state")->retain);
+    TEST_ASSERT_NULL(last("hubus/slave/3/button/state"));
 }
 
 /* A sensor that never announces changes: poll_interval_s reads its state periodically. */
@@ -669,15 +746,15 @@ static void test_poll_interval_reads_the_state_periodically(void)
     set_temp(&dev[2], 311);
     n_msgs = 0;
     advance(9);
-    TEST_ASSERT_NULL(last("hubus/slave/7/state")); /* not yet due */
+    TEST_ASSERT_NULL(last("hubus/slave/7/temperature/state")); /* not yet due */
     advance(1);
-    assert_last("hubus/slave/7/state", "38");
+    assert_last("hubus/slave/7/temperature/state", "38");
     TEST_ASSERT_EQUAL_UINT(0, dev[2].captures); /* REQUEST_STATE, no capture */
     set_temp(&dev[2], 301);
     advance(10);
-    assert_last("hubus/slave/7/state", "28");
-    TEST_ASSERT_EQUAL_UINT(2, count("hubus/slave/7/state"));
-    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* only the slave with the option is polled */
+    assert_last("hubus/slave/7/temperature/state", "28");
+    TEST_ASSERT_EQUAL_UINT(2, count("hubus/slave/7/temperature/state"));
+    TEST_ASSERT_NULL(last("hubus/slave/3/relay/state")); /* only the slave with the option is polled */
 }
 
 /* Polling a slave without a state uses STATUS_CAPTURE and a burst. */
@@ -689,17 +766,17 @@ static void test_poll_interval_captures_a_slave_without_a_state(void)
     n_msgs = 0;
     advance(5);
     TEST_ASSERT_EQUAL_UINT(2, dev[2].captures);
-    assert_last("hubus/slave/7/state", "30");
+    assert_last("hubus/slave/7/temperature/state", "30");
 }
 
 static void test_invalid_set_commands_are_rejected(void)
 {
     standard_setup(base_yaml);
     n_msgs = 0;
-    say("hubus/slave/3/set", "TOGGLE");
-    say("hubus/slave/5/set", "ON");  /* a button takes no commands */
-    say("hubus/slave/9/set", "ON");  /* not configured */
-    say("hubus/slave/4/set", "ON");  /* not configured */
+    say("hubus/slave/3/relay/set", "TOGGLE");
+    say("hubus/slave/5/button/set", "ON");  /* a button takes no commands */
+    say("hubus/slave/9/relay/set", "ON");  /* not configured */
+    say("hubus/slave/4/relay/set", "ON");  /* not configured */
     settle();
     TEST_ASSERT_EQUAL_UINT(4, count_containing("hubus/master/log", "command rejected"));
     TEST_ASSERT_EQUAL_UINT(0, dev[0].commands);
@@ -710,8 +787,8 @@ static void test_malformed_topics_and_payloads_are_rejected(void)
 {
     standard_setup(base_yaml);
     n_msgs = 0;
-    say("hubus/slave/0/set", "ON");
-    say("hubus/slave/64/set", "ON");
+    say("hubus/slave/0/relay/set", "ON");
+    say("hubus/slave/64/relay/set", "ON");
     say("hubus/slave/x/set", "ON");
     say("hubus/slave/3/cmd", "");
     say("hubus/slave/3/cmd", "0x05");           /* reserved opcode */
@@ -730,8 +807,8 @@ static void test_unrelated_topics_are_ignored(void)
 {
     standard_setup(base_yaml);
     n_msgs = 0;
-    say("other/slave/3/set", "ON");
-    say("hubus/slave/3/state", "ON");
+    say("other/slave/3/relay/set", "ON");
+    say("hubus/slave/3/relay/state", "ON");
     say("hubus/master/status", "online");
     say("hubus", "x");
     settle();
@@ -746,20 +823,20 @@ static void test_oversized_payload_is_rejected(void)
     standard_setup(base_yaml);
     memset(big, 'A', sizeof big - 1);
     big[sizeof big - 1] = '\0';
-    say("hubus/slave/3/set", big);
+    say("hubus/slave/3/relay/set", big);
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
 }
 
-static void test_set_for_a_slave_without_a_profile_is_rejected(void)
+static void test_set_for_an_entity_the_module_does_not_have_is_rejected(void)
 {
-    dev_nine_type = DEV_NO_PROFILE;
+    dev_nine_type = DEV_NO_ENTITIES;
     standard_setup("bus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 9\n");
     n_msgs = 0;
-    say("hubus/slave/9/set", "ON");
+    say("hubus/slave/9/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
-    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "has no profile"));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "has no entity"));
     say("hubus/slave/9/cmd", "0x10 1"); /* the raw topic still works */
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
@@ -833,8 +910,8 @@ static void test_group_status_capture_collects_states(void)
     n_msgs = 0;
     say("hubus/group/0/0/cmd", "0");
     settle();
-    assert_last("hubus/slave/3/state", "ON");
-    assert_last("hubus/slave/7/state", "25");
+    assert_last("hubus/slave/3/relay/state", "ON");
+    assert_last("hubus/slave/7/temperature/state", "25");
 }
 
 static void test_capture_topic(void)
@@ -844,7 +921,7 @@ static void test_capture_topic(void)
     n_msgs = 0;
     say("hubus/slave/7/capture", "");
     settle();
-    assert_last("hubus/slave/7/state", "30");
+    assert_last("hubus/slave/7/temperature/state", "30");
     TEST_ASSERT_EQUAL_UINT(2, dev[2].captures); /* one at startup, one now */
 }
 
@@ -878,7 +955,7 @@ static void test_queue_overflow_is_counted_and_harmless(void)
 
     standard_setup(base_yaml);
     for (i = 0; i < 100; i++) {
-        say("hubus/slave/3/set", (i & 1) ? "OFF" : "ON");
+        say("hubus/slave/3/relay/set", (i & 1) ? "OFF" : "ON");
     }
     TEST_ASSERT_TRUE(dmn->stats.queue_full >= 100 - HUBUSD_QUEUE_LEN);
     settle();
@@ -913,7 +990,7 @@ static void test_slave_goes_offline_and_comes_back(void)
     dev[2].raw_temp = 311;
     advance(30);
     assert_last("hubus/slave/7/availability", "online");
-    assert_last("hubus/slave/7/state", "38"); /* state refreshed after it returned */
+    assert_last("hubus/slave/7/temperature/state", "38"); /* state refreshed after it returned */
     assert_contains("hubus/master/state", "\"online_slaves\":3");
 }
 
@@ -938,7 +1015,7 @@ static void test_configured_slave_missing_at_startup_is_offline(void)
     assert_last("hubus/slave/7/availability", "offline");
     assert_last("hubus/slave/3/availability", "online");
     TEST_ASSERT_NULL(last("hubus/slave/7/info"));
-    TEST_ASSERT_NULL(last("homeassistant/sensor/hubus_7/config")); /* profile unknown until the slave answers */
+    TEST_ASSERT_NULL(last("homeassistant/sensor/hubus_7_temperature/config")); /* the module is unknown until the slave answers */
 }
 
 static void test_slave_appearing_later_gets_discovery(void)
@@ -947,12 +1024,67 @@ static void test_slave_appearing_later_gets_discovery(void)
     add_dev(3, DEV_RELAY);
     start_daemon();
     settle();
-    TEST_ASSERT_NULL(last("homeassistant/sensor/hubus_7/config"));
+    TEST_ASSERT_NULL(last("homeassistant/sensor/hubus_7_temperature/config"));
     add_dev(7, DEV_TEMP);
     advance(40);
     assert_last("hubus/slave/7/availability", "online");
-    assert_contains("homeassistant/sensor/hubus_7/config", "\"device_class\":\"temperature\"");
-    assert_last("hubus/slave/7/state", "25");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"device_class\":\"temperature\"");
+    assert_last("hubus/slave/7/temperature/state", "25");
+}
+
+/* A module with two entities: both are decoded from the same frame, each has its own topics and discovery entry. */
+static void test_a_module_with_two_entities(void)
+{
+    dev_variant_seven = VARIANT_TWO_ENTITIES;
+    standard_setup(base_yaml);
+    assert_last("hubus/slave/7/temperature/state", "25");
+    assert_last("hubus/slave/7/low-byte/state", "ON"); /* 298 is 0x012A */
+    assert_contains("hubus/slave/7/info", "\"entities\":[\"temperature\",\"low-byte\"]");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"state_topic\":\"hubus/slave/7/temperature/state\"");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"name\":\"Temperature\"");
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"unique_id\":\"hubus_7_temperature\"");
+    assert_contains("homeassistant/binary_sensor/hubus_7_low-byte/config", "\"name\":\"Low byte\"");
+    assert_contains("homeassistant/binary_sensor/hubus_7_low-byte/config", "\"state_topic\":\"hubus/slave/7/low-byte/state\"");
+    TEST_ASSERT_NULL(strstr(last("homeassistant/binary_sensor/hubus_7_low-byte/config"), "command_topic"));
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"identifiers\":[\"hubus_7\"]"); /* one device */
+    assert_contains("homeassistant/binary_sensor/hubus_7_low-byte/config", "\"identifiers\":[\"hubus_7\"]");
+    TEST_ASSERT_NULL(last("hubus/slave/7/state"));
+}
+
+/* A command goes to an entity: slave/<n>/<key>/set. */
+static void test_commands_without_an_entity_are_rejected(void)
+{
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/slave/3/set", "ON"); /* the topic of earlier versions */
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "slave/3/<key>/set"));
+    say("hubus/slave/3/nothing/set", "ON");
+    say("hubus/slave/3/relay/relay/set", "ON"); /* not an entity either */
+    say("hubus/slave/3/this-key-is-much-longer-than-an-entity-key-may-be/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT(3, dmn->stats.commands_rejected); /* "relay/relay/set" is none of our topics and is ignored */
+    say("hubus/slave/3/relay/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
+}
+
+/* When the module of a slave changes, the discovery entries of its old entities are removed. */
+static void test_discovery_of_removed_entities_goes_when_the_module_changes(void)
+{
+    dev_variant_seven = VARIANT_TWO_ENTITIES;
+    standard_setup(base_yaml);
+    TEST_ASSERT_NOT_EQUAL(0, strlen(last("homeassistant/binary_sensor/hubus_7_low-byte/config")));
+    dev[2].hwid[HUBUS_HWID_VARIANT] = VARIANT_PLAIN; /* the firmware of the slave is replaced by one with one entity */
+    n_msgs = 0;
+    advance(40);
+    assert_last("homeassistant/binary_sensor/hubus_7_low-byte/config", "");
+    TEST_ASSERT_NOT_EQUAL(0, strlen(last("homeassistant/sensor/hubus_7_temperature/config")));
+    assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"name\":null");
 }
 
 /* ---- statistics ------------------------------------------------------------------------------------ */
@@ -964,7 +1096,7 @@ static void test_statistics_on_request(void)
     standard_setup(base_yaml);
     hubus_sim_slave_write(&sim, 1, &pressed, 1, 0);
     settle();
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     n_msgs = 0;
     say("hubus/master/cmd/stats", "");
@@ -1018,9 +1150,9 @@ static void test_startup_reads_the_state_of_slaves_that_have_one(void)
 
     assert_contains("hubus/slave/3/info", "\"state\":true");
     assert_contains("hubus/slave/5/info", "\"state\":false");
-    assert_last("hubus/slave/3/state", "OFF");
-    assert_last("hubus/slave/7/state", "25");
-    assert_last("hubus/slave/5/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
+    assert_last("hubus/slave/7/temperature/state", "25");
+    assert_last("hubus/slave/5/button/state", "OFF");
     TEST_ASSERT_EQUAL_UINT(0, dev[0].captures); /* relay and sensor were read directly ... */
     TEST_ASSERT_EQUAL_UINT(0, dev[2].captures);
     TEST_ASSERT_EQUAL_UINT(1, dev[1].captures); /* ... the button has no state and still captures */
@@ -1033,11 +1165,11 @@ static void test_readback_after_set_uses_one_state_read(void)
     dev_with_state = 1;
     standard_setup(base_yaml);
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
     TEST_ASSERT_EQUAL_UINT(0, dev[0].captures); /* no STATUS_CAPTURE, no burst */
-    assert_last("hubus/slave/3/state", "ON");
+    assert_last("hubus/slave/3/relay/state", "ON");
     assert_contains("hubus/slave/3/data", "\"result\":\"state\"");
     TEST_ASSERT_EQUAL_UINT(1, count("hubus/slave/3/data"));
 }
@@ -1048,9 +1180,9 @@ static void test_published_state_is_still_the_real_state_with_a_state_read(void)
     standard_setup(base_yaml);
     dev[0].core.on_command = NULL; /* the relay ignores commands (defective) */
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
-    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
 }
 
 static void test_read_topic_reads_the_live_state_at_any_time(void)
@@ -1061,7 +1193,7 @@ static void test_read_topic_reads_the_live_state_at_any_time(void)
     n_msgs = 0;
     say("hubus/slave/7/read", "");
     settle();
-    assert_last("hubus/slave/7/state", "30");
+    assert_last("hubus/slave/7/temperature/state", "30");
     TEST_ASSERT_EQUAL_UINT(0, dev[2].captures);
     /* the event buffer is not involved: nothing pending, no burst */
     TEST_ASSERT_EQUAL_UINT(0, count("hubus/slave/5/data"));
@@ -1089,7 +1221,7 @@ static void test_state_read_does_not_disturb_a_pending_event(void)
     settle();
     /* the read came first or the burst did: either way the event is delivered exactly once */
     TEST_ASSERT_FALSE(hubus_core_is_pending(&dev[0].core));
-    assert_last("hubus/slave/3/state", "ON");
+    assert_last("hubus/slave/3/relay/state", "ON");
 }
 
 static void test_probe_reports_a_single_mcid(void)
@@ -1140,7 +1272,7 @@ static void test_probe_brings_an_offline_slave_back(void)
     settle();
     assert_last("hubus/slave/7/availability", "online");
     assert_contains("hubus/master/probe", "\"state\":\"present\"");
-    assert_last("hubus/slave/7/state", "25"); /* its state is refreshed */
+    assert_last("hubus/slave/7/temperature/state", "25"); /* its state is refreshed */
 }
 
 static void test_probe_payload_is_validated(void)
@@ -1182,7 +1314,7 @@ static void test_line_fault_is_reported_and_recovers(void)
     assert_last("hubus/slave/3/availability", "offline"); /* not seen yet */
 
     /* commands during the fault are rejected instead of queued up */
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
 
@@ -1200,7 +1332,7 @@ static void test_fault_during_operation(void)
     standard_setup(base_yaml);
     sim.extra_low = 1;
     hubus_sim_settle(&sim);
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     assert_contains("hubus/master/state", "\"bus\":\"line_fault\"");
     sim.extra_low = 0;
@@ -1254,9 +1386,9 @@ static void test_reconnect_republishes_retained_state(void)
     settle();
     assert_last("hubus/master/status", "online");
     assert_last("hubus/slave/3/availability", "online");
-    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
     TEST_ASSERT_NOT_NULL(last("hubus/slave/3/info"));
-    TEST_ASSERT_NOT_NULL(last("homeassistant/switch/hubus_3/config"));
+    TEST_ASSERT_NOT_NULL(last("homeassistant/switch/hubus_3_relay/config"));
     TEST_ASSERT_NOT_NULL(last("hubus/master/diagnosis"));
 }
 
@@ -1275,16 +1407,16 @@ static void test_reload_adds_and_removes_slaves(void)
     advance(10);
 
     /* slave 5 and 7 are gone */
-    assert_last("homeassistant/binary_sensor/hubus_5/config", "");
-    assert_last("homeassistant/sensor/hubus_7/config", "");
+    assert_last("homeassistant/binary_sensor/hubus_5_button/config", "");
+    assert_last("homeassistant/sensor/hubus_7_temperature/config", "");
     assert_last("hubus/slave/5/availability", "");
-    assert_last("hubus/slave/7/state", "");
+    assert_last("hubus/slave/7/temperature/state", "");
     /* slave 3 stays with the new name */
-    assert_contains("homeassistant/switch/hubus_3/config", "\"name\":\"Renamed\"");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"name\":\"Renamed\"");
     assert_last("hubus/slave/3/availability", "online");
-    /* slave 9 has no profile: online, but only raw topics */
+    /* slave 9 has no entities: online, but only raw topics */
     assert_last("hubus/slave/9/availability", "online");
-    TEST_ASSERT_NULL(last("homeassistant/switch/hubus_9/config"));
+    TEST_ASSERT_NULL(last("homeassistant/switch/hubus_9_relay/config"));
     assert_contains("hubus/master/state", "\"configured_slaves\":2");
     TEST_ASSERT_TRUE(count_containing("hubus/master/log", "configuration reloaded") >= 1);
     TEST_ASSERT_EQUAL_UINT(0, strstr(last("hubus/master/state"), "\"mcid\":9") != NULL); /* no longer unknown */
@@ -1320,7 +1452,7 @@ static void test_subscriptions_and_status_topic(void)
     hubusd_subscriptions(dmn, collect_sub, NULL);
     TEST_ASSERT_EQUAL_UINT(6, sub_n);
     TEST_ASSERT_EQUAL_STRING("hubus/master/cmd/+", sub_topics[0]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/set", sub_topics[1]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/set", sub_topics[1]);
     TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[4]);
     TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[5]);
     TEST_ASSERT_EQUAL_UINT(strlen("hubus/master/status"), hubusd_status_topic(dmn, status, sizeof status));
@@ -1334,7 +1466,7 @@ static void test_empty_payloads_arrive_as_null(void)
     hubusd_handle_message(dmn, "hubus/slave/7/capture", NULL, 0);
     hubusd_handle_message(dmn, "hubus/master/cmd/scan", NULL, 0);
     hubusd_handle_message(dmn, "hubus/master/cmd/stats", NULL, 0);
-    hubusd_handle_message(dmn, "hubus/slave/3/set", NULL, 0); /* empty command: rejected */
+    hubusd_handle_message(dmn, "hubus/slave/3/relay/set", NULL, 0); /* empty command: rejected */
     settle();
     TEST_ASSERT_NOT_NULL(last("hubus/master/stats"));
     TEST_ASSERT_NOT_NULL(last("hubus/master/scan"));
@@ -1350,7 +1482,7 @@ static void *hammer(void *arg)
 
     (void)arg;
     for (i = 0; i < 2000; i++) {
-        say("hubus/slave/3/set", (i & 1) ? "OFF" : "ON");
+        say("hubus/slave/3/relay/set", (i & 1) ? "OFF" : "ON");
         say("hubus/slave/3/cmd", "0x10 1");
         say("hubus/master/cmd/stats", "");
         if (i % 100 == 0) {
@@ -1420,14 +1552,14 @@ static void test_readback_waits_for_the_blind_time_and_a_reset_ends_it(void)
     assert_contains("hubus/slave/3/info", "\"blind\":true");
     assert_contains("hubus/slave/5/info", "\"blind\":false");
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
     TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase);
-    TEST_ASSERT_NULL(last("hubus/slave/3/state")); /* the readback waits */
+    TEST_ASSERT_NULL(last("hubus/slave/3/relay/state")); /* the readback waits */
     TEST_ASSERT_TRUE(dmn->slave[3].blind_until_ms > clock_ms);
 
-    say("hubus/slave/3/set", "OFF"); /* a second command waits as well */
+    say("hubus/slave/3/relay/set", "OFF"); /* a second command waits as well */
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
     TEST_ASSERT_EQUAL_UINT8(1, dev[0].state);
@@ -1436,13 +1568,13 @@ static void test_readback_waits_for_the_blind_time_and_a_reset_ends_it(void)
     clock_ms += 6; /* class 5: 4 ms, plus rounding and one tick */
     settle();
     TEST_ASSERT_TRUE(sim.n_reset > resets);
-    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/slave/3/state", "ON")); /* read back after the blind time */
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/slave/3/relay/state", "ON")); /* read back after the blind time */
     TEST_ASSERT_EQUAL_UINT(2, dev[0].commands);                               /* then the queued command */
     TEST_ASSERT_EQUAL_UINT8(0, dev[0].state);
 
     clock_ms += 6;
     settle();
-    assert_last("hubus/slave/3/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF");
     TEST_ASSERT_EQUAL_UINT(0, dmn->slave[3].blind_until_ms);
     TEST_ASSERT_EQUAL_UINT(1, dmn->slave[3].online);
 }
@@ -1453,7 +1585,7 @@ static void test_other_slaves_are_served_while_one_is_blind(void)
     dev_blind_mcid = 3;
     standard_setup(base_yaml);
     n_msgs = 0;
-    say("hubus/slave/3/set", "ON");
+    say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase);
 
@@ -1461,13 +1593,13 @@ static void test_other_slaves_are_served_while_one_is_blind(void)
     TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 1, &dev[1].state, 1, 0));
     say("hubus/slave/7/read", "");
     settle();
-    assert_last("hubus/slave/5/state", "ON");
-    TEST_ASSERT_NOT_NULL(last("hubus/slave/7/state"));
+    assert_last("hubus/slave/5/button/state", "ON");
+    TEST_ASSERT_NOT_NULL(last("hubus/slave/7/temperature/state"));
     TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase); /* all of it while the relay was still blind */
 
     clock_ms += 6;
     settle();
-    assert_last("hubus/slave/3/state", "ON");
+    assert_last("hubus/slave/3/relay/state", "ON");
 }
 
 static void test_pings_and_scans_skip_a_blind_slave(void)
@@ -1520,6 +1652,7 @@ int main(void)
     RUN_TEST(test_cache_readback_does_not_know_about_a_defective_slave);
     RUN_TEST(test_cache_readback_leaves_raw_commands_alone);
     RUN_TEST(test_slave_that_cannot_be_read_back_reports_the_cached_state);
+    RUN_TEST(test_the_cached_state_belongs_to_the_entity_that_was_switched);
     RUN_TEST(test_poll_interval_reads_the_state_periodically);
     RUN_TEST(test_poll_interval_captures_a_slave_without_a_state);
     RUN_TEST(test_readback_mode_per_slave_overrides_the_bus_default);
@@ -1527,7 +1660,10 @@ int main(void)
     RUN_TEST(test_malformed_topics_and_payloads_are_rejected);
     RUN_TEST(test_unrelated_topics_are_ignored);
     RUN_TEST(test_oversized_payload_is_rejected);
-    RUN_TEST(test_set_for_a_slave_without_a_profile_is_rejected);
+    RUN_TEST(test_set_for_an_entity_the_module_does_not_have_is_rejected);
+    RUN_TEST(test_a_module_with_two_entities);
+    RUN_TEST(test_commands_without_an_entity_are_rejected);
+    RUN_TEST(test_discovery_of_removed_entities_goes_when_the_module_changes);
     RUN_TEST(test_a_slave_without_a_module_gets_no_commands);
     RUN_TEST(test_raw_command_exact);
     RUN_TEST(test_the_blind_time_depends_on_the_opcode);

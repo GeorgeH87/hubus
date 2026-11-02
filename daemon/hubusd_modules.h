@@ -17,6 +17,11 @@ const hubus_module_t *const *hubusd_builtin_modules(size_t *count);
  * number of plugins loaded. The caller closes the set with hubus_module_set_unload(). */
 size_t hubusd_load_modules(const hubusd_config_t *cfg, hubus_module_set_t *set, hubus_load_report_fn report, void *ctx);
 
+/* The names Home Assistant knows for the enums of a module. NULL where an enum says "none". */
+const char *hubusd_component_name(hubus_component_t component);
+const char *hubusd_device_class_name(hubus_device_class_t device_class);
+const char *hubusd_unit_text(hubus_unit_t unit);
+
 /* A hubus_load_report_fn that writes to stderr. */
 void hubusd_report_module(void *ctx, const char *path, const hubus_load_result_t *r);
 

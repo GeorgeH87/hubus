@@ -453,6 +453,111 @@ static void test_a_blind_time_only_for_one_opcode_counts_as_a_blind_time(void)
     TEST_ASSERT_TRUE(hubus_module_has_blind_time(&ledstrip_module));
 }
 
+/* ---- the values of an entity ------------------------------------------------------------------------------------------- */
+
+static void test_entities_are_found_by_key(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, hubus_module_find_entity(&ledstrip_module, "color"));
+    TEST_ASSERT_EQUAL_INT(1, hubus_module_find_entity(&ledstrip_module, "button"));
+    TEST_ASSERT_EQUAL_INT(-1, hubus_module_find_entity(&ledstrip_module, "Button")); /* keys are case sensitive */
+    TEST_ASSERT_EQUAL_INT(-1, hubus_module_find_entity(&ledstrip_module, ""));
+}
+
+static void test_a_sensor_value_is_decoded_with_scale_offset_and_decimals(void)
+{
+    const uint8_t temperature[] = {0x01, 0x2A}; /* 298 */
+    hubus_entity_t e = temperature_entities[0];
+    char out[16];
+
+    TEST_ASSERT_EQUAL_UINT(2, hubus_entity_decode(&e, temperature, 2, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("25", out);
+    e.decode.big_endian = false; /* 0x2A01 */
+    TEST_ASSERT_EQUAL_UINT(5, hubus_entity_decode(&e, temperature, 2, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("10480", out);
+    e.decode.big_endian = true;
+    e.decode.scale = 0.1;
+    e.decode.add = 900.0;
+    e.decode.decimals = 1;
+    TEST_ASSERT_EQUAL_UINT(5, hubus_entity_decode(&e, temperature, 2, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("929.8", out);
+}
+
+static void test_the_signedness_and_the_offset_are_respected(void)
+{
+    const uint8_t data[] = {0x00, 0xFF, 0xFE};
+    hubus_entity_t e = temperature_entities[0];
+    char out[16];
+
+    e.decode = (hubus_module_decode_t){.offset = 1, .len = 1, .scale = 1.0};
+    TEST_ASSERT_TRUE(hubus_entity_decode(&e, data, 3, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("255", out);
+    e.decode.is_signed = true;
+    TEST_ASSERT_TRUE(hubus_entity_decode(&e, data, 3, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("-1", out);
+    e.decode = (hubus_module_decode_t){.offset = 1, .len = 2, .big_endian = true, .is_signed = true, .scale = 1.0};
+    TEST_ASSERT_TRUE(hubus_entity_decode(&e, data, 3, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("-2", out); /* 0xFFFE */
+}
+
+static void test_a_switch_or_a_binary_sensor_reports_on_or_off(void)
+{
+    const uint8_t on = 3, off = 0;
+    hubus_entity_t e = ledstrip_entities[1];
+    char out[8];
+
+    TEST_ASSERT_TRUE(hubus_entity_decode(&e, &on, 1, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("ON", out);
+    TEST_ASSERT_TRUE(hubus_entity_decode(&e, &off, 1, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("OFF", out);
+    e.component = HUBUS_COMPONENT_SWITCH;
+    TEST_ASSERT_TRUE(hubus_entity_decode(&e, &on, 1, out, sizeof out));
+    TEST_ASSERT_EQUAL_STRING("ON", out);
+}
+
+static void test_nothing_is_decoded_that_the_frame_or_the_buffer_cannot_hold(void)
+{
+    const uint8_t data[] = {0x01, 0x2A};
+    char out[8];
+
+    TEST_ASSERT_EQUAL_UINT(0, hubus_entity_decode(&temperature_entities[0], data, 1, out, sizeof out)); /* too short */
+    TEST_ASSERT_EQUAL_UINT(0, hubus_entity_decode(&temperature_entities[0], data, 0, out, sizeof out));
+    TEST_ASSERT_EQUAL_UINT(0, hubus_entity_decode(&temperature_entities[0], data, 2, out, 2)); /* "25" needs 3 */
+    TEST_ASSERT_EQUAL_UINT(0, hubus_entity_decode(&ledstrip_entities[0], data, 2, out, sizeof out)); /* no value */
+}
+
+static void test_keys_are_safe_for_a_topic_and_the_number_of_entities_is_limited(void)
+{
+    static const char *const good[] = {"a", "relay", "low-byte", "Channel_2", "0123456789012345678901"};
+    static const char *const bad[] = {"", "a/b", "a b", "a+", "a#", "\xC3\xA4", "01234567890123456789012345"};
+    hubus_entity_t e = temperature_entities[0];
+    hubus_entity_t many[HUBUS_MODULE_ENTITIES_MAX + 1u];
+    char keys[HUBUS_MODULE_ENTITIES_MAX + 1u][8];
+    hubus_module_t m = temperature_module;
+    size_t i;
+
+    for (i = 0; i < sizeof good / sizeof good[0]; i++) {
+        e.key = good[i];
+        TEST_ASSERT_EQUAL_MESSAGE(HUBUS_MODULE_VALID, validate_entity(e, false), good[i]);
+    }
+    for (i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        e.key = bad[i];
+        TEST_ASSERT_EQUAL_MESSAGE(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, false), bad[i]);
+    }
+    for (i = 0; i <= HUBUS_MODULE_ENTITIES_MAX; i++) {
+        many[i] = temperature_entities[0];
+        snprintf(keys[i], sizeof keys[i], "e%u", (unsigned)i);
+        many[i].key = keys[i];
+    }
+    m.entities = many;
+    m.n_entities = HUBUS_MODULE_ENTITIES_MAX;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, hubus_module_validate(&m));
+    m.n_entities = HUBUS_MODULE_ENTITIES_MAX + 1u;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, hubus_module_validate(&m));
+    e = temperature_entities[0];
+    e.decode.decimals = 7; /* a number that does not fit a short buffer */
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, false));
+}
+
 /* ---- selection from a SLAVE_INFO payload ------------------------------------------------------------------------------ */
 
 static void test_selection_from_slave_info(void)
@@ -533,6 +638,12 @@ int main(void)
     RUN_TEST(test_create_and_destroy_come_together);
     RUN_TEST(test_blind_time_per_opcode_with_the_general_value_as_fallback);
     RUN_TEST(test_a_blind_time_only_for_one_opcode_counts_as_a_blind_time);
+    RUN_TEST(test_entities_are_found_by_key);
+    RUN_TEST(test_a_sensor_value_is_decoded_with_scale_offset_and_decimals);
+    RUN_TEST(test_the_signedness_and_the_offset_are_respected);
+    RUN_TEST(test_a_switch_or_a_binary_sensor_reports_on_or_off);
+    RUN_TEST(test_nothing_is_decoded_that_the_frame_or_the_buffer_cannot_hold);
+    RUN_TEST(test_keys_are_safe_for_a_topic_and_the_number_of_entities_is_limited);
     RUN_TEST(test_selection_from_slave_info);
     RUN_TEST(test_a_function_sends_through_the_host_with_typed_values);
     return UNITY_END();

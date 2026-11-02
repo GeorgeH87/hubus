@@ -1,6 +1,6 @@
 # hubusd configuration. Copy to /etc/hubus/hubusd.yaml and adjust.
 # Validate with: hubusd --check -c hubusd.yaml
-# Reload the slave list and the profiles with: kill -HUP $(pidof hubusd)
+# Reload the slave list with: kill -HUP $(pidof hubusd)
 
 gpio:
   chip: pinctrl-rp1      # chip label: pinctrl-rp1 (Pi 5), pinctrl-bcm2711 (Pi 4); empty = auto-detect
@@ -57,7 +57,6 @@ bus:
 slaves:
   - mcid: 3
     name: Garden relay
-    profile: relay        # optional: recognised from the type in the hardware identifier
   - mcid: 5
     name: Door button
   - mcid: 7
@@ -68,22 +67,3 @@ slaves:
   - mcid: 8
     name: Attic temperature
     poll_interval_s: 60   # examples/slave-sensor-passive never announces changes: read its state every minute, 0 = off
-
-# Profiles for custom firmware. Built in: relay (type 0x01), switch (0x02), temperature (0x03).
-# profiles:
-#   dimmer:
-#     component: switch               # switch | binary_sensor | sensor
-#     device_type: 0xA0               # type byte of the hardware identifier (automatic recognition)
-#     on:  {opcode: 0x30, args: [255]}
-#     off: {opcode: 0x30, args: [0]}
-#   pressure:
-#     component: sensor
-#     byte_offset: 0
-#     byte_length: 2                  # 1 or 2
-#     byte_order: big                 # big | little
-#     signed: false
-#     scale: 0.1                      # value = raw * scale + offset
-#     offset: 900
-#     decimals: 1
-#     unit: hPa
-#     device_class: pressure

@@ -67,17 +67,39 @@ static void command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t len)
 static const hubus_module_rule_t relay_rules[] = {{.pattern = {TYPE_RELAY}, .mask = {0xFF}, .len = 1}};
 static const hubus_module_rule_t button_rules[] = {{.pattern = {TYPE_BUTTON}, .mask = {0xFF}, .len = 1}};
 static const hubus_module_rule_t temperature_rules[] = {{.pattern = {TYPE_TEMPERATURE}, .mask = {0xFF}, .len = 1}};
+static const hubus_entity_t relay_entity[] = {{
+    .key = "relay",
+    .name = "Relay",
+    .component = HUBUS_COMPONENT_SWITCH,
+    .decode = {.offset = 0, .len = 1, .scale = 1.0},
+    .on = {.used = true, .opcode = 0x10, .n_args = 1, .args = {1}},
+    .off = {.used = true, .opcode = 0x10, .n_args = 1, .args = {0}},
+}};
+static const hubus_entity_t button_entity[] = {
+    {.key = "button", .name = "Button", .component = HUBUS_COMPONENT_BINARY_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
+};
+static const hubus_entity_t temperature_entity[] = {{
+    .key = "temperature",
+    .name = "Temperature",
+    .component = HUBUS_COMPONENT_SENSOR,
+    .device_class = HUBUS_DEVICE_CLASS_TEMPERATURE,
+    .unit = HUBUS_UNIT_CELSIUS,
+    .decode = {.offset = 0, .len = 2, .big_endian = true, .scale = 1.0, .add = -273.0},
+}};
 static const hubus_module_t relay_module = {
     HUBUS_MODULE_INIT, .name = "relay", .rules = relay_rules, .n_rules = 1, .max_command = 31,
     .has_state = true, .has_events = true, .has_status_capture = true,
+    .entities = relay_entity, .n_entities = 1,
 };
 static const hubus_module_t button_module = {
     HUBUS_MODULE_INIT, .name = "button", .rules = button_rules, .n_rules = 1, .max_command = 31,
     .has_events = true, .has_status_capture = true,
+    .entities = button_entity, .n_entities = 1,
 };
 static const hubus_module_t temperature_module = {
     HUBUS_MODULE_INIT, .name = "temperature", .rules = temperature_rules, .n_rules = 1, .max_command = 31,
     .has_state = true, .has_events = true, .has_status_capture = true,
+    .entities = temperature_entity, .n_entities = 1,
 };
 static const hubus_module_t *const sim_modules[] = {&relay_module, &button_module, &temperature_module};
 

@@ -105,7 +105,7 @@ Documentation: [hubusd](docs/daemon.md).
 
 - [x] Configuration in YAML; unknown slaves are ignored and reported in the master state.
 - [x] Daemon core: bus thread, command queue, statistics, availability tracking, tested against the bus simulation with a fake MQTT client.
-- [x] Device profiles (relay, switch, temperature, custom) and Home Assistant discovery.
+- [x] Device profiles (relay, switch, temperature, custom) and Home Assistant discovery (replaced by the entities of the modules, section 12).
 - [x] Configuration file parser with validation (line numbers, unknown keys, secrets).
 - [x] `libmosquitto` binding, reconnect, last will, retained state; end-to-end test with a real broker on the simulated bus.
 - [x] Readback from the cache for slaves that cannot be read back; periodic state reads (`poll_interval_s`).
@@ -135,5 +135,5 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 - [x] hubusd: modules selected by the HWID; command size, state, status capture, and blind times per opcode from the module; slaves without a module get no commands.
 - [x] Examples and tests.
 - [x] Load modules as plugins (`modules.dir` of hubusd, `master/hubus_module_loader.h`): checks before use, name and rule conflicts reported at load time, files that others can write refused. The modules of the examples stay linked into hubusd.
-- [ ] hubusd: topics and discovery from the entities of the module, replacing the profiles and their match by the type byte.
+- [x] hubusd: topics and discovery from the entities of the module (`hubus/slave/<n>/<key>/state` and `/set`); the profiles are gone.
 - [ ] Functions of a module (`create`, `on_frame`, `on_set`) outside the bus thread.

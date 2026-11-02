@@ -3,6 +3,7 @@
  */
 #include "hubus_module.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define MODULE_MAX_COMMAND 31u
@@ -58,9 +59,28 @@ static bool blind_ops_valid(const hubus_module_t *m)
     return true;
 }
 
+#define MODULE_MAX_DECIMALS 6u
+
+static bool key_valid(const char *key)
+{
+    size_t i;
+
+    if (key == NULL || key[0] == '\0' || strlen(key) > HUBUS_ENTITY_KEY_MAX) {
+        return false;
+    }
+    for (i = 0; key[i] != '\0'; i++) {
+        char c = key[i];
+
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool decode_valid(const hubus_module_decode_t *d)
 {
-    if (d->len > 2u || (unsigned)d->offset + d->len > MODULE_MAX_PAYLOAD) {
+    if (d->len > 2u || (unsigned)d->offset + d->len > MODULE_MAX_PAYLOAD || d->decimals > MODULE_MAX_DECIMALS) {
         return false;
     }
     return d->len == 0u || d->scale != 0.0;
@@ -73,7 +93,7 @@ static bool command_valid(const hubus_module_command_t *c, uint8_t max_command)
 
 static bool entity_valid(const hubus_module_t *m, const hubus_entity_t *e)
 {
-    if (e->key == NULL || e->key[0] == '\0' || e->name == NULL || (unsigned)e->component >= HUBUS_COMPONENT_COUNT ||
+    if (!key_valid(e->key) || e->name == NULL || (unsigned)e->component >= HUBUS_COMPONENT_COUNT ||
         (unsigned)e->device_class >= HUBUS_DEVICE_CLASS_COUNT || (unsigned)e->unit >= HUBUS_UNIT_COUNT ||
         !decode_valid(&e->decode) || !command_valid(&e->on, m->max_command) ||
         !command_valid(&e->off, m->max_command)) {
@@ -96,7 +116,7 @@ static bool entities_valid(const hubus_module_t *m)
 {
     uint8_t i, j;
 
-    if (m->n_entities > 0u && m->entities == NULL) {
+    if ((m->n_entities > 0u && m->entities == NULL) || m->n_entities > HUBUS_MODULE_ENTITIES_MAX) {
         return false;
     }
     for (i = 0; i < m->n_entities; i++) {
@@ -243,6 +263,44 @@ bool hubus_module_conflicts(const hubus_module_t *a, const hubus_module_t *b)
         }
     }
     return false;
+}
+
+int hubus_module_find_entity(const hubus_module_t *m, const char *key)
+{
+    uint8_t i;
+
+    for (i = 0; i < m->n_entities; i++) {
+        if (strcmp(m->entities[i].key, key) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+size_t hubus_entity_decode(const hubus_entity_t *e, const uint8_t *data, uint8_t len, char *out, size_t out_size)
+{
+    const hubus_module_decode_t *d = &e->decode;
+    int32_t raw;
+    int n;
+
+    if (d->len == 0u || (unsigned)d->offset + d->len > len) {
+        return 0;
+    }
+    if (d->len == 1u) {
+        raw = d->is_signed ? (int32_t)(int8_t)data[d->offset] : (int32_t)data[d->offset];
+    } else {
+        uint16_t hi = d->big_endian ? data[d->offset] : data[d->offset + 1u];
+        uint16_t lo = d->big_endian ? data[d->offset + 1u] : data[d->offset];
+        uint16_t v = (uint16_t)((hi << 8) | lo);
+
+        raw = d->is_signed ? (int32_t)(int16_t)v : (int32_t)v;
+    }
+    if (e->component == HUBUS_COMPONENT_SENSOR) {
+        n = snprintf(out, out_size, "%.*f", d->decimals, (double)raw * d->scale + d->add);
+    } else {
+        n = snprintf(out, out_size, "%s", raw != 0 ? "ON" : "OFF");
+    }
+    return (n > 0 && (size_t)n < out_size) ? (size_t)n : 0u;
 }
 
 hubus_module_match_t hubus_module_select_info(const hubus_module_t *const *modules, size_t n_modules,

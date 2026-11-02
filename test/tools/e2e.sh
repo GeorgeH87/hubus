@@ -60,32 +60,32 @@ expect() { # description pattern
 
 expect "master online"               '^hubus/master/status online$'
 expect "relay available"             '^hubus/slave/3/availability online$'
-expect "initial relay state"         '^hubus/slave/3/state OFF$'
-expect "temperature state"           '^hubus/slave/7/state 25$'
+expect "initial relay state"         '^hubus/slave/3/relay/state OFF$'
+expect "temperature state"           '^hubus/slave/7/temperature/state 25$'
 expect "slave info"                  '^hubus/slave/3/info .*"serial":"00000003"'
-expect "discovery relay"             '^homeassistant/switch/hubus_3/config .*"command_topic":"hubus/slave/3/set"'
-expect "discovery temperature"       '^homeassistant/sensor/hubus_7/config .*"device_class":"temperature"'
+expect "discovery relay"             '^homeassistant/switch/hubus_3_relay/config .*"command_topic":"hubus/slave/3/relay/set"'
+expect "discovery temperature"       '^homeassistant/sensor/hubus_7_temperature/config .*"device_class":"temperature"'
 expect "unknown slave reported"      '^hubus/master/state .*"unknown_slaves":\[\{"mcid":9'
 
-pub hubus/slave/3/set ON
-expect "relay switched on"           '^hubus/slave/3/state ON$'
+pub hubus/slave/3/relay/set ON
+expect "relay switched on"           '^hubus/slave/3/relay/state ON$'
 echo press >&3
-expect "button press"                '^hubus/slave/5/state ON$'
+expect "button press"                '^hubus/slave/5/button/state ON$'
 echo release >&3
-expect "button release"              '^hubus/slave/5/state OFF$'
+expect "button release"              '^hubus/slave/5/button/state OFF$'
 echo "temp 303" >&3
 pub hubus/slave/7/capture ""
-expect "temperature capture"         '^hubus/slave/7/state 30$'
+expect "temperature capture"         '^hubus/slave/7/temperature/state 30$'
 echo "temp 311" >&3
 pub hubus/slave/7/read ""
-expect "temperature read (REQUEST_STATE)" '^hubus/slave/7/state 38$'
+expect "temperature read (REQUEST_STATE)" '^hubus/slave/7/temperature/state 38$'
 pub hubus/slave/5/read ""
 expect "read of a slave without a state is rejected" '^hubus/master/log .*has no state'
 pub hubus/master/cmd/probe 9
 expect "probe of an unconfigured slave" '^hubus/master/probe .*"mcid":9,"state":"present","configured":false'
 pub hubus/master/cmd/probe 40
 expect "probe of an empty MCID" '^hubus/master/probe .*"mcid":40,"state":"absent"'
-pub hubus/slave/3/set TOGGLE
+pub hubus/slave/3/relay/set TOGGLE
 expect "invalid command rejected"    '^hubus/master/log .*command rejected'
 pub hubus/master/cmd/stats ""
 expect "statistics"                  '^hubus/master/stats .*"bus":"ok"'

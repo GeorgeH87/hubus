@@ -9,10 +9,8 @@
 #include <stdint.h>
 
 #include "hubus_master.h"
-#include "hubusd_profile.h"
 
 #define HUBUSD_MAX_SLAVES 63
-#define HUBUSD_MAX_PROFILES 16
 #define HUBUSD_MAX_WARNINGS 16
 #define HUBUSD_NAME_LEN 48
 
@@ -25,7 +23,6 @@
 typedef struct {
     uint8_t mcid;
     char name[HUBUSD_NAME_LEN];
-    char profile[HUBUSD_PROFILE_NAME_LEN]; /* empty: recognised from the HWID type, otherwise raw topics only */
     int readback;                          /* HUBUSD_READBACK_*, -1: use bus.readback */
     unsigned poll_interval_s;              /* read the live state (REQUEST_STATE) this often, 0: off; for slaves
                                               that only answer and never announce changes (passive sensors) */
@@ -73,9 +70,6 @@ typedef struct {
     hubusd_slave_cfg_t slaves[HUBUSD_MAX_SLAVES];
     unsigned n_slaves;
 
-    hubusd_profile_t profiles[HUBUSD_MAX_PROFILES]; /* custom profiles */
-    unsigned n_profiles;
-
     char warnings[HUBUSD_MAX_WARNINGS][160];
     unsigned n_warnings;
 } hubusd_config_t;
@@ -85,8 +79,5 @@ void hubusd_config_defaults(hubusd_config_t *cfg);
 /* Both return 0 on success and -1 on error with "line N: message" (or "file: message") in `err`. */
 int hubusd_config_parse(const char *text, size_t len, hubusd_config_t *cfg, char *err, size_t errsz);
 int hubusd_config_load(const char *path, hubusd_config_t *cfg, char *err, size_t errsz);
-
-/* Profile of a configured slave: custom profile first, then built-in. NULL if the slave has none. */
-const hubusd_profile_t *hubusd_config_profile(const hubusd_config_t *cfg, const char *name);
 
 #endif /* HUBUSD_CONFIG_H */

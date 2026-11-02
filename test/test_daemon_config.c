@@ -1,10 +1,9 @@
-/* Configuration (YAML), device profiles, and the JSON writer of hubusd. */
+/* Configuration (YAML) and the JSON writer of hubusd. */
 #include <stdlib.h>
 #include <string.h>
 
 #include "hubusd_config.h"
 #include "hubusd_json.h"
-#include "hubusd_profile.h"
 #include "hubusd_yaml.h"
 #include "hubusd_modules.h"
 #include "unity.h"
@@ -122,12 +121,10 @@ static const char *full_config =
     "slaves:\n"
     "  - mcid: 3\n"
     "    name: Garden relay\n"
-    "    profile: relay\n"
     "  - mcid: 5\n"
     "    readback: false\n"
     "  - mcid: 7\n"
-    "    name: Cellar\n"
-    "    profile: temperature\n";
+    "    name: Cellar\n";
 
 static void test_full_configuration(void)
 {
@@ -158,7 +155,6 @@ static void test_full_configuration(void)
     TEST_ASSERT_EQUAL_UINT(3, cfg.n_slaves);
     TEST_ASSERT_EQUAL_UINT8(3, cfg.slaves[0].mcid);
     TEST_ASSERT_EQUAL_STRING("Garden relay", cfg.slaves[0].name);
-    TEST_ASSERT_EQUAL_STRING("relay", cfg.slaves[0].profile);
     TEST_ASSERT_EQUAL_INT(-1, cfg.slaves[0].readback);
     TEST_ASSERT_EQUAL_STRING("HUBUS slave 5", cfg.slaves[1].name);
     TEST_ASSERT_EQUAL_INT(0, cfg.slaves[1].readback);
@@ -194,7 +190,6 @@ static void test_error_classes(void)
     expect_error("slaves:\n  - mcid: 0\n", "between 1 and 63");
     expect_error("slaves:\n  - mcid: 64\n", "between 1 and 63");
     expect_error("slaves:\n  - mcid: 4\n  - mcid: 4\n", "configured twice");
-    expect_error("slaves:\n  - mcid: 4\n    profile: toaster\n", "unknown profile 'toaster'");
     expect_error("slaves:\n  - 7\n", "mapping");
     expect_error("- a\n- b\n", "must be a mapping");
     expect_error("mqtt:\n  password_file: /does/not/exist\n", "password_file");
@@ -330,122 +325,30 @@ static void test_load_reports_the_file_name(void)
     TEST_ASSERT_NOT_NULL(strstr(err, "/does/not/exist.yaml"));
 }
 
-/* ---- custom profiles --------------------------------------------------------- */
+/* ---- profiles are gone --------------------------------------------------------- */
 
-static const char *custom_profiles =
-    "profiles:\n"
-    "  dimmer:\n"
-    "    component: switch\n"
-    "    device_type: 0x20\n"
-    "    on:\n"
-    "      opcode: 0x30\n"
-    "      args: [255, 1]\n"
-    "    off:\n"
-    "      opcode: 0x30\n"
-    "      args: [0]\n"
-    "  pressure:\n"
-    "    component: sensor\n"
-    "    byte_offset: 1\n"
-    "    byte_length: 2\n"
-    "    byte_order: little\n"
-    "    signed: true\n"
-    "    scale: 0.1\n"
-    "    offset: 900\n"
-    "    decimals: 1\n"
-    "    unit: hPa\n"
-    "    device_class: pressure\n"
-    "slaves:\n"
-    "  - mcid: 9\n"
-    "    profile: dimmer\n"
-    "  - mcid: 10\n"
-    "    profile: pressure\n";
-
-static void test_custom_profiles(void)
+static void test_profiles_are_no_longer_supported(void)
 {
-    const hubusd_profile_t *d;
-    const hubusd_profile_t *p;
-    hubusd_cmd_t cmd;
-    char out[32];
-    const uint8_t data[] = {0xAA, 0x2C, 0x01}; /* little endian 0x012C = 300 */
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, parse(custom_profiles), err);
-    d = hubusd_config_profile(&cfg, "dimmer");
-    p = hubusd_config_profile(&cfg, "pressure");
-    TEST_ASSERT_NOT_NULL(d);
-    TEST_ASSERT_NOT_NULL(p);
-    TEST_ASSERT_EQUAL_INT(0x20, d->device_type);
-    TEST_ASSERT_TRUE(hubusd_profile_command(d, "on", &cmd));
-    TEST_ASSERT_EQUAL_UINT8(0x30, cmd.opcode);
-    TEST_ASSERT_EQUAL_UINT8(2, cmd.n_args);
-    TEST_ASSERT_EQUAL_UINT8(255, cmd.args[0]);
-    TEST_ASSERT_TRUE(hubusd_profile_decode(p, data, 3, out, sizeof out) > 0);
-    TEST_ASSERT_EQUAL_STRING("930.0", out); /* 300 * 0.1 + 900 */
-    TEST_ASSERT_NOT_NULL(hubusd_config_profile(&cfg, "relay")); /* built-ins stay available */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, parse("profiles:\n  x:\n    component: sensor\nslaves:\n  - mcid: 4\n    profile: x\n"), err);
+    TEST_ASSERT_EQUAL_UINT(2, cfg.n_warnings);
+    TEST_ASSERT_NOT_NULL(strstr(cfg.warnings[0], "no longer supported"));
+    TEST_ASSERT_NOT_NULL(strstr(cfg.warnings[0], "module"));
+    TEST_ASSERT_NOT_NULL(strstr(cfg.warnings[1], "no longer supported"));
 }
 
-static void test_profile_errors(void)
+static void test_the_built_in_modules_are_valid_and_have_entities(void)
 {
-    expect_error("profiles:\n  x:\n    byte_offset: 1\n", "needs a 'component'");
-    expect_error("profiles:\n  x:\n    component: lamp\n", "unknown component");
-    expect_error("profiles:\n  relay:\n    component: sensor\n", "built in");
-    expect_error("profiles:\n  x:\n    component: switch\n", "needs 'on' and 'off'");
-    expect_error("profiles:\n  x:\n    component: switch\n    on:\n      opcode: 5\n    off:\n      opcode: 0x10\n",
-                 "opcode");
-    expect_error("profiles:\n  x:\n    component: sensor\n    byte_length: 3\n", "byte_length");
-    expect_error("profiles:\n  x:\n    component: sensor\n    byte_order: middle\n", "byte_order");
-    expect_error("profiles:\n  x:\n    component: switch\n    on:\n      opcode: 0x10\n      args: [1, 300]\n"
-                 "    off:\n      opcode: 0x10\n",
-                 "between 0 and 255");
-    expect_error("profiles:\n  x:\n    component: sensor\n    byte_offset: 30\n    byte_length: 2\n", "payload");
-}
+    const hubus_module_t *const *modules;
+    size_t n, i;
+    unsigned with_entities = 0;
 
-/* ---- built-in profiles --------------------------------------------------------- */
-
-static void test_builtin_profiles(void)
-{
-    const hubusd_profile_t *relay = hubusd_builtin_profile("relay");
-    const hubusd_profile_t *sw = hubusd_builtin_profile("switch");
-    const hubusd_profile_t *temp = hubusd_builtin_profile("temperature");
-    hubusd_cmd_t cmd;
-    char out[32];
-    uint8_t on = 1, off = 0;
-    const uint8_t raw[] = {0x01, 0x2A}; /* 298 -> 25 degC */
-
-    TEST_ASSERT_NOT_NULL(relay);
-    TEST_ASSERT_NOT_NULL(sw);
-    TEST_ASSERT_NOT_NULL(temp);
-    TEST_ASSERT_NULL(hubusd_builtin_profile("toaster"));
-    {
-        size_t n, i;
-        const hubus_module_t *const *modules = hubusd_builtin_modules(&n);
-
-        TEST_ASSERT_TRUE(n > 0u);
-        for (i = 0; i < n; i++) {
-            TEST_ASSERT_EQUAL_MESSAGE(HUBUS_MODULE_VALID, hubus_module_validate(modules[i]), modules[i]->name);
-        }
+    modules = hubusd_builtin_modules(&n);
+    TEST_ASSERT_TRUE(n > 0u);
+    for (i = 0; i < n; i++) {
+        TEST_ASSERT_EQUAL_MESSAGE(HUBUS_MODULE_VALID, hubus_module_validate(modules[i]), modules[i]->name);
+        with_entities += modules[i]->n_entities > 0u;
     }
-    TEST_ASSERT_EQUAL_PTR(relay, hubusd_builtin_profile_by_type(0x81));
-    TEST_ASSERT_EQUAL_PTR(sw, hubusd_builtin_profile_by_type(0x82));
-    TEST_ASSERT_EQUAL_PTR(temp, hubusd_builtin_profile_by_type(0x83));
-    TEST_ASSERT_NULL(hubusd_builtin_profile_by_type(0x77));
-
-    TEST_ASSERT_TRUE(hubusd_profile_decode(relay, &on, 1, out, sizeof out));
-    TEST_ASSERT_EQUAL_STRING("ON", out);
-    TEST_ASSERT_TRUE(hubusd_profile_decode(relay, &off, 1, out, sizeof out));
-    TEST_ASSERT_EQUAL_STRING("OFF", out);
-    TEST_ASSERT_EQUAL_UINT(0, hubusd_profile_decode(relay, &on, 0, out, sizeof out)); /* too short */
-    TEST_ASSERT_TRUE(hubusd_profile_decode(temp, raw, 2, out, sizeof out));
-    TEST_ASSERT_EQUAL_STRING("25", out);
-    TEST_ASSERT_EQUAL_UINT(0, hubusd_profile_decode(temp, raw, 1, out, sizeof out));
-    TEST_ASSERT_EQUAL_UINT(0, hubusd_profile_decode(relay, &on, 1, out, 2)); /* buffer too small */
-
-    TEST_ASSERT_TRUE(hubusd_profile_command(relay, "ON", &cmd));
-    TEST_ASSERT_EQUAL_UINT8(0x10, cmd.opcode);
-    TEST_ASSERT_EQUAL_UINT8(1, cmd.args[0]);
-    TEST_ASSERT_TRUE(hubusd_profile_command(relay, "off", &cmd));
-    TEST_ASSERT_EQUAL_UINT8(0, cmd.args[0]);
-    TEST_ASSERT_FALSE(hubusd_profile_command(relay, "toggle", &cmd));
-    TEST_ASSERT_FALSE(hubusd_profile_command(sw, "ON", &cmd)); /* sensors take no commands */
+    TEST_ASSERT_EQUAL_UINT(n - 1u, with_entities); /* all but the updater */
 }
 
 /* ---- JSON writer ------------------------------------------------------------------- */
@@ -518,9 +421,8 @@ int main(void)
     RUN_TEST(test_too_many_slaves);
     RUN_TEST(test_password_from_file_and_environment);
     RUN_TEST(test_load_reports_the_file_name);
-    RUN_TEST(test_custom_profiles);
-    RUN_TEST(test_profile_errors);
-    RUN_TEST(test_builtin_profiles);
+    RUN_TEST(test_profiles_are_no_longer_supported);
+    RUN_TEST(test_the_built_in_modules_are_valid_and_have_entities);
     RUN_TEST(test_json_writer);
     RUN_TEST(test_json_overflow_is_sticky_and_safe);
     RUN_TEST(test_json_unbalanced_is_not_ok);

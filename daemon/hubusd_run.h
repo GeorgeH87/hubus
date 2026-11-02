@@ -1,7 +1,7 @@
 /*
  * Runs the daemon: libmosquitto client in its own thread, the bus loop in the
  * calling thread, signal handling (SIGTERM/SIGINT stop, SIGHUP reloads the
- * slave list and the profiles). Shared by hubusd and the simulated bus tool.
+ * slave list). Shared by hubusd and the simulated bus tool.
  */
 #ifndef HUBUSD_RUN_H
 #define HUBUSD_RUN_H
