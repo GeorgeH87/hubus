@@ -213,6 +213,10 @@ hubus_module_error_t hubus_module_validate(const hubus_module_t *module);
 hubus_module_match_t hubus_module_select(const hubus_module_t *const *modules, size_t n_modules, const uint8_t *hwid,
                                          uint8_t len, const hubus_module_t **out);
 
+/* True if a rule of `a` and a rule of `b` have the same number of mask bits and can match the same HWID: select would
+ * find no winner for it. Modules whose rules differ in the number of mask bits do not conflict, the more specific wins. */
+bool hubus_module_conflicts(const hubus_module_t *a, const hubus_module_t *b);
+
 /* The same from a SLAVE_INFO payload. A protocol version this master does not know counts as an invalid HWID: it may lay
  * out everything after byte 0 differently. */
 hubus_module_match_t hubus_module_select_info(const hubus_module_t *const *modules, size_t n_modules,

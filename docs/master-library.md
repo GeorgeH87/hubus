@@ -145,7 +145,7 @@ These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAU
 
 ## Master Modules
 
-`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). hubusd selects the module of every slave with it. Loading plugins and calling the functions of a module are still missing ([roadmap](../TODO.md#12-master-modules-and-hardware-identifier)).
+`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). hubusd selects the module of every slave with it. Calling the functions of a module is still missing ([roadmap](../TODO.md#12-master-modules-and-hardware-identifier)).
 
 A module is a constant structure. A device whose bytes and commands can be described as data needs no code:
 
@@ -190,8 +190,29 @@ Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperatur
 | `hubus_module_validate(module)` | Checks a module before its first use: interface version, rules, properties, blind times, entities, functions. The compiler cannot check what comes from a plugin. |
 | `hubus_module_select(modules, n, hwid, len, &out)` | `HUBUS_MODULE_FOUND` with the module of the rule with the most mask bits, `HUBUS_MODULE_UNKNOWN`, `HUBUS_MODULE_INVALID`, or `HUBUS_MODULE_CONFLICT`. |
 | `hubus_module_select_info(modules, n, payload, len, &out)` | The same from a `SLAVE_INFO` payload; a protocol version this master does not know counts as invalid. |
+| `hubus_module_conflicts(a, b)` | Whether rules of two modules have the same number of mask bits and can match the same HWID: `select` would find no winner. |
 | `hubus_module_has_blind_time(module)` | Whether the slave can be blind after any command; it then keeps quiet until the master ends that phase. |
 | `hubus_module_blind_ms(module, opcode)` | The blind time after a command: the value for the opcode, otherwise the general one ([§7.8](spec/07-slave.md#78-blind-sections)). |
+
+### Loading Plugins
+
+`master/hubus_module_loader.h` keeps the modules of a master in a `hubus_module_set_t`: modules that are linked in (`hubus_module_set_add()`) and plugins, shared libraries that export `hubus_module_entry()` (`hubus_module_set_load_file()`, `hubus_module_set_load_dir()`). The set is what `hubus_module_select()` takes (`set.module`, `set.n`). Link with `-ldl`; the CMake target `hubus_master` does.
+
+Every module is checked before it joins the set, and a plugin that fails is closed again. The result says which check failed:
+
+| Status | Meaning |
+|---|---|
+| `HUBUS_LOAD_UNSAFE` | The file or directory is writable by its group or by others, or belongs to someone other than root and the current user. A plugin runs with the rights of the master, so it must not be changeable by others. |
+| `HUBUS_LOAD_OPEN` | Not a shared library, a missing file, or an unreadable directory; `detail` has the message. |
+| `HUBUS_LOAD_NO_ENTRY`, `HUBUS_LOAD_NO_MODULE` | No `hubus_module_entry`, or it returns `NULL`. |
+| `HUBUS_LOAD_INVALID` | `hubus_module_validate()` found an error; `invalid` says which. |
+| `HUBUS_LOAD_DUPLICATE` | A module of the set has this name; `module` points to it. |
+| `HUBUS_LOAD_CONFLICT` | A module of the set has rules that conflict with its own ([above](#master-modules)); `module` points to it. |
+| `HUBUS_LOAD_FULL` | The set holds `HUBUS_MODULE_SET_MAX` (64) modules. |
+
+`hubus_module_set_load_dir()` reads the files ending in `.so` in the order of their names, so that the module that loses a conflict is always the same, and calls `report` for each file. `hubus_module_set_unload()` closes the plugins; do it after the last use of a module. `set.trust_all` skips the permission check, for tests on file systems that have no permissions.
+
+A plugin is built with `gcc -shared -fPIC -I master -o temperature.so temperature.c`; `test/plugins/a_good.c` is a complete one.
 
 ## Protocol Helpers
 

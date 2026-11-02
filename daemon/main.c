@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hubusd_modules.h"
 #include "hubusd_run.h"
 #include "hubus_master_gpiod.h"
 
@@ -66,7 +67,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "hubusd: warning: %s\n", cfg->warnings[i]);
     }
     if (check) {
-        printf("%s: ok (%u slaves, %u custom profiles)\n", path, cfg->n_slaves, cfg->n_profiles);
+        hubus_module_set_t modules;
+        size_t plugins;
+
+        hubus_module_set_init(&modules);
+        plugins = hubusd_load_modules(cfg, &modules, hubusd_report_module, NULL);
+        printf("%s: ok (%u slaves, %u custom profiles, %u modules, %u of them plugins)\n", path, cfg->n_slaves,
+               cfg->n_profiles, (unsigned)modules.n, (unsigned)plugins);
+        hubus_module_set_unload(&modules);
         free(cfg);
         return 0;
     }

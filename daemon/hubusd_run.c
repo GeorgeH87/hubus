@@ -1,3 +1,4 @@
+#include "hubusd_modules.h"
 #include "hubusd_run.h"
 
 #include <errno.h>
@@ -133,6 +134,7 @@ static void do_reload(hubusd_t *d, const char *path)
 int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const hubusd_run_opts_t *opts)
 {
     hubusd_t *d = malloc(sizeof *d);
+    hubus_module_set_t modules;
     mq_t mq;
     hubusd_mqtt_t iface;
     hubusd_clock_t clk = {NULL, mono_ms, wall_s};
@@ -155,8 +157,12 @@ int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const 
     iface.ctx = &mq;
     iface.publish = mq_publish;
     hubusd_init(d, cfg, hal, iface, clk);
+    hubus_module_set_init(&modules);
     if (opts->modules) {
         hubusd_set_modules(d, opts->modules, opts->n_modules);
+    } else {
+        (void)hubusd_load_modules(cfg, &modules, hubusd_report_module, NULL);
+        hubusd_set_modules(d, modules.module, modules.n);
     }
     mq.d = d;
     hubusd_set_logger(d, log_to_stderr, (void *)opts);
@@ -230,6 +236,7 @@ int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const 
 done:
     mosquitto_destroy(mq.client);
     hubusd_destroy(d);
+    hubus_module_set_unload(&modules); /* after the daemon: it points into the plugins */
     free(d);
     mosquitto_lib_cleanup();
     return exit_code;

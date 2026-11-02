@@ -379,6 +379,18 @@ static void load_bus(ctx_t *c, yn_t *root)
     warn_unknown(c, s, "bus");
 }
 
+static void load_modules(ctx_t *c, yn_t *root)
+{
+    hubusd_config_t *cfg = c->cfg;
+    yn_t *s = section(c, root, "modules");
+
+    if (!s) {
+        return;
+    }
+    read_str(c, s, "dir", cfg->modules.dir, sizeof cfg->modules.dir);
+    warn_unknown(c, s, "modules");
+}
+
 static void load_cmd(ctx_t *c, yn_t *parent, const char *key, hubusd_cmd_t *cmd)
 {
     yn_t *s = section(c, parent, key);
@@ -634,6 +646,9 @@ int hubusd_config_parse(const char *text, size_t len, hubusd_config_t *cfg, char
     }
     if (!c.failed) {
         load_bus(&c, root);
+    }
+    if (!c.failed) {
+        load_modules(&c, root);
     }
     if (!c.failed) {
         load_profiles(&c, root);

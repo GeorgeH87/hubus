@@ -66,6 +66,10 @@ typedef struct {
         unsigned startup_retry_s;   /* retry interval after a line fault */
     } bus;
 
+    struct {
+        char dir[200]; /* plugins (*.so) are loaded from here at the start; empty: only the built-in modules */
+    } modules;
+
     hubusd_slave_cfg_t slaves[HUBUSD_MAX_SLAVES];
     unsigned n_slaves;
 

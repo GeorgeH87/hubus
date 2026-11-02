@@ -218,6 +218,33 @@ hubus_module_match_t hubus_module_select(const hubus_module_t *const *modules, s
     return HUBUS_MODULE_FOUND;
 }
 
+static bool rules_overlap(const hubus_module_rule_t *a, const hubus_module_rule_t *b)
+{
+    uint8_t n = a->len < b->len ? a->len : b->len;
+    uint8_t i;
+
+    for (i = 0; i < n; i++) {
+        if (((a->pattern[i] ^ b->pattern[i]) & a->mask[i] & b->mask[i]) != 0u) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool hubus_module_conflicts(const hubus_module_t *a, const hubus_module_t *b)
+{
+    uint8_t i, j;
+
+    for (i = 0; i < a->n_rules; i++) {
+        for (j = 0; j < b->n_rules; j++) {
+            if (rule_bits(&a->rules[i]) == rule_bits(&b->rules[j]) && rules_overlap(&a->rules[i], &b->rules[j])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 hubus_module_match_t hubus_module_select_info(const hubus_module_t *const *modules, size_t n_modules,
                                               const uint8_t *payload, uint8_t len, const hubus_module_t **out)
 {

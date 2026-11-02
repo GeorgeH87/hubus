@@ -134,7 +134,6 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 - [x] Master library: firmware update by the HWID.
 - [x] hubusd: modules selected by the HWID; command size, state, status capture, and blind times per opcode from the module; slaves without a module get no commands.
 - [x] Examples and tests.
-- [ ] Load modules as plugins (`dlopen`, module directory, checks at the start); the example modules are linked into hubusd until then.
+- [x] Load modules as plugins (`modules.dir` of hubusd, `master/hubus_module_loader.h`): checks before use, name and rule conflicts reported at load time, files that others can write refused. The modules of the examples stay linked into hubusd.
 - [ ] hubusd: topics and discovery from the entities of the module, replacing the profiles and their match by the type byte.
 - [ ] Functions of a module (`create`, `on_frame`, `on_set`) outside the bus thread.
-- [ ] Report conflicts between modules at load time.

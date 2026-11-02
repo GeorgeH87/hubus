@@ -13,6 +13,7 @@ cmake --preset host && cmake --build --preset host   # builds build/host/daemon/
 sudo install build/host/daemon/hubusd /usr/local/bin/
 sudo install -D daemon/hubusd.example.yaml /etc/hubus/hubusd.yaml
 sudo install daemon/hubusd.service /etc/systemd/system/
+sudo install -d -m 755 /usr/local/lib/hubus/modules   # optional: module plugins, see modules.dir
 sudo useradd -r -G gpio hubus
 hubusd --check -c /etc/hubus/hubusd.yaml       # validates the file and prints warnings
 hubusd --version                               # prints the version; -v: verbose logging (info messages)
@@ -30,6 +31,7 @@ One YAML file, `/etc/hubus/hubusd.yaml` by default (`-c` overrides it); `daemon/
 
 - The file is validated at start. Errors name the line, and the daemon refuses to start; unknown keys are warnings.
 - The MQTT password can come from `password`, `password_file`, or the environment variable `HUBUSD_MQTT_PASSWORD` (which wins), so the main file can be shared.
+- `modules.dir` names a directory of module plugins (`*.so`, [master library](master-library.md#loading-plugins)) for slaves that are not among the built-in ones. They are read once at the start, in the order of their names; a restart picks up changes. A plugin that is invalid, whose name is in use, whose rules conflict with a module that was loaded before, or that others could have changed is refused and logged. Root or the user of the service must own the directory and the files, and nobody else may write them: a plugin runs with the rights of the service. `hubusd --check` loads the plugins too and reports the same.
 - `SIGHUP` (`systemctl reload hubusd`) reloads the slave list, the profiles, the `bus` section (readback, intervals), `mqtt.stats_interval_s`, and `mqtt.discovery`. GPIO, timing, and the broker connection need a restart.
 
 Minimal file for the example:
@@ -75,7 +77,7 @@ To adapt the bus:
 
 The `gpio` section selects the chip by label (`chip`, preferred) or device path (`path`), the offsets of `clk` and `data` (different lines), `realtime` (`SCHED_FIFO` priority 1 to 99, 0 = off, needs `CAP_SYS_NICE`), and `internal_pullup` (the SoC pull-up on `DATA`, for bench tests only; use an external pull-up).
 
-A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [examples](slave-library.md#examples) are built in. A slave whose HWID has no module or is invalid is reported and gets no commands. The type also selects a profile (`0x81` relay, `0x82` switch, `0x83` temperature), so `profile:` is optional for them. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
+A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [examples](slave-library.md#examples) are built in, others come as plugins ([`modules.dir`](#configuration)). A slave whose HWID has no module or is invalid is reported and gets no commands. The type also selects a profile (`0x81` relay, `0x82` switch, `0x83` temperature), so `profile:` is optional for them. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
 
 ## MQTT Topics
 

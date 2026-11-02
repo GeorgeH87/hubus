@@ -201,6 +201,60 @@ static void test_error_classes(void)
     expect_error("mqtt: {host: [\n", "line");
 }
 
+static void test_modules_directory(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse(""));
+    TEST_ASSERT_EQUAL_STRING("", cfg.modules.dir); /* only the built-in modules */
+    TEST_ASSERT_EQUAL_INT(0, parse("modules:\n  dir: /usr/local/lib/hubus/modules\n"));
+    TEST_ASSERT_EQUAL_STRING("/usr/local/lib/hubus/modules", cfg.modules.dir);
+    TEST_ASSERT_EQUAL_INT(0, parse("modules:\n  folder: /x\n"));
+    TEST_ASSERT_EQUAL_UINT(1, cfg.n_warnings);
+    TEST_ASSERT_NOT_NULL(strstr(cfg.warnings[0], "folder"));
+    expect_error("modules: nothing\n", "mapping");
+}
+
+typedef struct {
+    unsigned loaded, refused;
+} plugin_reports_t;
+
+static void count_reports(void *ctx, const char *path, const hubus_load_result_t *r)
+{
+    plugin_reports_t *c = ctx;
+
+    (void)path;
+    if (r->status == HUBUS_LOAD_OK) {
+        c->loaded++;
+    } else {
+        c->refused++;
+    }
+}
+
+static void test_the_plugins_of_the_directory_join_the_built_in_modules(void)
+{
+    static hubus_module_set_t set;
+    plugin_reports_t rep = {0, 0};
+    size_t builtin, i;
+
+    (void)hubusd_builtin_modules(&builtin);
+    TEST_ASSERT_EQUAL_INT(0, parse("modules:\n  dir: " HUBUS_TEST_PLUGIN_DIR "\n"));
+    hubus_module_set_init(&set);
+    set.trust_all = true; /* the build directory may live on a file system without permissions */
+    TEST_ASSERT_EQUAL_UINT(2, hubusd_load_modules(&cfg, &set, count_reports, &rep));
+    TEST_ASSERT_EQUAL_UINT(2, rep.loaded);
+    TEST_ASSERT_EQUAL_UINT(5, rep.refused);
+    TEST_ASSERT_EQUAL_UINT(builtin + 2u, set.n);
+    for (i = 0; i < set.n; i++) {
+        TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, hubus_module_validate(set.module[i]));
+    }
+    hubus_module_set_unload(&set);
+
+    TEST_ASSERT_EQUAL_INT(0, parse(""));
+    hubus_module_set_init(&set);
+    TEST_ASSERT_EQUAL_UINT(0, hubusd_load_modules(&cfg, &set, count_reports, &rep)); /* no directory: built-in only */
+    TEST_ASSERT_EQUAL_UINT(builtin, set.n);
+    hubus_module_set_unload(&set);
+}
+
 static void test_readback_modes(void)
 {
     TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: cache\nslaves:\n  - mcid: 1\n    readback: none\n  - mcid: 2\n    readback: slave\n  - mcid: 3\n    readback: cache\n  - mcid: 4\n"));
@@ -456,6 +510,8 @@ int main(void)
     RUN_TEST(test_full_configuration);
     RUN_TEST(test_unknown_keys_are_warnings_with_line_numbers);
     RUN_TEST(test_error_classes);
+    RUN_TEST(test_modules_directory);
+    RUN_TEST(test_the_plugins_of_the_directory_join_the_built_in_modules);
     RUN_TEST(test_readback_modes);
     RUN_TEST(test_poll_interval);
     RUN_TEST(test_error_reports_the_right_line);
