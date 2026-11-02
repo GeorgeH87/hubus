@@ -32,6 +32,13 @@ What is still open. The specification is complete except for values that can onl
 - **Status:** implemented for classic tinyAVR, tested in the bus simulation ([§6.8](../spec/06-operation.md#68-firmware-update)); not yet run on an ATtiny85.
 - **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule); updates from hubusd, so that the service does not have to be stopped.
 
+## Master Modules
+
+- **Status:** open. The interface, the selection, the loading of plugins, and the entities of a module are implemented ([§6.10](../spec/06-operation.md#610-master-modules), [master library](../master-library.md#master-modules)); the functions of a module are not called yet.
+- **Problem:** a module function (`on_set`, `on_frame`) is plugin code that runs in the master process. It must not block the bus thread, which keeps the timing of the bus, and a function that hangs or crashes must not take the bus down with it more than it has to. A crash in a plugin ends the whole service today; systemd restarts it and the startup sequence recovers the bus ([§8.9](../spec/08-faults.md#89-master-stops-mid-transaction)).
+- **Direction:** run the functions on a thread of their own (one for all modules, or one per module), pass commands back to the bus thread through the queue that the daemon already has, and give a function a limit of time after which the module is marked failed and its slaves get no more calls. Running a plugin in a process of its own would isolate crashes too, at the price of a second interface; decide once the first module with functions (the LED strip) exists.
+- **Also open:** the justification of the speed class in [§4.7](../spec/04-frames.md#47-slave-info-slave_info) was rewritten for the hardware identifier (the bus timing has to respect a slave even if the master has no module for it) and is not confirmed by the author yet.
+
 ## D3: Fairness Strategy
 
 - **Status:** largely resolved. A burst serves every slave pending at its start ([§6.2](../spec/06-operation.md#62-burst)); starvation across bursts is only possible if bursts are aborted before completion.

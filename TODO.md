@@ -77,7 +77,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Slave examples for every combination of event buffer and state: switch, relay, sensor, passive sensor, relay without feedback. Compile-tested for the ATtiny85, not run on hardware.
 - [x] Master example application (scan, burst, state, info, commands). Compiles; not run on a Raspberry Pi yet.
 - [x] LED strip: fixed frames in a blind section, and animations from bytecode the master sends, shown in an interruptible section. Run on simulated ATtiny85 devices with the WS2812B signal decoded; not run on hardware.
-- [ ] LED strip on the master: compile formulas to bytecode and send them (today only raw `cmd` messages).
+- [ ] LED strip on the master: compile formulas to bytecode and send them (today only raw `cmd` messages); part of its module ([section 12](#12-master-modules-and-hardware-identifier)).
 
 ## 8. Continuous Integration
 
@@ -136,4 +136,13 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 - [x] Examples and tests.
 - [x] Load modules as plugins (`modules.dir` of hubusd, `master/hubus_module_loader.h`): checks before use, name and rule conflicts reported at load time, files that others can write refused. The modules of the examples stay linked into hubusd.
 - [x] hubusd: topics and discovery from the entities of the module (`hubus/slave/<n>/<key>/state` and `/set`); the profiles are gone.
-- [ ] Functions of a module (`create`, `on_frame`, `on_set`) outside the bus thread.
+
+Open:
+
+- [ ] **Functions of a module** (`create`, `destroy`, `on_frame`, `on_set`), outside the bus thread. Needs a threading model first: which thread runs them, how commands get back to the bus thread (`host->send`), and what happens to a function that does not return ([open issues](docs/project/open-issues.md#master-modules)). Parses the text of a `set` message into a typed `hubus_value_t` (bool, number, RGB).
+- [ ] **Entities of the kind `light`**, and switches without fixed commands: both need `on_set`. Discovery for a light (command and colour topics) is not written yet; hubusd skips such entities today and rejects a `set` for a switch whose commands are missing.
+- [ ] **LED strip as a module**: the lamp entity, and the animation formulas compiled to bytecode and sent as `PROG_WRITE` / `PROG_RUN` (replaces "LED strip on the master" in section 7). The module of the example knows only the button and the blind time of `SHOW`.
+- [ ] **Reload modules on `SIGHUP`**: plugins are read once at the start, a change needs a restart. A reload has to wait until no module function runs and must not drop a module that slaves use.
+- [ ] **Master example and update**: `examples/master/master_example.c` prints the hardware identifier but knows no modules; `hubus_master_update()` cannot tell an application without update support from a missing updater (both show as `HUBUS_UPD_REASON_NO_UPDATER`) because the support is stated in the module.
+- [ ] **Example plugin in the build**: only the test plugins in `test/plugins/` exist. A documented example that CMake builds and installs, and notes for 32 and 64 bit Raspberry Pi OS (a plugin is built per architecture).
+- [ ] **Hardware test**: plugins, entities, and discovery on a Raspberry Pi with Home Assistant (together with the end-to-end test in section 10).
