@@ -4,7 +4,7 @@
 
 - The master detects every fault and recovers from it ([§6.6](06-operation.md#66-startup-shutdown-and-recovery)); slaves have no timeouts and no recovery state ([§7.6](07-slave.md#76-no-timeouts)).
 - Every START resynchronizes all slaves ([§2.5](02-line-conditions.md#25-resynchronization)), and a frame with an invalid CRC is always discarded ([§4.12](04-frames.md#412-integrity-check-crc8)).
-- Corner cases that can only occur rarely and recover at the next master cycle are **accepted and documented** rather than prevented with additional slave logic. Sections 8.3 to 8.10 list them.
+- Corner cases that can only occur rarely and recover at the next master cycle are **accepted and documented** rather than prevented with additional slave logic. Sections 8.3 to 8.10 and 8.12 list them.
 
 ## 8.2 Fault Scenarios
 
@@ -61,3 +61,11 @@ An update interrupted at any point leaves the slave in its updater, because the 
 ## 8.11 Blind Section Longer Than Stated
 
 A slave whose blind section lasts longer than its module states ([§7.8](07-slave.md#78-blind-sections)) misses the frames the master sends it after that time. It answers no request, and a command to it is lost; the master sees missing responses, retries, and marks the slave offline after repeated misses, exactly as for a slave that is temporarily unplugged. The other slaves are not affected, since the slave resynchronizes at the end of its section and waits for the next START. The fix is a shorter section in the firmware or a longer blind time in its module.
+
+## 8.12 Announcement Before a Blind Section
+
+A slave keeps quiet after a command until the next START or RESET ([§7.8](07-slave.md#78-blind-sections)), and that can be a START for another slave, since other traffic goes on during a blind time ([§6.9](06-operation.md#69-blind-time-after-a-command)). If such a transaction arrives before the slave has begun its blind section, and the slave has pending data, it announces itself after that transaction. It cannot begin the section while it holds `DATA` low.
+
+- Effect: the section begins only after the master has clocked the slave, and may then end later than the master expects. A frame sent to the slave after the blind time can be missed.
+- Recovery: the master's clock pulse releases the slave, and its next burst collects the data, which stays buffered until then. A missed frame is handled as in [§8.11](#811-blind-section-longer-than-stated); the other slaves are not affected.
+- Accepted: it takes pending data and a foreign transaction in the short time before the section begins. Rejected: ending the quiet phase only at a RESET or a frame addressed to the slave, which costs flash on the slave, and holding back all other traffic during a blind time, which would defeat its purpose.

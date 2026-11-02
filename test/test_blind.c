@@ -283,8 +283,9 @@ static void test_pending_slave_with_a_blind_class_keeps_quiet_after_a_command(vo
     TEST_ASSERT_EQUAL_UINT8(0, fx.sim.data);
 }
 
-/* Known gap in the quiet phase: every START ends it, also one for another slave. A pending slave that has not begun its
- * blind section yet announces itself after a foreign transaction, and until the master has clocked it cannot begin. */
+/* Accepted rare case (docs/spec/08-faults.md section 8.12): every START ends the quiet phase, also one for another slave.
+ * A pending slave that has not begun its blind section yet announces itself after a foreign transaction, and until the
+ * master has clocked it cannot begin. */
 static void test_foreign_transaction_ends_the_quiet_phase_of_a_pending_slave(void)
 {
     hubus_burst_stats_t st;
