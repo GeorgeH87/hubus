@@ -31,6 +31,7 @@ hubus_test(test_slave_core)
 hubus_test(test_master)
 hubus_test(test_faults)
 hubus_test(test_blind)
+hubus_test(test_module)
 hubus_test(test_slave_lib hubus_slave_host)
 
 # The animation bytecode of the LED strip example.

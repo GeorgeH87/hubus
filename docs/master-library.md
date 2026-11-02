@@ -2,7 +2,7 @@
 
 The HUBUS master in `master/` (logic, `hubus_master.h`) and `master/hubus_master_gpiod.h` (the Raspberry Pi hardware layer). It implements the master side of [§2](spec/02-line-conditions.md) to [§6](spec/06-operation.md) on top of a small hardware abstraction layer (HAL). [hubusd](daemon.md) is built on it; the command line example `examples/master/master_example.c` shows every call.
 
-*This page describes the current code, which still uses the previous `SLAVE_INFO` layout and has no master modules yet ([implementation status](project/decisions.md#implementation-status)).*
+*This page describes the current code, which still uses the previous `SLAVE_INFO` layout. Master modules exist as an interface but are not used yet ([implementation status](project/decisions.md#implementation-status)).*
 
 The master owns every timeout, retry, and recovery decision ([§7.6](spec/07-slave.md#76-no-timeouts)). All functions are blocking and not thread-safe: use one master from one thread.
 
@@ -145,6 +145,54 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 | `HUBUS_UPD_REASON_NOT_STARTED` | After `UPDATE_LEAVE` the updater answered again: the application did not check out. |
 
 These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are. The command line example has `hubus_master_example update <mcid> <file.hex>`.
+
+## Master Modules
+
+`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). Nothing in the master or in hubusd uses it yet, and loading plugins and calling their functions are still missing ([roadmap](../TODO.md#12-master-modules-and-hardware-identifier)).
+
+A module is a constant structure. A device whose bytes and commands can be described as data needs no code:
+
+```c
+#include "hubus_module.h"
+
+static const hubus_module_rule_t rules[] = {
+    {.pattern = {0x83}, .mask = {0xFF}, .len = 1},
+};
+
+static const hubus_entity_t entities[] = {
+    {
+        .key = "temperature",
+        .name = "Temperature",
+        .component = HUBUS_COMPONENT_SENSOR,
+        .device_class = HUBUS_DEVICE_CLASS_TEMPERATURE,
+        .unit = HUBUS_UNIT_CELSIUS,
+        .decode = {.offset = 0, .len = 2, .big_endian = true, .scale = 1.0, .add = -273.0},
+    },
+};
+
+static const hubus_module_t module = {
+    HUBUS_MODULE_INIT,
+    .name = "temperature",
+    .rules = rules,
+    .n_rules = HUBUS_MODULE_LEN(rules),
+    .max_command = 1,
+    .has_state = true,
+    .has_events = true,
+    .entities = entities,
+    .n_entities = HUBUS_MODULE_LEN(entities),
+};
+
+const hubus_module_t *hubus_module_entry(void) { return &module; }
+```
+
+Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperature.c`. A device that needs code adds functions to the structure, such as `on_set`, which gets a typed `hubus_value_t` and sends commands through `hubus_module_host_t`. They never run in the bus thread. `test/test_module.c` has a complete example.
+
+| Function | Purpose |
+|---|---|
+| `hubus_hwid_form(hwid, len)` | `HUBUS_HWID_SHORT`, `HUBUS_HWID_FULL`, `HUBUS_HWID_UPDATER`, or `HUBUS_HWID_INVALID`, with the length checked against the form. |
+| `hubus_module_validate(module)` | Checks a module before its first use: interface version, rules, properties, blind times, entities, functions. The compiler cannot check what comes from a plugin. |
+| `hubus_module_select(modules, n, hwid, len, &out)` | `HUBUS_MODULE_FOUND` with the module of the rule with the most mask bits, `HUBUS_MODULE_UNKNOWN`, `HUBUS_MODULE_INVALID`, or `HUBUS_MODULE_CONFLICT`. |
+| `hubus_module_blind_ms(module, opcode)` | The blind time after a command: the value for the opcode, otherwise the general one ([§7.8](spec/07-slave.md#78-blind-sections)). |
 
 ## Protocol Helpers
 

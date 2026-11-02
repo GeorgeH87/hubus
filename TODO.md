@@ -130,6 +130,7 @@ Specification draft: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [
 - [ ] Central table of HWID types.
 - [ ] Slave library and core: `SLAVE_INFO` byte 0 and HWID, short and full form, serial number from EEPROM or signature row; no capability bits, command size, or blind class on the bus.
 - [ ] Updater: HWID type `0xFF` with the updater information.
-- [ ] Master: match rules, module selection, unknown and invalid HWIDs, update support and blind times (optionally per opcode) from the module.
-- [ ] hubusd: modules instead of the device type byte and the capabilities.
+- [x] Typed module interface, validation, and selection by match rules (`master/hubus_module.h`, [master library](docs/master-library.md#master-modules)).
+- [ ] Master: load plugins, take modules into operation, report unknown and invalid HWIDs and conflicts, update support and blind times (optionally per opcode) from the module.
+- [ ] hubusd: modules instead of the device type byte and the capabilities, entities from the module for the topics and the discovery.
 - [ ] Examples, tests, and their documentation.

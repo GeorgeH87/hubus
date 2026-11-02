@@ -281,7 +281,8 @@ Every slave firmware image is delivered together with a **master module**: the m
 - A HWID matches a rule if it is at least as long as the pattern and agrees with it in every bit set in the mask. Bytes after the pattern are ignored.
 - A **prefix rule** ("starts with") has a mask of all ones: `81 02` matches every HWID that starts with type `0x81`, variant 2, whatever version, revision, and serial number follow.
 - A **mask rule** leaves out fields in the middle: pattern `81 02 00 01`, mask `FF FF 00 FF` matches every version of variant 2 on hardware revision 1.
-- A short-form HWID is matched by its type byte alone, for example `05`.
+- A short-form HWID is matched by its type byte alone, for example `05`; the same holds for the updater, `FF`.
+- Every rule covers the whole type byte, and a pattern has no bits set outside its mask. A module that breaks this is refused.
 - If several rules match, the one with the most mask bits set wins, so a module for a single version overrides one for the whole variant. If two rules of different modules match with the same number of bits, the slave is not taken into operation and the conflict is reported.
 - Rules never cover the serial number: a module is for a kind of device, not for one device.
 
