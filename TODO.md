@@ -139,7 +139,7 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 
 Open:
 
-- [ ] **Functions of a module** (`create`, `destroy`, `on_frame`, `on_set`), outside the bus thread. Needs a threading model first: which thread runs them, how commands get back to the bus thread (`host->send`), and what happens to a function that does not return ([open issues](docs/project/open-issues.md#master-modules)). Parses the text of a `set` message into a typed `hubus_value_t` (bool, number, RGB).
+- [ ] **Functions of a module** (`create`, `destroy`, `on_frame`, `on_set`), outside the bus thread. The threading model is proposed in [open issues](docs/project/open-issues.md#proposed-threading-model) and waits for confirmation. Parses the text of a `set` message into a typed `hubus_value_t` (bool, number, RGB).
 - [ ] **Entities of the kind `light`**, and switches without fixed commands: both need `on_set`. Discovery for a light (command and colour topics) is not written yet; hubusd skips such entities today and rejects a `set` for a switch whose commands are missing.
 - [ ] **LED strip as a module**: the lamp entity, and the animation formulas compiled to bytecode and sent as `PROG_WRITE` / `PROG_RUN` (replaces "LED strip on the master" in section 7). The module of the example knows only the button and the blind time of `SHOW`.
 - [ ] **Reload modules on `SIGHUP`**: plugins are read once at the start, a change needs a restart. A reload has to wait until no module function runs and must not drop a module that slaves use.
