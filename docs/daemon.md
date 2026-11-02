@@ -4,6 +4,8 @@
 
 It is written in C on top of the master library (`master/`) and its libgpiod HAL, uses `libmosquitto` for MQTT and `libyaml` for the configuration, and makes no real-time promises towards MQTT clients: latency is bus latency, milliseconds to a few hundred milliseconds.
 
+*This page describes the current code, which still uses the previous `SLAVE_INFO` layout and has no master modules yet ([implementation status](project/decisions.md#implementation-status)).*
+
 Example setup: a Raspberry Pi, a relay (MCID 3), and a push button (MCID 5).
 
 ## Install and Start

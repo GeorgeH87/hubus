@@ -2,6 +2,8 @@
 
 One ATtiny85 with two jobs: it drives a WS2812B LED strip that the master controls over HUBUS, and it reports a push button to the master. The firmware is `examples/slave-ledstrip/ledstrip_example.c`, the animation interpreter `examples/slave-ledstrip/ledvm.c`.
 
+*This page describes the current code, which still announces its blind class in the previous `SLAVE_INFO` layout ([implementation status](project/decisions.md#implementation-status)).*
+
 The slave keeps a raw frame buffer, which the master controls in one of two ways:
 
 - **Fixed frame.** The master writes bytes into the buffer and tells the slave to send it to the strip once.

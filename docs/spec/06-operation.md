@@ -18,7 +18,7 @@ A slave with pending data ([§4.8](04-frames.md#48-event-buffer)) tells the mast
 1. The event buffer is written while no data was pending (the pending flag changes from 0 to 1). Overwriting data that is already pending does not signal again.
 2. At the first falling `CLK` edge after a STOP or RESET, if data is still pending. This is how a slave that was skipped in a burst, or whose buffer was written during a transaction, announces itself again.
 
-A slave with a blind class keeps quiet in both situations between a command addressed to it and the next START or RESET ([§7.8](07-slave.md#78-blind-sections)).
+A slave with a blind time keeps quiet in both situations between a command addressed to it and the next START or RESET ([§7.8](07-slave.md#78-blind-sections)).
 
 A slave signals at most once per STOP: not again on the clock pulses of a handshake, and never on a falling edge that follows a START. Without this rule, pending slaves in different phases would keep each other's signals alive and the master could never see `DATA` released. Inside a burst `CLK` stays high between the transactions, so nobody signals there at all ([§2.4](02-line-conditions.md#24-back-to-back-transactions)).
 
@@ -175,7 +175,7 @@ The updater is a slave like any other: same MCID, same protocol, no event buffer
 
 | Opcode | Name | Arguments | Taken by | Effect |
 |---|---|---|---|---|
-| `0x01` | `UPDATE_ENTER` | `0x55 0x50` application with update support | Switch to the updater at once. Only with exact addressing (`TARGET_LEN = 6`) and exactly these two key bytes; otherwise ignored. |
+| `0x01` | `UPDATE_ENTER` | `0x55 0x50` | application with update support | Switch to the updater at once. Only with exact addressing (`TARGET_LEN = 6`) and exactly these two key bytes; otherwise ignored. |
 | `0x02` | `UPDATE_LOAD` | `offset data…` | updater | Copy `data` into the page buffer at `offset`. A load that does not fit into the page is ignored. |
 | `0x03` | `UPDATE_WRITE` | `addr_hi addr_lo crc_hi crc_lo` | updater | Write the page buffer to the flash page at byte address `addr`, after the STOP of the transaction. |
 | `0x04` | `UPDATE_LEAVE` | – | updater | Reset after the STOP of the transaction; the updater then starts the application if it is valid. |
@@ -267,7 +267,7 @@ A slave with a blind time may ignore the bus for a bounded time after every comm
 - **Other traffic goes on.** Transactions to other slaves, bursts, and idle event handshakes run as usual. The blind slave does not contend in a burst; data that is pending in it stays buffered.
 - **End.** After the blind time the master generates a RESET, or its next transaction follows directly. Either brings the slave out of `IGNORE`, and a slave that became pending meanwhile, or that kept quiet after the command, announces itself again. Then the deferred readback follows.
 
-A slave that stays blind longer than it announced behaves like a slave that missed a frame: no response, a retry, and eventually the usual offline handling ([§8.11](08-faults.md#811-blind-section-longer-than-announced)).
+A slave that stays blind longer than its module states behaves like a slave that missed a frame: no response, a retry, and eventually the usual offline handling ([§8.11](08-faults.md#811-blind-section-longer-than-stated)).
 
 ## 6.10 Master Modules
 
@@ -298,4 +298,4 @@ Every slave firmware image is delivered together with a **master module**: the m
 - **Device functions.** Everything that is specific to the device, such as compiling LED strip animations into bytecode, lives in the module and not in the master core.
 - **Unknown HWID.** A slave whose HWID matches no rule, or whose HWID is invalid, is not taken into operation: the master reports it in the commissioning scan and sends it no commands. Only the speed class is used, so that it does not slow the bus beyond what its firmware needs.
 - **Type `0xFF`** is the updater. The updater is one generic module for all devices; the device-specific values come from the updater information ([§6.8](#68-firmware-update)).
-- **Changes.** Slave and module change together. A change that the master does not need to know about keeps its module, as long as the module's rule covers the new version or revision. A change that affects what the master relies on comes with a module whose rule is more specific, or with a new variant or type. The table of types is maintained centrally.
+- **Changes.** Slave and module change together. A change that the master does not need to know about keeps its module, as long as the module's rule covers the new version or revision. A change that affects what the master relies on comes with a module whose rule is more specific, or with a new variant or type. A short-form HWID has no variant or version, so there such a change needs a new type. The table of types is maintained centrally.

@@ -66,7 +66,7 @@ The first payload byte of `SEND_COMMAND` is the opcode; the remaining bytes are 
 
 Slaves ignore unknown reserved opcodes, including the update opcodes they do not take.
 
-A slave ignores a command whose payload exceeds the maximum it announces in `SLAVE_INFO` byte 2 ([§4.7](#47-slave-info-slave_info)). It still receives the complete frame and stays synchronized. The master must not send larger commands than a slave accepts.
+A slave ignores a command whose payload exceeds the maximum it accepts. It still receives the complete frame and stays synchronized. The accepted size is a property of the slave's module ([§6.10](06-operation.md#610-master-modules)); the master must not send larger commands.
 
 Commands are fire-and-forget. A master that needs to know whether a command took effect reads the state back with `REQUEST_STATE`.
 
@@ -112,13 +112,15 @@ Static metadata, typically a constant in flash. *(Draft: see "Master modules" in
 
 The HWID is the only description of a slave. It selects the **master module** that is delivered with that firmware image ([§6.10](06-operation.md#610-master-modules)). Everything else about the slave is a fixed property of that module: the accepted command size, the commands and what they mean, whether the slave has a state or an event buffer, whether it supports `STATUS_CAPTURE`, its blind time, and whether it supports firmware update.
 
-The speed class stays on the bus because the master needs it before it can read the HWID: it sets the clock for the first `REQUEST_INFO` and for the whole bus.
+The speed class stays on the bus because the master also needs it for a slave without a module: every slave watches every edge, so the bus timing has to respect a slave even if it is never taken into operation ([§1.5](01-physical-layer.md#15-speed-classes)). Until the master has read `SLAVE_INFO`, the slave counts as class `0`.
 
 The protocol version is the first field on the wire. A later version may lay out everything after it differently; a master reads the version first and does not interpret a `SLAVE_INFO` of a version it does not know, apart from the speed class.
 
 ### Hardware Identifier (HWID)
 
 The HWID tells the master **what** a slave is; the MCID tells it **where** the slave is on the bus. The two are independent: identical devices share a HWID (up to the serial number) and have different MCIDs.
+
+The length of the HWID is dynamic, so that every device pays only for what it can afford: a device with little memory sends the short form, a single byte; a device with more memory sends the full form and can add a serial number.
 
 The fields run from the general to the specific, so that a prefix of the HWID stands for a set of devices ([§6.10](06-operation.md#610-master-modules)). The type decides which fields follow:
 
@@ -137,7 +139,7 @@ The fields run from the general to the specific, so that a prefix of the HWID st
 | `0x80..0xFE` | **Full form**: type, variant, version, and hardware revision (`LEN ≥ 5`), then the serial number, if any. |
 | `0xFF` | The **updater** ([§6.8](06-operation.md#68-firmware-update)); the updater information follows instead of the fields above. |
 
-- The length comes from `LEN`; there is no length field. A short form longer than one byte or a full form shorter than four bytes is invalid, and the master treats the slave like one without a module.
+- The length comes from `LEN`; there is no length field. A missing HWID, type `0x00`, a short form longer than one byte, a full form shorter than four bytes, or an updater HWID other than 14 bytes is invalid, and the master treats the slave like one without a module.
 - Types are assigned and kept in a central table by the development process. Variants are assigned per type; version and hardware revision count up from `0` per variant.
 - The serial number is a placeholder for a device-unique value. Its format belongs to the type; a device without one sends none. The master does not use it to select a module, but it lets the commissioning scan tell identical devices apart ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)).
 - Everything before the serial number is a property of the firmware image and is usually a constant in flash. A serial number differs per device and usually comes from EEPROM or the device's signature row.
@@ -185,7 +187,7 @@ A slave may expose a **state**: 1 to 31 bytes that the application keeps up to d
 
 - `REQUEST_STATE` is answered with a `SLAVE_DATA` frame with `MORE = 0`, `GEN = 00`, and the state bytes as payload. The master knows from its request that it is a state frame.
 - It can be requested at any time and as often as needed. It neither sets nor clears the pending flag and does not change `GEN`.
-- A slave without a state ignores `REQUEST_STATE`; `SLAVE_INFO` capability bit 1 tells the master which slaves have one.
+- A slave without a state ignores `REQUEST_STATE`; its module tells the master whether it has one ([§6.10](06-operation.md#610-master-modules)).
 - The slave reads the state bytes directly from the application while it transmits; there is no copy. If the application changes a byte during the transmission, the frame may mix old and new bytes; the CRC covers what was sent, so the frame stays valid ([§8.6](08-faults.md#86-mixed-state-bytes)). An application that needs a consistent multi-byte snapshot keeps the state within one byte or updates it so that a mix is harmless.
 - State and events complement each other. A multi-button slave exposes the level of all buttons as its state and writes each press into the event buffer: the master collects the presses in bursts and can read the state at any time.
 

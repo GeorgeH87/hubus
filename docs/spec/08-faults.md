@@ -44,7 +44,7 @@ The state is read from the application while it is transmitted ([§4.10](04-fram
 
 ## 8.7 Duplicate MCID Blind Spots
 
-Without a device-unique value in `SLAVE_INFO`, a duplicate MCID stays unnoticed as long as only one of the two slaves has data to deliver, or their frames are identical. Identical frames overlap into one valid frame. Commands addressed to that MCID always reach both slaves.
+At runtime a duplicate MCID stays unnoticed as long as only one of the two slaves has data to deliver, or their frames are identical. Identical frames overlap into one valid frame. The commissioning scan finds the duplicate if the hardware identifiers differ, for example by a serial number; two identical slaves without a serial number, which includes every pair of the same short-form type, send identical `SLAVE_INFO` and stay unnoticed ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)). Commands addressed to that MCID always reach both slaves.
 
 ## 8.8 Commands Without Readback
 
@@ -58,6 +58,6 @@ If the master stops clocking in the middle of a transaction, for example because
 
 An update interrupted at any point leaves the slave in its updater, because the old application is invalidated first and the info page that makes the new one valid is written last ([§6.8](06-operation.md#68-firmware-update)); the master repeats the update. One window remains on devices without a protected boot section, such as the ATtiny85: while the first page is erased and written again (about 9 ms), the reset vector does not point to the updater. A power loss in exactly this window leaves a device that only an in-system programmer recovers. This is accepted; the first page is written once per update, and brown-out detection keeps a sinking supply from corrupting the write.
 
-## 8.11 Blind Section Longer Than Announced
+## 8.11 Blind Section Longer Than Stated
 
-A slave whose blind section lasts longer than its blind class allows ([§7.8](07-slave.md#78-blind-sections)) misses the frames the master sends it after the announced time. It answers no request, and a command to it is lost; the master sees missing responses, retries, and marks the slave offline after repeated misses, exactly as for a slave that is temporarily unplugged. The other slaves are not affected, since the slave resynchronizes at the end of its section and waits for the next START. The fix is a higher blind class in the firmware.
+A slave whose blind section lasts longer than its module states ([§7.8](07-slave.md#78-blind-sections)) misses the frames the master sends it after that time. It answers no request, and a command to it is lost; the master sees missing responses, retries, and marks the slave offline after repeated misses, exactly as for a slave that is temporarily unplugged. The other slaves are not affected, since the slave resynchronizes at the end of its section and waits for the next START. The fix is a shorter section in the firmware or a longer blind time in its module.

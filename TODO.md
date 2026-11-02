@@ -121,3 +121,15 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] Bus simulation test with bit errors and an interrupted update.
 - [ ] Updater for the tinyAVR 0/1/2-series (protected boot section).
 - [ ] Updates from hubusd over MQTT.
+
+## 12. Master Modules and Hardware Identifier
+
+Specification draft: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10](docs/spec/06-operation.md#610-master-modules). Until the code follows, it keeps the [previous layout](docs/project/decisions.md#implementation-status).
+
+- [x] Specification and glossary.
+- [ ] Central table of HWID types.
+- [ ] Slave library and core: `SLAVE_INFO` byte 0 and HWID, short and full form, serial number from EEPROM or signature row; no capability bits, command size, or blind class on the bus.
+- [ ] Updater: HWID type `0xFF` with the updater information.
+- [ ] Master: match rules, module selection, unknown and invalid HWIDs, update support from the module.
+- [ ] hubusd: modules instead of the device type byte and the capabilities.
+- [ ] Examples, tests, and their documentation.

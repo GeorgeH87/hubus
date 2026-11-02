@@ -2,6 +2,8 @@
 
 The HUBUS master in `master/` (logic, `hubus_master.h`) and `master/hubus_master_gpiod.h` (the Raspberry Pi hardware layer). It implements the master side of [§2](spec/02-line-conditions.md) to [§6](spec/06-operation.md) on top of a small hardware abstraction layer (HAL). [hubusd](daemon.md) is built on it; the command line example `examples/master/master_example.c` shows every call.
 
+*This page describes the current code, which still uses the previous `SLAVE_INFO` layout and has no master modules yet ([implementation status](project/decisions.md#implementation-status)).*
+
 The master owns every timeout, retry, and recovery decision ([§7.6](spec/07-slave.md#76-no-timeouts)). All functions are blocking and not thread-safe: use one master from one thread.
 
 ## Usage

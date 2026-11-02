@@ -2,6 +2,8 @@
 
 Interrupt-driven HUBUS slave for tinyAVR microcontrollers, in `slave/`. The protocol logic lives in the hardware-independent core (`core/hubus_slave_core.c`, shared with the master and the host tests) and follows [§7](spec/07-slave.md); `slave/` adds the public API and one small hardware abstraction layer (HAL) per device family.
 
+*This page describes the current code, which still uses the previous `SLAVE_INFO` layout, not yet the hardware identifier of [§4.7](spec/04-frames.md#47-slave-info-slave_info) ([implementation status](project/decisions.md#implementation-status)).*
+
 ## Usage
 
 ```c
