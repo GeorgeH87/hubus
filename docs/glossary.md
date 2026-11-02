@@ -3,7 +3,7 @@
 | Term | Meaning | Defined in |
 |---|---|---|
 | Arbitration | Bit by bit contest of the slaves that can answer a group request; the higher MCID wins. | [§5](spec/05-arbitration.md) |
-| Blind section | Bounded time after a command in which a slave handles no edges, for timing-critical application code; its longest time is stated in the master module. The slave resynchronizes at its end, and the master keeps away from it meanwhile. | [§7.8](spec/07-slave.md#78-blind-sections) |
+| Blind section | Bounded time after a command in which a slave handles no edges, for timing-critical application code; its longest time is stated in the master module, for the slave as a whole or optionally per opcode. The slave resynchronizes at its end, and the master keeps away from it meanwhile. | [§7.8](spec/07-slave.md#78-blind-sections) |
 | Burst | Sequence of group `REQUEST_DATA` transactions that serves every slave pending at its start, in descending MCID order, one transaction per slave. | [§6.2](spec/06-operation.md#62-burst) |
 | Contender | A slave that matches a group request and can answer it, and therefore arbitrates. | [§5.2](spec/05-arbitration.md#52-contenders) |
 | Event buffer | The single outgoing buffer of a slave for changes and messages, read with `REQUEST_DATA` and cleared after delivery. Optional. | [§4.8](spec/04-frames.md#48-event-buffer) |

@@ -110,7 +110,8 @@ Some applications have to run timing-critical code with all interrupts disabled 
 
 **Blind time.** The slave's module states the longest blind time, counted from the STOP of the command transaction to the end of the blind section ([§6.10](06-operation.md#610-master-modules)). It is not transmitted on the bus.
 
-- The blind time is a property of the firmware image. It is stated per slave, not per opcode, and applies to every command addressed to the slave, exactly or through a group, including `STATUS_CAPTURE`.
+- The blind time is a property of the firmware image. By default it is one value for the slave and applies to every command addressed to it, exactly or through a group, including `STATUS_CAPTURE`.
+- A module MAY also state blind times per opcode, including that an opcode makes the slave not blind at all; an opcode it does not list keeps the general value. This is optional and only concerns the master ([§6.9](06-operation.md#69-blind-time-after-a-command)): the slave behaves the same either way and keeps no table of opcodes. Its firmware has to stay within the time stated for the opcode it received.
 - A slave whose module states no blind time is never blind. This is the default.
 
 **Rules for the slave.**
@@ -123,6 +124,6 @@ The third rule is what keeps the rest of the bus safe. The slave tells line cond
 
 A slave that became pending during a blind section stays in `IGNORE` on an idle bus and announces itself only after the next STOP or RESET ([§6.1](06-operation.md#61-idle-event-handshake)). The master ends every blind time with a transaction or a RESET, so the announcement is only delayed.
 
-For the same reason a slave with a blind time keeps quiet after every command addressed to it: from the command until the next START or RESET it announces no pending data, neither at the STOP of the command transaction nor when the application writes the event buffer. An announcement holds `DATA` low until the master clocks again, and rule 1 forbids a blind section meanwhile; the section would slip into a later transaction, past the stated time, and the slave would miss a frame meant for it. This applies to every command, since the blind time is stated per slave, and it also delays an announcement that was already due.
+For the same reason a slave with a blind time keeps quiet after every command addressed to it: from the command until the next START or RESET it announces no pending data, neither at the STOP of the command transaction nor when the application writes the event buffer. An announcement holds `DATA` low until the master clocks again, and rule 1 forbids a blind section meanwhile; the section would slip into a later transaction, past the stated time, and the slave would miss a frame meant for it. This applies to every command, also to an opcode for which the module states no blind time, since the slave does not tell opcodes apart, and it also delays an announcement that was already due. The master ends this quiet phase with its next transaction or a RESET ([§6.9](06-operation.md#69-blind-time-after-a-command)).
 
 A blind section is not a timeout in the sense of [§7.6](#76-no-timeouts): the protocol logic still changes state only on edges and line conditions. The length of the section is a property of the application code, which the module states so that the master can plan around it.

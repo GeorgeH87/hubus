@@ -263,6 +263,7 @@ The updater answers to the MCID of the application. The application hands it ove
 A slave with a blind time may ignore the bus for a bounded time after every command addressed to it ([§7.8](07-slave.md#78-blind-sections)). The master knows the time from the slave's module ([§6.10](#610-master-modules)) and plans around it:
 
 - **Start.** The blind time of every slave the command reached, with exact or group addressing, begins at the STOP of the command transaction.
+- **Per opcode.** If a module states blind times per opcode ([§7.8](07-slave.md#78-blind-sections)), the master takes the value for the opcode it sent, separately for every slave, since a group command can reach slaves of different modules. For an opcode that does not make the slave blind the time is zero, and the master goes on directly with the end below.
 - **During the blind time** the master sends nothing that this slave would have to receive or answer: no command or request to it, no group command or group request whose prefix includes it, and no commissioning scan, in which it would look absent. A readback of the command waits until the blind time has passed.
 - **Other traffic goes on.** Transactions to other slaves, bursts, and idle event handshakes run as usual. The blind slave does not contend in a burst; data that is pending in it stays buffered.
 - **End.** After the blind time the master generates a RESET, or its next transaction follows directly. Either brings the slave out of `IGNORE`, and a slave that became pending meanwhile, or that kept quiet after the command, announces itself again. Then the deferred readback follows.
@@ -294,7 +295,7 @@ Every slave firmware image is delivered together with a **master module**: the m
 
 **Contents and special cases.**
 
-- **Fixed properties.** A module states what the master needs to know about its slave: the accepted command size, the commands and the meaning of their bytes, the layout of state and events, whether the slave has a state, an event buffer, or `STATUS_CAPTURE`, its blind time ([§6.9](#69-blind-time-after-a-command)), whether it supports firmware update ([§6.8](#68-firmware-update)), and any timing the application needs. None of this is transmitted on the bus.
+- **Fixed properties.** A module states what the master needs to know about its slave: the accepted command size, the commands and the meaning of their bytes, the layout of state and events, whether the slave has a state, an event buffer, or `STATUS_CAPTURE`, its blind time, optionally per opcode ([§6.9](#69-blind-time-after-a-command)), whether it supports firmware update ([§6.8](#68-firmware-update)), and any timing the application needs. None of this is transmitted on the bus.
 - **Device functions.** Everything that is specific to the device, such as compiling LED strip animations into bytecode, lives in the module and not in the master core.
 - **Unknown HWID.** A slave whose HWID matches no rule, or whose HWID is invalid, is not taken into operation: the master reports it in the commissioning scan and sends it no commands. Only the speed class is used, so that it does not slow the bus beyond what its firmware needs.
 - **Type `0xFF`** is the updater. The updater is one generic module for all devices; the device-specific values come from the updater information ([§6.8](#68-firmware-update)).
