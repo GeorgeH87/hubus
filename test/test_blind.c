@@ -283,6 +283,45 @@ static void test_pending_slave_with_a_blind_class_keeps_quiet_after_a_command(vo
     TEST_ASSERT_EQUAL_UINT8(0, fx.sim.data);
 }
 
+/* Known gap in the quiet phase: every START ends it, also one for another slave. A pending slave that has not begun its
+ * blind section yet announces itself after a foreign transaction, and until the master has clocked it cannot begin. */
+static void test_foreign_transaction_ends_the_quiet_phase_of_a_pending_slave(void)
+{
+    hubus_burst_stats_t st;
+    hubus_slave_frame_t f;
+    unsigned victim = fx_add_full(&fx, 33, 0, 33, 0);
+    hubus_slave_core_t *c = &fx.core[victim];
+
+    fx_add_full(&fx, 12, 0, 12, 1);
+    c->timing = (uint8_t)(3u << HUBUS_BLIND_CLASS_SHIFT);
+    fx_startup(&fx);
+
+    fx_write(&fx, victim, 0x36);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, 6, 33, 0x21, NULL, 0));
+    TEST_ASSERT_EQUAL_UINT8(1, fx.sim.data); /* quiet after its own command */
+    TEST_ASSERT_TRUE(hubus_core_can_blind(c));
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_state(&fx.master, 12, &f));
+    TEST_ASSERT_EQUAL_UINT8(0, fx.sim.clk);
+    TEST_ASSERT_EQUAL_UINT8(0, fx.sim.data); /* announces, though the blind time is still running */
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_ST_EVENT, c->state);
+    TEST_ASSERT_FALSE(hubus_core_can_blind(c));
+
+    /* the master's next service releases it and collects the data; only then can the section begin */
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_service(&fx.master, fx_collect, &fx, &st));
+    TEST_ASSERT_EQUAL_UINT(1, st.served);
+    TEST_ASSERT_EQUAL_UINT8(0x36, fx.log[0].first);
+    TEST_ASSERT_TRUE(hubus_core_can_blind(c));
+
+    /* the same for data written after the foreign transaction */
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, 6, 33, 0x21, NULL, 0));
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_state(&fx.master, 12, &f));
+    TEST_ASSERT_EQUAL_UINT8(1, fx.sim.data);
+    fx_write(&fx, victim, 0x37);
+    TEST_ASSERT_EQUAL_UINT8(0, fx.sim.data);
+    TEST_ASSERT_FALSE(hubus_core_can_blind(c));
+}
+
 static void test_no_blind_section_while_the_slave_drives_data(void)
 {
     unsigned victim = fx_add_full(&fx, 33, 0, 33, 0);
@@ -327,6 +366,7 @@ int main(void)
     RUN_TEST(test_stale_levels_after_a_blind_section_misread_a_frame);
     RUN_TEST(test_pending_slave_announces_after_the_reset_that_ends_the_blind_time);
     RUN_TEST(test_pending_slave_with_a_blind_class_keeps_quiet_after_a_command);
+    RUN_TEST(test_foreign_transaction_ends_the_quiet_phase_of_a_pending_slave);
     RUN_TEST(test_no_blind_section_while_the_slave_drives_data);
     RUN_TEST(test_resync_of_a_disabled_core_does_nothing);
     return UNITY_END();
