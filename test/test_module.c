@@ -127,8 +127,8 @@ static void test_hwid_forms(void)
     TEST_ASSERT_EQUAL(HUBUS_HWID_INVALID, hubus_hwid_form(hwid, HUBUS_HWID_MAX_LEN + 1u));
 
     hwid[0] = 0xFF;
-    TEST_ASSERT_EQUAL(HUBUS_HWID_UPDATER, hubus_hwid_form(hwid, 14));
-    TEST_ASSERT_EQUAL(HUBUS_HWID_INVALID, hubus_hwid_form(hwid, 13));
+    TEST_ASSERT_EQUAL(HUBUS_HWID_UPDATER, hubus_hwid_form(hwid, HUBUS_HWID_UPDATER_LEN));
+    TEST_ASSERT_EQUAL(HUBUS_HWID_INVALID, hubus_hwid_form(hwid, HUBUS_HWID_UPDATER_LEN - 1u));
     TEST_ASSERT_EQUAL(HUBUS_HWID_INVALID, hubus_hwid_form(hwid, 1));
 }
 
@@ -190,7 +190,7 @@ static void test_short_form_and_updater(void)
 {
     const uint8_t short_form[] = {0x05};
     const uint8_t other_short[] = {0x06};
-    uint8_t updater[14];
+    uint8_t updater[HUBUS_HWID_UPDATER_LEN];
     const hubus_module_t *out;
     hubus_module_t small = rule_module(&rule_short);
     hubus_module_t upd = rule_module(&rule_updater);
@@ -436,6 +436,41 @@ static void test_blind_time_per_opcode_with_the_general_value_as_fallback(void)
     TEST_ASSERT_EQUAL_UINT16(0, hubus_module_blind_ms(&temperature_module, OP_SHOW)); /* never blind */
 }
 
+static void test_a_blind_time_only_for_one_opcode_counts_as_a_blind_time(void)
+{
+    const hubus_module_blind_t none[] = {{.opcode = 0x41, .ms = 0}};
+    const hubus_module_blind_t one[] = {{.opcode = 0x42, .ms = 4}};
+    hubus_module_t m = temperature_module;
+
+    TEST_ASSERT_FALSE(hubus_module_has_blind_time(&m));
+    m.blind_ops = none;
+    m.n_blind_ops = 1;
+    TEST_ASSERT_FALSE(hubus_module_has_blind_time(&m));
+    m.blind_ops = one;
+    TEST_ASSERT_TRUE(hubus_module_has_blind_time(&m));
+    TEST_ASSERT_EQUAL_UINT16(0, hubus_module_blind_ms(&m, 0x41));
+    TEST_ASSERT_EQUAL_UINT16(4, hubus_module_blind_ms(&m, 0x42));
+    TEST_ASSERT_TRUE(hubus_module_has_blind_time(&ledstrip_module));
+}
+
+/* ---- selection from a SLAVE_INFO payload ------------------------------------------------------------------------------ */
+
+static void test_selection_from_slave_info(void)
+{
+    const uint8_t good[] = {0x03, 0x83, 0x01, 0x07, 0x00};
+    const uint8_t later_version[] = {0x13, 0x83, 0x01, 0x07, 0x00};
+    const uint8_t no_hwid[] = {0x03};
+    const hubus_module_t *const modules[] = {&temperature_module};
+    const hubus_module_t *out;
+
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_FOUND, hubus_module_select_info(modules, 1, good, sizeof good, &out));
+    TEST_ASSERT_EQUAL_PTR(&temperature_module, out);
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_INVALID, hubus_module_select_info(modules, 1, later_version, sizeof later_version, &out));
+    TEST_ASSERT_NULL(out);
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_INVALID, hubus_module_select_info(modules, 1, no_hwid, sizeof no_hwid, &out));
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_INVALID, hubus_module_select_info(modules, 1, good, 0, &out));
+}
+
 /* ---- functions of a module -------------------------------------------------------------------------------------------- */
 
 typedef struct {
@@ -497,6 +532,8 @@ int main(void)
     RUN_TEST(test_entities_are_checked);
     RUN_TEST(test_create_and_destroy_come_together);
     RUN_TEST(test_blind_time_per_opcode_with_the_general_value_as_fallback);
+    RUN_TEST(test_a_blind_time_only_for_one_opcode_counts_as_a_blind_time);
+    RUN_TEST(test_selection_from_slave_info);
     RUN_TEST(test_a_function_sends_through_the_host_with_typed_values);
     return UNITY_END();
 }

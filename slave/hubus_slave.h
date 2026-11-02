@@ -24,8 +24,9 @@
  * Slave configuration (hubus_core_config_t):
  *
  *   mcid               1..63, unique on the bus
- *   info, info_len     application bytes of SLAVE_INFO, in flash (PROGMEM) on AVR, 0..27 bytes;
- *                      include a device-unique value (serial number)
+ *   hwid, hwid_len     hardware identifier in SLAVE_INFO (docs/spec/04-frames.md section 4.7), in flash (PROGMEM) on
+ *                      AVR, 1..30 bytes: one byte in the short form, at least four in the full form
+ *   serial, serial_len with HUBUS_ENABLE_SERIAL: serial number in RAM, sent after hwid and counted in its 30 bytes
  *   state, state_len   live state for REQUEST_STATE (RAM, read while transmitting, 0..31 bytes); NULL: no state.
  *                      A longer state_len is an invalid configuration.
  *                      The application keeps it up to date; no copy is made. Needs HUBUS_ENABLE_STATE.
@@ -35,8 +36,8 @@
  *   ctx                passed to the callbacks
  *   speed_class        0..15: edge response time this firmware guarantees, announced in SLAVE_INFO
  *                      (docs/spec/01-physical-layer.md section 1.5); 0 = not declared
- *   blind_class        0..15: how long the firmware may be blind after a command addressed to it, announced in
- *                      SLAVE_INFO (docs/spec/07-slave.md section 7.8); 0 = never blind
+ *   has_blind_time     1: the firmware may be blind after a command addressed to it, for the time its module states
+ *                      (docs/spec/07-slave.md section 7.8); it then keeps quiet until the next START or RESET
  */
 typedef hubus_core_config_t hubus_slave_config_t;
 
@@ -44,7 +45,7 @@ typedef hubus_core_config_t hubus_slave_config_t;
  * Configures the pins, starts the protocol engine, and enables the pin change
  * interrupts. Global interrupts stay as they are: the application calls sei()
  * once its own setup is done. Returns 1 on success, 0 for an invalid
- * configuration (MCID outside 1..63, info or state too long, speed or blind class above 15); the slave then
+ * configuration (MCID outside 1..63, no HWID, HWID or state too long, speed class above 15); the slave then
  * stays silent.
  */
 uint8_t hubus_slave_init(const hubus_slave_config_t *cfg);
@@ -78,8 +79,7 @@ uint8_t hubus_slave_is_pending(void);
  * hubus_slave_blind_begin() returns 1 with all interrupts disabled, or 0 with them enabled when the slave is busy on
  * the bus (try again). hubus_slave_blind_end() takes the current pin levels as the reference and ignores the bus until
  * the next START, STOP, or RESET, so the frames it missed cannot be misread. The section has to end within the blind
- * time announced with blind_class, counted from the STOP of the command; the master does not address the slave
- * before that.
+ * time its module states, counted from the STOP of the command; the master does not address the slave before that.
  */
 uint8_t hubus_slave_blind_begin(void);
 void hubus_slave_blind_end(void);

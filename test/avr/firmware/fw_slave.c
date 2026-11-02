@@ -28,16 +28,15 @@
 
 #define FW_BOOT_EVENT 0xB0
 #define FW_EVENT_MAX 4
-#define FW_BLIND_MAX 8 /* 0.8 ms plus the wait for the slave to be free: blind class 3 (1 ms) */
-#define FW_BLIND_CLASS 3
+#define FW_BLIND_MAX 8 /* 0.8 ms plus the wait for the slave to be free: within the 1 ms its test states */
 #define FW_SPEED_CLASS 9 /* 64 us at 8 MHz, checked by test_avr_slave */
 
 #define OP_SET 0x10
 #define OP_EVENT 0x11
 #define OP_BLIND 0x12
 
-/* SLAVE_INFO application bytes: device type, firmware version, MCID as serial number. */
-static const uint8_t info[] PROGMEM = {0x7E, 0x01, FW_MCID};
+/* Hardware identifier: a type for tests, MCID as serial number. */
+static const uint8_t hwid[] PROGMEM = {0xF1, 0x01, 0x01, 0x00, FW_MCID};
 
 static volatile uint8_t state[2];
 
@@ -77,8 +76,8 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = FW_MCID,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
 #if HUBUS_ENABLE_STATE
         .state = state,
         .state_len = sizeof state,
@@ -89,7 +88,7 @@ int main(void)
         .on_command = on_command,
         .ctx = 0,
         .speed_class = FW_SPEED_CLASS,
-        .blind_class = FW_BLIND_CLASS,
+        .has_blind_time = 1,
     };
 
     hubus_slave_init(&cfg);

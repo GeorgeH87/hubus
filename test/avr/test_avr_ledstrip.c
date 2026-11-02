@@ -21,8 +21,7 @@
 
 #define STRIP 11u
 #define LED_BYTES 180u
-#define BLIND_CLASS 5u
-#define BLIND_NS (HUBUS_BLIND_US(BLIND_CLASS) * 1000u)
+#define BLIND_NS 4000000u /* the blind time of SHOW in its module */
 #define BOOT_NS 5000000u /* C runtime start, the dark frame, hubus_slave_init(), the power-up event */
 
 #define OP_SET 0x10 /* test firmware */

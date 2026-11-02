@@ -2,8 +2,6 @@
 
 The HUBUS master in `master/` (logic, `hubus_master.h`) and `master/hubus_master_gpiod.h` (the Raspberry Pi hardware layer). It implements the master side of [§2](spec/02-line-conditions.md) to [§6](spec/06-operation.md) on top of a small hardware abstraction layer (HAL). [hubusd](daemon.md) is built on it; the command line example `examples/master/master_example.c` shows every call.
 
-*This page describes the current code, which still uses the previous `SLAVE_INFO` layout. Master modules exist as an interface but are not used yet ([implementation status](project/decisions.md#implementation-status)).*
-
 The master owns every timeout, retry, and recovery decision ([§7.6](spec/07-slave.md#76-no-timeouts)). All functions are blocking and not thread-safe: use one master from one thread.
 
 ## Usage
@@ -135,8 +133,7 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 
 | `reason` | Meaning |
 |---|---|
-| `HUBUS_UPD_REASON_NOT_SUPPORTED` | The slave announces neither capability bit 3 nor 4. |
-| `HUBUS_UPD_REASON_NO_UPDATER` | No answer from the updater after `UPDATE_ENTER`: no updater installed, or no slave at this MCID. |
+| `HUBUS_UPD_REASON_NO_UPDATER` | No answer from the updater after `UPDATE_ENTER`: no updater installed, an application without update support (its module says so), or no slave at this MCID. |
 | `HUBUS_UPD_REASON_BAD_INFO` | The updater information or state is not usable. |
 | `HUBUS_UPD_REASON_SIGNATURE` | The device signature differs from `img.signature`. |
 | `HUBUS_UPD_REASON_TOO_LARGE` | The image is empty or does not fit in front of the info page. |
@@ -148,7 +145,7 @@ These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAU
 
 ## Master Modules
 
-`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). Nothing in the master or in hubusd uses it yet, and loading plugins and calling their functions are still missing ([roadmap](../TODO.md#12-master-modules-and-hardware-identifier)).
+`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). hubusd selects the module of every slave with it. Loading plugins and calling the functions of a module are still missing ([roadmap](../TODO.md#12-master-modules-and-hardware-identifier)).
 
 A module is a constant structure. A device whose bytes and commands can be described as data needs no code:
 
@@ -192,6 +189,8 @@ Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperatur
 | `hubus_hwid_form(hwid, len)` | `HUBUS_HWID_SHORT`, `HUBUS_HWID_FULL`, `HUBUS_HWID_UPDATER`, or `HUBUS_HWID_INVALID`, with the length checked against the form. |
 | `hubus_module_validate(module)` | Checks a module before its first use: interface version, rules, properties, blind times, entities, functions. The compiler cannot check what comes from a plugin. |
 | `hubus_module_select(modules, n, hwid, len, &out)` | `HUBUS_MODULE_FOUND` with the module of the rule with the most mask bits, `HUBUS_MODULE_UNKNOWN`, `HUBUS_MODULE_INVALID`, or `HUBUS_MODULE_CONFLICT`. |
+| `hubus_module_select_info(modules, n, payload, len, &out)` | The same from a `SLAVE_INFO` payload; a protocol version this master does not know counts as invalid. |
+| `hubus_module_has_blind_time(module)` | Whether the slave can be blind after any command; it then keeps quiet until the master ends that phase. |
 | `hubus_module_blind_ms(module, opcode)` | The blind time after a command: the value for the opcode, otherwise the general one ([§7.8](spec/07-slave.md#78-blind-sections)). |
 
 ## Protocol Helpers
@@ -200,7 +199,7 @@ The hardware-independent code in `core/` is shared by the master, the slave, and
 
 | Header | Content |
 |---|---|
-| `hubus_proto.h` | Protocol constants: message types, opcodes, `SLAVE_INFO` layout, capability bits, limits. |
+| `hubus_proto.h` | Protocol constants: message types, opcodes, `SLAVE_INFO` layout, hardware identifier, limits. |
 | `hubus_frame.h` | `hubus_frame_encode()` / `hubus_frame_decode()` (header, payload, CRC8), `hubus_header_pack()` / `hubus_header_unpack()`, `hubus_mcid_match()` and `hubus_prefix_mask()` for prefix addressing ([§4.5](spec/04-frames.md#45-addressing)). |
 | `hubus_crc.h` | CRC8: `hubus_crc8()` for a buffer, `hubus_crc8_update()` / `hubus_crc8_final()` byte by byte ([§4.12](spec/04-frames.md#412-integrity-check-crc8)). CRC-16 of the firmware update: `hubus_crc16()`, `hubus_crc16_update()` ([§6.8](spec/06-operation.md#68-firmware-update)). |
 | `hubus_gen.h` | `GEN` evaluation per MCID: `hubus_gen_reset()`, `hubus_gen_eval()`, `hubus_gen_lost()`. |

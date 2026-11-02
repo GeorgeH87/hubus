@@ -23,14 +23,14 @@ void *app_core(void)
     return &app;
 }
 
-uint8_t app_start(uint8_t mcid, const uint8_t *info, uint8_t info_len, uint8_t clk, uint8_t data)
+uint8_t app_start(uint8_t mcid, const uint8_t *hwid, uint8_t hwid_len, uint8_t clk, uint8_t data)
 {
     hubus_core_config_t cfg;
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
-    cfg.info = info;
-    cfg.info_len = info_len;
+    cfg.hwid = hwid;
+    cfg.hwid_len = hwid_len;
     cfg.state = &app_state;
     cfg.state_len = 1;
     return app_core_init(&app, &cfg, clk, data);

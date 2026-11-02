@@ -15,7 +15,7 @@
  * Further compile-time options:
  *
  *   HUBUS_TX_BUF_SIZE  outgoing buffer (SLAVE_DATA payload), bytes 1..31, default 31
- *   HUBUS_RX_BUF_SIZE  largest accepted command payload (announced in SLAVE_INFO), bytes 1..31, default 31
+ *   HUBUS_RX_BUF_SIZE  largest accepted command payload (stated in the module), bytes 1..31, default 31
  *                      (the CMake build uses 20 for both on devices with 128 B RAM that have the event buffer)
  *   HUBUS_ENABLE_EVENTS 1 (default): event buffer with hubus_slave_write(), idle event signaling, REQUEST_DATA,
  *                      and STATUS_CAPTURE; 0 leaves it out for slaves that never speak on their own

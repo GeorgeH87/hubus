@@ -22,7 +22,7 @@
  * Offsets and counts are byte positions; whatever lies beyond a buffer is dropped. WRITE, PROG_WRITE, PARAM, and
  * TIME run in the command callback. FILL and PROG_RUN are too long for the interrupt handler and run in the main
  * loop. SHOW sends the frame in a blind section after the STOP of its transaction (docs/spec/07-slave.md section
- * 7.8): the strip needs interrupts disabled for about 12.5 us per byte; the slave announces the blind class that covers
+ * 7.8): the strip needs interrupts disabled for about 12.5 us per byte; its module states the blind time that covers
  * it, and the master does not address the slave during that time.
  *
  * The frames of a program go out in an interruptible section instead (slave/hubus_slave.h): byte by byte, and only
@@ -57,17 +57,12 @@
 #define DEBOUNCE_MS 10
 
 /*
- * Blind time of a SHOW: about 12.5 us per byte (8 bits of 1.25 us and the loop), plus the reset time of the strip
- * after an earlier frame (at most 512 us, see strip_ready()), the wait for the slave to be free (at most one clock
- * period of an idle event handshake), and margin. The blind class is the smallest whose time (0.25 ms * 2^(class - 1))
- * covers it: class 5 (4 ms) for the default 180 bytes.
+ * Blind time of a SHOW, as the module states it: about 12.5 us per byte (8 bits of 1.25 us and the loop), plus the reset
+ * time of the strip after an earlier frame (at most 512 us, see strip_ready()), the wait for the slave to be free (at most
+ * one clock period of an idle event handshake), and margin. 4 ms cover the default 180 bytes.
  */
-#define SHOW_BLIND_US ((uint32_t)LED_BYTES * 25u / 2u + 1500u)
-#define BLIND_CLASS_FOR(us) \
-    ((us) <= 250u ? 1u : (us) <= 500u ? 2u : (us) <= 1000u ? 3u : (us) <= 2000u ? 4u : (us) <= 4000u ? 5u : 6u)
-#define SHOW_BLIND_CLASS BLIND_CLASS_FOR(SHOW_BLIND_US)
-#if LED_BYTES * 25 / 2 + 1500 > 8000
-#error "a larger strip needs a higher blind class: extend BLIND_CLASS_FOR"
+#if LED_BYTES * 25 / 2 + 1500 > 4000
+#error "a larger strip needs a longer blind time in its module"
 #endif
 
 #define OP_WRITE 0x40
@@ -83,9 +78,8 @@
 #define PROG_RUNNING 1
 #define PROG_REFUSED 2
 
-/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
-#define DEVICE_TYPE_LEDSTRIP 0x04
-static const uint8_t info[] PROGMEM = {DEVICE_TYPE_LEDSTRIP, 0x02, 0x00, 0x00, 0x00, 0x04};
+/* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
+static const uint8_t hwid[] PROGMEM = {0x84, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x04};
 
 static uint8_t frame[LED_BYTES];
 static volatile uint8_t state[3]; /* button, seq of the last SHOW, program */
@@ -344,14 +338,14 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = 0x0B,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
         .state = state,
         .state_len = sizeof state,
         .on_status_capture = on_status_capture,
         .on_command = on_command,
         .ctx = 0,
-        .blind_class = SHOW_BLIND_CLASS,
+        .has_blind_time = 1,
     };
     uint16_t debounced = 0; /* `now` up to which the button is debounced */
     uint8_t stable = 0;

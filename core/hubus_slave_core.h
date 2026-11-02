@@ -19,7 +19,7 @@
 
 /* Compile-time buffer sizes (bytes, 1..31). The ATtiny85 reference build
  * uses the full 31 bytes. HUBUS_RX_BUF_SIZE is the largest accepted
- * SEND_COMMAND payload including the opcode and is announced in SLAVE_INFO. */
+ * SEND_COMMAND payload including the opcode; the module of the firmware states it. */
 #ifndef HUBUS_TX_BUF_SIZE
 #define HUBUS_TX_BUF_SIZE 31
 #endif
@@ -54,9 +54,9 @@
 /*
  * Firmware update (docs/spec/06-operation.md section 6.8), off by default:
  *
- *   HUBUS_ENABLE_UPDATE  application side: announces capability bit 3 and takes UPDATE_ENTER; the caller then hands
+ *   HUBUS_ENABLE_UPDATE  application side: takes UPDATE_ENTER; the caller then hands
  *                        over to the updater (hubus_core_update_requested()). Only for devices with an updater.
- *   HUBUS_UPDATER        the updater itself: announces capability bit 4 and passes the update opcodes
+ *   HUBUS_UPDATER        the updater itself: passes the update opcodes
  *                        (UPDATE_LOAD and higher) to on_command.
  */
 #ifndef HUBUS_ENABLE_UPDATE
@@ -69,8 +69,14 @@
 #error "HUBUS_ENABLE_UPDATE is for the application, HUBUS_UPDATER for the updater: not both"
 #endif
 
-/* Application bytes of SLAVE_INFO follow 4 protocol bytes. */
-#define HUBUS_INFO_APP_MAX (HUBUS_MAX_PAYLOAD - HUBUS_INFO_APP)
+/*
+ * A serial number that is not known at build time, off by default: HUBUS_ENABLE_SERIAL adds bytes from RAM after the
+ * constant part of the HWID. The application reads them once, for example from EEPROM or the signature row. A serial
+ * number that is fixed per build can simply be part of `hwid`.
+ */
+#ifndef HUBUS_ENABLE_SERIAL
+#define HUBUS_ENABLE_SERIAL 0
+#endif
 
 /* Read a byte of the static SLAVE_INFO data (flash on AVR). */
 #ifdef __AVR__
@@ -85,8 +91,12 @@ typedef void (*hubus_command_fn)(void *ctx, uint8_t opcode, const uint8_t *args,
 
 typedef struct {
     uint8_t mcid;                              /* 1..63 */
-    const uint8_t *info;                       /* application bytes of SLAVE_INFO (flash on AVR), may be NULL */
-    uint8_t info_len;                          /* 0..HUBUS_INFO_APP_MAX */
+    const uint8_t *hwid;                       /* hardware identifier in SLAVE_INFO (flash on AVR) */
+    uint8_t hwid_len;                          /* 1..HUBUS_HWID_MAX_LEN, together with serial_len */
+#if HUBUS_ENABLE_SERIAL
+    const uint8_t *serial;                     /* follows hwid; RAM, constant after init; may be NULL */
+    uint8_t serial_len;
+#endif
     const volatile uint8_t *state;             /* live state for REQUEST_STATE, read while transmitting; may be NULL;
                                                   ignored without HUBUS_ENABLE_STATE */
     uint8_t state_len;                         /* 0 (no state) .. HUBUS_MAX_PAYLOAD */
@@ -94,7 +104,8 @@ typedef struct {
     hubus_command_fn on_command;               /* application opcodes 0x10..0xFF, may be NULL */
     void *ctx;
     uint8_t speed_class;                       /* 0 (not declared) .. HUBUS_SPEED_CLASS_MAX, announced in SLAVE_INFO */
-    uint8_t blind_class;                       /* 0 (never blind) .. HUBUS_BLIND_CLASS_MAX, announced in SLAVE_INFO */
+    uint8_t has_blind_time;                    /* 1: may be blind after a command, as its module states: keeps quiet
+                                                  until the next START or RESET (section 7.8) */
 } hubus_core_config_t;
 
 /* Result of hubus_core_write(). */
@@ -115,8 +126,12 @@ typedef struct {
 typedef struct hubus_slave_core {
     /* configuration */
     uint8_t mcid; /* 0: core disabled (not initialised or invalid configuration) */
-    const uint8_t *info;
-    uint8_t info_len;
+    const uint8_t *hwid;
+    uint8_t hwid_len;
+#if HUBUS_ENABLE_SERIAL
+    const uint8_t *serial;
+    uint8_t serial_len;
+#endif
 #if HUBUS_ENABLE_STATE
     const volatile uint8_t *app_state;
     uint8_t app_state_len;
@@ -126,7 +141,10 @@ typedef struct hubus_slave_core {
 #endif
     hubus_command_fn on_command;
     void *ctx;
-    uint8_t timing; /* SLAVE_INFO byte 3: speed class and blind class */
+    uint8_t info_byte0; /* protocol version and speed class */
+#if HUBUS_ENABLE_EVENTS
+    uint8_t has_blind_time;
+#endif
 
     /* line */
     uint8_t clk;         /* last seen CLK level */
@@ -134,7 +152,7 @@ typedef struct hubus_slave_core {
     uint8_t data_low;    /* output: 1 = pull DATA low, 0 = release */
 #if HUBUS_ENABLE_EVENTS
     uint8_t armed;       /* STOP/RESET seen: a pending slave announces itself at the next falling CLK edge */
-    uint8_t hold;        /* command received with a blind class: no announcement before the next START or RESET */
+    uint8_t hold;        /* command received with a blind time: no announcement before the next START or RESET */
 #endif
 
     uint8_t state;
@@ -172,8 +190,8 @@ typedef struct hubus_slave_core {
 #endif
 } hubus_slave_core_t;
 
-/* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), too much info data,
- * a state longer than HUBUS_MAX_PAYLOAD, or a speed or blind class above 15 the core stays disabled (ignores all
+/* `clk` and `data` are the current pin levels. Returns 1 on success. With an invalid MCID (0, > 63), no HWID or one that is too long,
+ * a state longer than HUBUS_MAX_PAYLOAD, or a speed class above 15 the core stays disabled (ignores all
  * traffic, never drives DATA) and 0 is returned. */
 uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, uint8_t clk, uint8_t data);
 

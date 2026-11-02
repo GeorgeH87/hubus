@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "hubus_master.h"
+#include "hubus_module.h"
 #include "hubusd_config.h"
 
 #define HUBUSD_VERSION "0.1.0"
@@ -82,6 +83,7 @@ typedef struct {
     uint8_t configured;
     uint8_t cfg_index;
     const hubusd_profile_t *profile; /* resolved profile or NULL (raw topics only) */
+    const hubus_module_t *module;    /* selected by the HWID; NULL: unknown, not taken into operation */
     int online;                      /* -1 unknown, 0 offline, 1 online */
     unsigned ping_failures;
     uint8_t have_info;
@@ -93,12 +95,14 @@ typedef struct {
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;
     uint8_t needs_refresh;           /* came online: read its state (REQUEST_STATE, or STATUS_CAPTURE without a state) */
-    uint64_t blind_until_ms;         /* blind after a command until then (blind class in SLAVE_INFO), 0: reachable */
+    uint64_t blind_until_ms;         /* blind after a command until then (from the module), 0: reachable */
     uint8_t readback_due;            /* readback of a command deferred to the end of the blind time */
 } hubusd_slave_t;
 
 typedef struct hubusd {
     hubusd_config_t cfg;
+    const hubus_module_t *const *modules;
+    size_t n_modules;
     hubus_master_t master;
     hubusd_mqtt_t mqtt;
     hubusd_clock_t clock;
@@ -131,6 +135,9 @@ void hubusd_init(hubusd_t *d, const hubusd_config_t *cfg, const hubus_master_hal
                  hubusd_clock_t clock);
 void hubusd_destroy(hubusd_t *d);
 void hubusd_set_logger(hubusd_t *d, hubusd_log_fn fn, void *ctx);
+
+/* Before the first hubusd_step(): use these validated modules instead of the built-in ones. Not copied. */
+void hubusd_set_modules(hubusd_t *d, const hubus_module_t *const *modules, size_t n_modules);
 
 /* One iteration of the bus thread; call it in a loop. Returns 1 if the bus was busy (call again soon). */
 int hubusd_step(hubusd_t *d);

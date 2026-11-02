@@ -4,8 +4,6 @@
 
 It is written in C on top of the master library (`master/`) and its libgpiod HAL, uses `libmosquitto` for MQTT and `libyaml` for the configuration, and makes no real-time promises towards MQTT clients: latency is bus latency, milliseconds to a few hundred milliseconds.
 
-*This page describes the current code, which still uses the previous `SLAVE_INFO` layout and has no master modules yet ([implementation status](project/decisions.md#implementation-status)).*
-
 Example setup: a Raspberry Pi, a relay (MCID 3), and a push button (MCID 5).
 
 ## Install and Start
@@ -77,7 +75,7 @@ To adapt the bus:
 
 The `gpio` section selects the chip by label (`chip`, preferred) or device path (`path`), the offsets of `clk` and `data` (different lines), `realtime` (`SCHED_FIFO` priority 1 to 99, 0 = off, needs `CAP_SYS_NICE`), and `internal_pullup` (the SoC pull-up on `DATA`, for bench tests only; use an external pull-up).
 
-Slaves are recognised from the first application byte of their `SLAVE_INFO` (device type 1 relay, 2 switch, 3 temperature, as in the [examples](slave-library.md#examples)), so `profile:` is optional for them. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
+A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [examples](slave-library.md#examples) are built in. A slave whose HWID has no module or is invalid is reported and gets no commands. The type also selects a profile (`0x81` relay, `0x82` switch, `0x83` temperature), so `profile:` is optional for them. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
 
 ## MQTT Topics
 
@@ -96,7 +94,7 @@ Slaves are recognised from the first application byte of their `SLAVE_INFO` (dev
 | `hubus/master/cmd/probe` | MCID `1..63` | One `REQUEST_INFO` to a single MCID, configured or not; result on `hubus/master/probe`. There is no function that polls all 63 MCIDs. |
 | `hubus/master/cmd/stats` | any | Publish the statistics now. |
 
-Every command is validated (MCID range, `TARGET_LEN`, payload size against the maximum the slave announces). Slaves never acknowledge commands; an invalid command or one that cannot be executed is reported on `hubus/master/log` and counted in `commands_rejected`.
+Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, payload size against the maximum its module states). Slaves never acknowledge commands; an invalid command or one that cannot be executed is reported on `hubus/master/log` and counted in `commands_rejected`.
 
 ### Published
 
@@ -107,10 +105,10 @@ Every command is validated (MCID range, `TARGET_LEN`, payload size against the m
 | `hubus/master/stats` | no | statistics (below), every `mqtt.stats_interval_s` and on request |
 | `hubus/master/diagnosis` | yes | `ok`, `suspected_duplicate_mcid` with the MCIDs, or `line_problem` |
 | `hubus/master/scan` | no | result of the last scan |
-| `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `state_capable` |
+| `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `module`, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
-| `hubus/slave/<n>/info` | yes | protocol version, capabilities (`events`, `status_capture`, `state`, `update`: can switch to its updater, `updater`: the updater runs), speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), blind class (`blind_class`, [§7.8](spec/07-slave.md#78-blind-sections)), accepted command size, application bytes, device type, firmware, serial number, profile |
+| `hubus/slave/<n>/info` | yes | from the bus: protocol version, speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), the whole `hwid`, device type, and for the full form `variant`, `firmware`, `revision`, `serial`; `updater`: the updater runs. From the module: `module`, `events`, `status_capture`, `state`, `update`, `max_command`, `blind` ([§7.8](spec/07-slave.md#78-blind-sections)). And the `profile`. |
 | `hubus/slave/<n>/state` | yes | interpreted value (`ON`/`OFF`, a number), so clients get the last value after a reconnect |
 | `hubus/slave/<n>/data` | no | every received frame except duplicates: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `wrapped`, `gap`, or `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |
@@ -155,9 +153,9 @@ Raw commands (`cmd` topic) have no known effect and publish no state in `cache` 
 
 ### Slaves That Are Blind After a Command
 
-A slave with a blind class in `SLAVE_INFO` may ignore the bus for a while after every command to it, for example while it sends a frame to an LED strip ([§7.8](spec/07-slave.md#78-blind-sections)). The daemon takes the class from `SLAVE_INFO`; nothing has to be configured.
+A slave with a blind time may ignore the bus for a while after a command to it, for example while it sends a frame to an LED strip ([§7.8](spec/07-slave.md#78-blind-sections)). The daemon takes the time from the slave's module, for every opcode; nothing has to be configured.
 
-- After a command to such a slave, exact or through a group, the daemon waits the blind time of its class before it contacts the slave again ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)). The other slaves are served meanwhile.
+- After a command to such a slave, exact or through a group, the daemon waits the blind time of that opcode before it contacts the slave again ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)). The other slaves are served meanwhile.
 - With `readback: slave` the readback follows when the blind time is over; `cache` and `none` behave as usual.
 - Queued commands, reads, captures, and probes for the slave wait in order; a group command or scan that would include it waits as well. Pings and periodic reads of it are postponed.
 - When the time is over, the daemon generates a RESET, which brings the slave back, and then reads it back.
@@ -179,13 +177,13 @@ Removing a slave from the configuration and sending `SIGHUP` removes its entitie
 
 ## Device Profiles
 
-The protocol does not define what payload bytes mean, so the daemon interprets them with a profile: the built-in `relay` (device type 1), `switch` (2), and `temperature` (3), or custom profiles in the `profiles:` section, without recompiling:
+The protocol does not define what payload bytes mean, so the daemon interprets them with a profile: the built-in `relay` (type `0x81`), `switch` (`0x82`), and `temperature` (`0x83`), or custom profiles in the `profiles:` section, without recompiling:
 
 ```yaml
 profiles:
   dimmer:
     component: switch              # switch | binary_sensor | sensor
-    device_type: 0x20              # first application byte of SLAVE_INFO
+    device_type: 0xA0              # type byte of the hardware identifier
     on:  {opcode: 0x30, args: [255]}
     off: {opcode: 0x30, args: [0]}
   pressure:

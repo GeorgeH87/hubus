@@ -24,19 +24,19 @@ static void build_builtin(void)
 
     hubusd_profile_init(r);
     snprintf(r->name, sizeof r->name, "relay");
-    r->device_type = 0x01; /* DEVICE_TYPE_RELAY in examples/slave-relay */
+    r->device_type = 0x81; /* docs/hwid-types.md */
     r->component = HUBUSD_COMP_SWITCH;
     r->on = (hubusd_cmd_t){1, 0x10, 1, {1}};
     r->off = (hubusd_cmd_t){1, 0x10, 1, {0}};
 
     hubusd_profile_init(s);
     snprintf(s->name, sizeof s->name, "switch");
-    s->device_type = 0x02; /* DEVICE_TYPE_SWITCH in examples/slave-switch */
+    s->device_type = 0x82;
     s->component = HUBUSD_COMP_BINARY_SENSOR;
 
     hubusd_profile_init(t);
     snprintf(t->name, sizeof t->name, "temperature");
-    t->device_type = 0x03; /* DEVICE_TYPE_TEMPERATURE in examples/slave-sensor */
+    t->device_type = 0x83;
     t->component = HUBUSD_COMP_SENSOR;
     t->byte_len = 2;
     t->big_endian = 1;

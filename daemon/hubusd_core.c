@@ -1,4 +1,5 @@
 #include "hubusd_core.h"
+#include "hubusd_modules.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -110,21 +111,45 @@ static const char *slave_name(const hubusd_t *d, unsigned mcid)
     return d->slave[mcid].configured ? d->cfg.slaves[d->slave[mcid].cfg_index].name : "unconfigured";
 }
 
-/* Application bytes of SLAVE_INFO: [0] device type, [1] firmware version, [2..] serial number. */
+/* The type byte of the hardware identifier. */
 static int info_device_type(const hubusd_slave_t *s)
 {
-    return (s->have_info && s->info.len > HUBUS_INFO_APP) ? s->info.payload[HUBUS_INFO_APP] : -1;
+    return (s->have_info && s->info.len > HUBUS_INFO_HWID) ? s->info.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE] : -1;
+}
+
+static hubus_hwid_form_t info_hwid_form(const hubus_slave_frame_t *info)
+{
+    return info->len > HUBUS_INFO_HWID ? hubus_hwid_form(&info->payload[HUBUS_INFO_HWID], (uint8_t)(info->len - HUBUS_INFO_HWID))
+                                       : HUBUS_HWID_INVALID;
+}
+
+/* Field `field` of a full-form HWID, -1 otherwise. */
+static int info_field(const hubusd_slave_t *s, unsigned field)
+{
+    return s->have_info && info_hwid_form(&s->info) == HUBUS_HWID_FULL ? s->info.payload[HUBUS_INFO_HWID + field] : -1;
+}
+
+/* The serial number of a full-form HWID as hex text. Returns 0 if it has none. */
+static int info_serial(const hubusd_slave_t *s, char *out)
+{
+    const unsigned start = HUBUS_INFO_HWID + HUBUS_HWID_SERIAL;
+
+    if (!s->have_info || info_hwid_form(&s->info) != HUBUS_HWID_FULL || s->info.len <= start) {
+        return 0;
+    }
+    hex(&s->info.payload[start], (unsigned)s->info.len - start, out);
+    return 1;
 }
 
 static int info_can_capture(const hubusd_slave_t *s)
 {
-    return !s->have_info || (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATUS_CAPTURE);
+    return !s->have_info || (s->module && s->module->has_status_capture);
 }
 
 /* The slave exposes a live state: REQUEST_STATE reads it in one transaction. */
 static int info_has_state(const hubusd_slave_t *s)
 {
-    return s->have_info && (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
+    return s->module && s->module->has_state;
 }
 
 static int slave_readback(const hubusd_t *d, unsigned mcid)
@@ -142,17 +167,15 @@ static int slave_readback(const hubusd_t *d, unsigned mcid)
     return rb;
 }
 
-/* Blind time after a command in milliseconds (docs/spec/06-operation.md section 6.9): the upper bound of the class,
- * rounded up, plus one tick so that a partly elapsed millisecond never shortens it. 0: never blind. */
-static uint64_t blind_ms(const hubusd_slave_t *s)
+/* Blind time after a command in milliseconds (docs/spec/06-operation.md section 6.9): the value of the module plus one
+ * tick, so that a partly elapsed millisecond never shortens it. A slave with a blind time keeps quiet after every command,
+ * so also an opcode without one needs that tick: the end of the blind time brings the slave back. 0: never blind. */
+static uint64_t blind_ms(const hubusd_slave_t *s, uint8_t opcode)
 {
-    unsigned long us;
-
-    if (!s->have_info || s->info.len <= HUBUS_INFO_TIMING) {
+    if (!s->module || !hubus_module_has_blind_time(s->module)) {
         return 0;
     }
-    us = HUBUS_BLIND_US(HUBUS_BLIND_CLASS(s->info.payload[HUBUS_INFO_TIMING]));
-    return us ? (uint64_t)(us + 999u) / 1000u + 1u : 0u;
+    return (uint64_t)hubus_module_blind_ms(s->module, opcode) + 1u;
 }
 
 static int is_blind(const hubusd_t *d, unsigned mcid)
@@ -178,15 +201,15 @@ static int any_blind(const hubusd_t *d)
     return target_blind(d, 0, 0);
 }
 
-/* A command reached the slaves of `target_len`/`prefix`: those with a blind class are blind from now on. */
-static void command_sent(hubusd_t *d, uint8_t target_len, uint8_t prefix)
+/* A command reached the slaves of `target_len`/`prefix`: those with a blind time are blind from now on. */
+static void command_sent(hubusd_t *d, uint8_t target_len, uint8_t prefix, uint8_t opcode)
 {
     uint64_t now = now_ms(d);
     unsigned mcid;
 
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
         hubusd_slave_t *s = &d->slave[mcid];
-        uint64_t ms = blind_ms(s);
+        uint64_t ms = blind_ms(s, opcode);
 
         if (ms && hubus_mcid_match((uint8_t)mcid, prefix, target_len)) {
             s->blind_until_ms = now + ms;
@@ -327,8 +350,7 @@ static void publish_state(hubusd_t *d, int force)
         if (info_device_type(s) >= 0) {
             jw_uint(&w, "device_type", (uint64_t)info_device_type(s));
         }
-        if (s->info.len > HUBUS_INFO_APP + 2u) {
-            hex(&s->info.payload[HUBUS_INFO_APP + 2u], (unsigned)s->info.len - HUBUS_INFO_APP - 2u, serial);
+        if (info_serial(s, serial)) {
             jw_str(&w, "serial", serial);
         }
         jw_obj_end(&w);
@@ -455,10 +477,11 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
 {
     char buf[512];
     char t[160];
-    char app[2 * HUBUS_MAX_PAYLOAD + 1];
+    char hwid[2 * HUBUS_MAX_PAYLOAD + 1];
     char serial[2 * HUBUS_MAX_PAYLOAD + 1];
     jw_t w;
     const hubusd_slave_t *s = &d->slave[mcid];
+    const hubus_module_t *m = s->module;
 
     if (!s->have_info) {
         return;
@@ -467,28 +490,31 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
     jw_obj_begin(&w, NULL);
     jw_uint(&w, "mcid", mcid);
     jw_str(&w, "name", slave_name(d, mcid));
-    jw_uint(&w, "protocol", s->info.payload[HUBUS_INFO_VERSION]);
-    jw_uint(&w, "capabilities", s->info.payload[HUBUS_INFO_CAPS]);
-    jw_bool(&w, "events", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_EVENTS) != 0);
-    jw_bool(&w, "status_capture", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATUS_CAPTURE) != 0);
-    jw_bool(&w, "state", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE) != 0);
-    jw_bool(&w, "update", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATE) != 0);
-    jw_bool(&w, "updater", (s->info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) != 0);
-    jw_uint(&w, "max_command", s->info.payload[HUBUS_INFO_MAX_CMD]);
-    jw_uint(&w, "speed_class", s->info.len > HUBUS_INFO_TIMING ? s->info.payload[HUBUS_INFO_TIMING] & HUBUS_SPEED_CLASS_MASK : 0u);
-    jw_uint(&w, "blind_class", s->info.len > HUBUS_INFO_TIMING ? HUBUS_BLIND_CLASS(s->info.payload[HUBUS_INFO_TIMING]) : 0u);
-    hex(&s->info.payload[HUBUS_INFO_APP], s->info.len > HUBUS_INFO_APP ? (unsigned)s->info.len - HUBUS_INFO_APP : 0u, app);
-    jw_str(&w, "app_data", app);
+    jw_uint(&w, "protocol", HUBUS_INFO_VERSION(s->info.payload[HUBUS_INFO_BYTE0]));
+    jw_uint(&w, "speed_class", HUBUS_INFO_SPEED_CLASS(s->info.payload[HUBUS_INFO_BYTE0]));
+    hex(&s->info.payload[HUBUS_INFO_HWID], s->info.len > HUBUS_INFO_HWID ? (unsigned)s->info.len - HUBUS_INFO_HWID : 0u, hwid);
+    jw_str(&w, "hwid", hwid);
     if (info_device_type(s) >= 0) {
         jw_uint(&w, "device_type", (uint64_t)info_device_type(s));
     }
-    if (s->info.len > HUBUS_INFO_APP + 1u) {
-        jw_uint(&w, "firmware", s->info.payload[HUBUS_INFO_APP + 1u]);
+    if (info_field(s, HUBUS_HWID_VERSION) >= 0) {
+        jw_uint(&w, "variant", (uint64_t)info_field(s, HUBUS_HWID_VARIANT));
+        jw_uint(&w, "firmware", (uint64_t)info_field(s, HUBUS_HWID_VERSION));
+        jw_uint(&w, "revision", (uint64_t)info_field(s, HUBUS_HWID_REVISION));
     }
-    if (s->info.len > HUBUS_INFO_APP + 2u) {
-        hex(&s->info.payload[HUBUS_INFO_APP + 2u], (unsigned)s->info.len - HUBUS_INFO_APP - 2u, serial);
+    if (info_serial(s, serial)) {
         jw_str(&w, "serial", serial);
     }
+    jw_str(&w, "module", m ? m->name : "");
+    if (m) {
+        jw_bool(&w, "events", m->has_events);
+        jw_bool(&w, "status_capture", m->has_status_capture);
+        jw_bool(&w, "state", m->has_state);
+        jw_bool(&w, "update", m->has_update);
+        jw_uint(&w, "max_command", m->max_command);
+        jw_bool(&w, "blind", hubus_module_has_blind_time(m));
+    }
+    jw_bool(&w, "updater", info_device_type(s) == HUBUS_HWID_TYPE_UPDATER);
     jw_str(&w, "profile", s->profile ? s->profile->name : "");
     jw_obj_end(&w);
     topic(d, t, sizeof t, "slave/%u/info", mcid);
@@ -579,12 +605,11 @@ static void publish_slave_discovery(hubusd_t *d, unsigned mcid)
     jw_str(&w, "name", slave_name(d, mcid));
     jw_str(&w, "manufacturer", "HUBUS");
     jw_str(&w, "model", p->name);
-    if (s->have_info && s->info.len > HUBUS_INFO_APP + 1u) {
-        snprintf(fw, sizeof fw, "%u", s->info.payload[HUBUS_INFO_APP + 1u]);
+    if (info_field(s, HUBUS_HWID_VERSION) >= 0) {
+        snprintf(fw, sizeof fw, "%d", info_field(s, HUBUS_HWID_VERSION));
         jw_str(&w, "sw_version", fw);
     }
-    if (s->have_info && s->info.len > HUBUS_INFO_APP + 2u) {
-        hex(&s->info.payload[HUBUS_INFO_APP + 2u], (unsigned)s->info.len - HUBUS_INFO_APP - 2u, serial);
+    if (info_serial(s, serial)) {
         jw_str(&w, "serial_number", serial);
     }
     jw_str(&w, "via_device", master);
@@ -710,6 +735,25 @@ static void publish_all_retained(hubusd_t *d)
 
 /* ---- configuration binding ---------------------------------------------------------------------- */
 
+/* The module of a slave by its HWID (docs/spec/06-operation.md section 6.10). */
+static void resolve_module(hubusd_t *d, unsigned mcid)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+    hubus_module_match_t r;
+
+    s->module = NULL;
+    if (!s->have_info) {
+        return;
+    }
+    r = hubus_module_select_info(d->modules, d->n_modules, s->info.payload, s->info.len, &s->module);
+    if (r == HUBUS_MODULE_CONFLICT) {
+        log_event(d, 2, "slave %u: modules conflict for its hardware identifier, not taken into operation", mcid);
+    } else if (r != HUBUS_MODULE_FOUND) {
+        log_event(d, 2, "slave %u: %s hardware identifier, not taken into operation", mcid,
+                  r == HUBUS_MODULE_UNKNOWN ? "no module for its" : "invalid");
+    }
+}
+
 static void resolve_profile(hubusd_t *d, unsigned mcid)
 {
     hubusd_slave_t *s = &d->slave[mcid];
@@ -720,6 +764,7 @@ static void resolve_profile(hubusd_t *d, unsigned mcid)
     if (!s->configured) {
         return;
     }
+    resolve_module(d, mcid);
     sc = &d->cfg.slaves[s->cfg_index];
     if (sc->profile[0]) {
         s->profile = hubusd_config_profile(&d->cfg, sc->profile);
@@ -747,6 +792,7 @@ static void bind_config(hubusd_t *d)
     for (i = 0; i <= HUBUS_MCID_MAX; i++) {
         d->slave[i].configured = 0;
         d->slave[i].profile = NULL;
+        d->slave[i].module = NULL;
     }
     for (i = 0; i < d->cfg.n_slaves; i++) {
         hubusd_slave_t *s = &d->slave[d->cfg.slaves[i].mcid];
@@ -761,6 +807,12 @@ static void bind_config(hubusd_t *d)
     }
 }
 
+void hubusd_set_modules(hubusd_t *d, const hubus_module_t *const *modules, size_t n_modules)
+{
+    d->modules = modules;
+    d->n_modules = n_modules;
+}
+
 void hubusd_init(hubusd_t *d, const hubusd_config_t *cfg, const hubus_master_hal_t *hal, hubusd_mqtt_t mqtt,
                  hubusd_clock_t clock)
 {
@@ -768,6 +820,7 @@ void hubusd_init(hubusd_t *d, const hubusd_config_t *cfg, const hubus_master_hal
 
     memset(d, 0, sizeof *d);
     d->cfg = *cfg;
+    d->modules = hubusd_builtin_modules(&d->n_modules);
     d->mqtt = mqtt;
     d->clock = clock;
     pthread_mutex_init(&d->lock, NULL);
@@ -990,7 +1043,7 @@ static void refresh_states(hubusd_t *d)
             if (r == HUBUS_ERR_LINE_FAULT) {
                 bus_fault(d, r);
             } else if (r == HUBUS_OK) {
-                command_sent(d, 6, (uint8_t)mcid);
+                command_sent(d, 6, (uint8_t)mcid, HUBUS_OP_STATUS_CAPTURE);
                 any = 1;
             }
         }
@@ -1057,9 +1110,13 @@ static void do_probe(hubusd_t *d, unsigned mcid)
     jw_uint(&w, "mcid", mcid);
     jw_str(&w, "state", state);
     jw_bool(&w, "configured", s->configured);
-    if (r == HUBUS_OK && info.len > HUBUS_INFO_APP) {
-        jw_uint(&w, "device_type", info.payload[HUBUS_INFO_APP]);
-        jw_bool(&w, "state_capable", (info.payload[HUBUS_INFO_CAPS] & HUBUS_CAP_STATE) != 0);
+    if (r == HUBUS_OK && info.len > HUBUS_INFO_HWID) {
+        const hubus_module_t *m;
+
+        (void)hubus_module_select_info(d->modules, d->n_modules, info.payload, info.len, &m);
+        jw_uint(&w, "device_type", info.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE]);
+        jw_str(&w, "module", m ? m->name : "");
+        jw_bool(&w, "state_capable", m && m->has_state);
     }
     jw_uint(&w, "ts", wall_s(d));
     jw_obj_end(&w);
@@ -1124,8 +1181,8 @@ static void do_scan(hubusd_t *d, int publish)
         jw_uint(&w, "mcid", mcid);
         jw_str(&w, "state", scan.state[mcid] == HUBUS_SCAN_PRESENT ? "present" : "suspect");
         jw_bool(&w, "configured", d->slave[mcid].configured);
-        if (scan.state[mcid] == HUBUS_SCAN_PRESENT && scan.info[mcid].len > HUBUS_INFO_APP) {
-            jw_uint(&w, "device_type", scan.info[mcid].payload[HUBUS_INFO_APP]);
+        if (scan.state[mcid] == HUBUS_SCAN_PRESENT && scan.info[mcid].len > HUBUS_INFO_HWID) {
+            jw_uint(&w, "device_type", scan.info[mcid].payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE]);
         }
         jw_obj_end(&w);
     }
@@ -1213,7 +1270,7 @@ static void capture_exact(hubusd_t *d, unsigned mcid)
         return;
     }
     d->stats.commands_executed++;
-    command_sent(d, 6, (uint8_t)mcid);
+    command_sent(d, 6, (uint8_t)mcid, HUBUS_OP_STATUS_CAPTURE);
     run_burst(d);
 }
 
@@ -1238,7 +1295,7 @@ static void read_back(hubusd_t *d, unsigned mcid, const char *expected)
         /* a slave without a state captures it into the buffer, which the burst collects */
         r = hubus_master_status_capture(&d->master, 6, (uint8_t)mcid);
         if (r == HUBUS_OK) {
-            command_sent(d, 6, (uint8_t)mcid);
+            command_sent(d, 6, (uint8_t)mcid, HUBUS_OP_STATUS_CAPTURE);
             run_burst(d);
         } else if (r == HUBUS_ERR_LINE_FAULT) {
             bus_fault(d, r);
@@ -1252,8 +1309,12 @@ static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t
     const hubusd_slave_t *s = &d->slave[mcid];
     hubus_status_t r;
 
-    if (s->have_info && 1u + n > s->info.payload[HUBUS_INFO_MAX_CMD]) {
-        reject(d, "command of %u bytes exceeds the %u bytes slave %u accepts", 1u + n, s->info.payload[HUBUS_INFO_MAX_CMD], mcid);
+    if (s->have_info && !s->module) {
+        reject(d, "slave %u has no module: it gets no commands", mcid);
+        return;
+    }
+    if (s->module && 1u + n > s->module->max_command) {
+        reject(d, "command of %u bytes exceeds the %u bytes slave %u accepts", 1u + n, s->module->max_command, mcid);
         return;
     }
     r = hubus_master_send_command(&d->master, 6, (uint8_t)mcid, opcode, args, n);
@@ -1265,7 +1326,7 @@ static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t
         return;
     }
     d->stats.commands_executed++;
-    command_sent(d, 6, (uint8_t)mcid);
+    command_sent(d, 6, (uint8_t)mcid, opcode);
     if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && is_blind(d, mcid)) {
         d->slave[mcid].readback_due = 1; /* the slave cannot answer yet: read it back when its blind time ends */
     } else {
@@ -1391,7 +1452,7 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
                 }
             } else {
                 d->stats.commands_executed++;
-                command_sent(d, q->target_len, q->prefix);
+                command_sent(d, q->target_len, q->prefix, q->opcode);
                 if (q->opcode == HUBUS_OP_STATUS_CAPTURE) {
                     run_burst(d); /* the captured states are collected as usual */
                 }

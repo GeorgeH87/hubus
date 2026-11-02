@@ -187,7 +187,7 @@ The updater is a slave like any other: same MCID, same protocol, no event buffer
 
 ### Updater Information
 
-The updater's `SLAVE_INFO` is byte 0 (protocol version and speed class, [§4.7](04-frames.md#47-slave-info-slave_info)), the HWID type `0xFF`, and then these 13 bytes (`LEN = 15`), multi-byte values big-endian. Byte numbers count from the first byte after `0xFF`:
+The updater's `SLAVE_INFO` is byte 0 (protocol version and speed class, [§4.7](04-frames.md#47-slave-info-slave_info)), the HWID type `0xFF`, and then these 14 bytes (`LEN = 16`), multi-byte values big-endian. Byte numbers count from the first byte after `0xFF`:
 
 | Byte | Content |
 |---|---|
@@ -199,6 +199,7 @@ The updater's `SLAVE_INFO` is byte 0 (protocol version and speed class, [§4.7](
 | 9 | Flags: bit 0 = reset vector rule (below) |
 | 10–11 | Byte address of the updater |
 | 12 | Updater version |
+| 13 | Maximum command payload the updater accepts, in bytes (`3..31`; including the opcode), which limits `UPDATE_LOAD` |
 
 The state of the updater (`REQUEST_STATE`) has four bytes: the result of the last `UPDATE_WRITE` (`0` none yet, `1` written, `2` CRC mismatch, `3` address outside the application area or not page-aligned, `4` reset vector rule violated), its address (2 bytes), and a counter that increments with every executed `UPDATE_WRITE`. The counter tells the master whether its write was executed at all.
 
@@ -272,8 +273,6 @@ A slave that stays blind longer than its module states behaves like a slave that
 
 ## 6.10 Master Modules
 
-*(Draft: see "Master modules" in [decisions](../project/decisions.md#master-modules).)*
-
 Every slave firmware image is delivered together with a **master module**: the master-side code and data for that image. The module is selected by the hardware identifier (HWID) in `SLAVE_INFO` ([§4.7](04-frames.md#47-slave-info-slave_info)).
 
 **Selection.** A module declares one or more match rules. A rule is a byte pattern and a mask of the same length.
@@ -300,4 +299,4 @@ Every slave firmware image is delivered together with a **master module**: the m
 - **Device functions.** Everything that is specific to the device, such as compiling LED strip animations into bytecode, lives in the module and not in the master core.
 - **Unknown HWID.** A slave whose HWID matches no rule, or whose HWID is invalid, is not taken into operation: the master reports it in the commissioning scan and sends it no commands. Only the speed class is used, so that it does not slow the bus beyond what its firmware needs.
 - **Type `0xFF`** is the updater. The updater is one generic module for all devices; the device-specific values come from the updater information ([§6.8](#68-firmware-update)).
-- **Changes.** Slave and module change together. A change that the master does not need to know about keeps its module, as long as the module's rule covers the new version or revision. A change that affects what the master relies on comes with a module whose rule is more specific, or with a new variant or type. A short-form HWID has no variant or version, so there such a change needs a new type. The table of types is maintained centrally.
+- **Changes.** Slave and module change together. A change that the master does not need to know about keeps its module, as long as the module's rule covers the new version or revision. A change that affects what the master relies on comes with a module whose rule is more specific, or with a new variant or type. A short-form HWID has no variant or version, so there such a change needs a new type. The [table of types](../hwid-types.md) is maintained centrally.

@@ -54,7 +54,7 @@ Why HUBUS is the way it is. Each entry states the decision, the reason, rejected
 
 ## Master modules
 
-*Draft, 2026-10-29. Supersedes the capability bits, the command size, and the blind class in `SLAVE_INFO`, including the entries above that mention them; the speed-class decisions above stay. The specification and the glossary are adapted; the implementation is not ([below](#implementation-status)).*
+*2026-10-29, implemented 2026-11-02. Supersedes the capability bits, the command size, and the blind class in `SLAVE_INFO`, including the entries above that mention them; the speed-class decisions above stay. How far the code is: [below](#implementation-status).*
 
 - **A slave firmware image is always delivered with a master module; `SLAVE_INFO` only identifies the module** (2026-10-29). Slaves differ in what the master has to do for them (LED strip animations, for example), so the master needs device-specific code anyway. What a slave used to announce, such as capabilities, command size, blind class, and update support, is then a fixed property of the image and belongs to its module. A second source on the bus could only disagree with the module.
 - **`SLAVE_INFO` = protocol version, speed class, hardware identifier** (2026-10-29, HWID 2026-10-31). The speed class stays because the bus timing has to respect a slave even if the master has no module for it. Supersedes the 1-byte identity of the first draft, which had no version and no device-unique value.
@@ -67,16 +67,9 @@ Why HUBUS is the way it is. Each entry states the decision, the reason, rejected
 - **Unknown HWIDs are not taken into operation.** There is no capability-based default behavior, so the master needs no code for devices it knows nothing about.
 - **The type table is maintained centrally by the development process.** Variants are assigned per type.
 - **Duplicate MCID detection depends on the serial number** (2026-10-29, revised 2026-10-31). With a serial number identical devices send different `SLAVE_INFO`, and the scan detects duplicates. Without one two identical devices with the same MCID send identical frames. This rare configuration fault is accepted, as other rare edge cases are.
-- **The updater keeps its device information after type `0xFF`** (page size, flash layout, write time; [§6.8](../spec/06-operation.md#68-firmware-update)). These values differ per device and are not a property of one image, so one generic updater module reads them from the bus. Its "updater version" byte stays: with the HWID, versions are no longer excluded.
+- **The updater keeps its device information after type `0xFF`** (page size, flash layout, write time, accepted command size; [§6.8](../spec/06-operation.md#68-firmware-update)). These values differ per device and are not a property of one image, so one generic updater module reads them from the bus. The command size came with the implementation (2026-11-02): without it the master could not know how long an `UPDATE_LOAD` may be. Its "updater version" byte stays: with the HWID, versions are no longer excluded.
+- **A serial number from RAM is a build option** (2026-11-02). A serial number that is fixed per build can be part of the constant HWID; `HUBUS_ENABLE_SERIAL` adds bytes from RAM after it, read once from EEPROM or the signature row. Small devices pay nothing for it.
 
 ### Implementation Status
 
-The code implements only the module interface and the selection so far ([master library](../master-library.md#master-modules)); the [roadmap](../../TODO.md#12-master-modules-and-hardware-identifier) lists what is missing. Until it does, the slave library, the master library, hubusd, the examples, and their documentation use the previous `SLAVE_INFO` layout:
-
-| Byte | Content |
-|---|---|
-| 0 | HUBUS protocol version (`0` in v0) |
-| 1 | Capabilities: bit 0 = supports `STATUS_CAPTURE`; bit 1 = has a state; bit 2 = has an event buffer; bit 3 = application with firmware update; bit 4 = the updater is running; bits 7–5 are reserved (`0`) |
-| 2 | Maximum command payload the slave accepts, in bytes (`1..31`; including the opcode) |
-| 3 | Bits 3–0: speed class `0..15`. Bits 7–4: blind class `0..15`, `0` = never blind, class `k` = at most `0.25 ms · 2^(k−1)` of blind time |
-| 4.. | Application-defined: device type, firmware version, serial number. On the updater, the updater information ([§6.8](../spec/06-operation.md#updater-information)) |
+Slaves, the updater, the master, and hubusd use the new `SLAVE_INFO`, and hubusd takes the properties of a slave from its module. Still missing: plugins (the modules of the example firmwares are linked into hubusd, `daemon/hubusd_modules.c`), entities from the module (topics and discovery still come from the profiles in hubusd, matched by the type byte), and the functions of a module. The [roadmap](../../TODO.md#12-master-modules-and-hardware-identifier) lists them.

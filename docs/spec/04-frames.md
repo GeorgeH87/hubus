@@ -103,7 +103,7 @@ Slaves send no acknowledgements and no error frames: commands are fire-and-forge
 
 ## 4.7 Slave Info (`SLAVE_INFO`)
 
-Static metadata, typically a constant in flash. *(Draft: see "Master modules" in [decisions](../project/decisions.md#master-modules).)*
+Static metadata, typically a constant in flash.
 
 | Byte | Content |
 |---|---|
@@ -139,8 +139,8 @@ The fields run from the general to the specific, so that a prefix of the HWID st
 | `0x80..0xFE` | **Full form**: type, variant, version, and hardware revision (`LEN ≥ 5`), then the serial number, if any. |
 | `0xFF` | The **updater** ([§6.8](06-operation.md#68-firmware-update)); the updater information follows instead of the fields above. |
 
-- The length comes from `LEN`; there is no length field. A missing HWID, type `0x00`, a short form longer than one byte, a full form shorter than four bytes, or an updater HWID other than 14 bytes is invalid, and the master treats the slave like one without a module.
-- Types are assigned and kept in a central table by the development process. Variants are assigned per type; version and hardware revision count up from `0` per variant.
+- The length comes from `LEN`; there is no length field. A missing HWID, type `0x00`, a short form longer than one byte, a full form shorter than four bytes, or an updater HWID other than 15 bytes is invalid, and the master treats the slave like one without a module.
+- Types are assigned and kept in a [central table](../hwid-types.md) by the development process. Variants are assigned per type; version and hardware revision count up from `0` per variant.
 - The serial number is a placeholder for a device-unique value. Its format belongs to the type; a device without one sends none. The master does not use it to select a module, but it lets the commissioning scan tell identical devices apart ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)).
 - Everything before the serial number is a property of the firmware image and is usually a constant in flash. A serial number differs per device and usually comes from EEPROM or the device's signature row.
 

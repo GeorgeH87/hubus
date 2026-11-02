@@ -28,7 +28,7 @@ typedef struct {
     uint8_t state;
     uint16_t raw_temp;
     volatile uint8_t temp_be[2]; /* live state of the temperature sensor */
-    uint8_t info[6];
+    uint8_t hwid[HUBUS_HWID_SERIAL + 4u];
 } device_t;
 
 static hubus_sim_t sim;
@@ -39,7 +39,7 @@ static void capture(void *ctx)
     device_t *v = ctx;
     uint8_t b[2];
 
-    if (v->type == 3) {
+    if (v->type == 0x83u) {
         b[0] = (uint8_t)(v->raw_temp >> 8);
         b[1] = (uint8_t)v->raw_temp;
         (void)hubus_core_write(&v->core, b, 2, 0);
@@ -52,11 +52,34 @@ static void command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t len)
 {
     device_t *v = ctx;
 
-    if (v->type == 1 && opcode == 0x10 && len >= 1) {
+    if (v->type == 0x81u && opcode == 0x10 && len >= 1) {
         v->state = args[0] ? 1 : 0;
         fprintf(stderr, "[sim] relay %u\n", v->state);
     }
 }
+
+/* The devices of this tool: the relay and the sensor have a state, the button does not. */
+#define TYPE_RELAY 0x81u
+#define TYPE_BUTTON 0x82u
+#define TYPE_TEMPERATURE 0x83u
+#define TYPE_UNKNOWN 0x97u
+
+static const hubus_module_rule_t relay_rules[] = {{.pattern = {TYPE_RELAY}, .mask = {0xFF}, .len = 1}};
+static const hubus_module_rule_t button_rules[] = {{.pattern = {TYPE_BUTTON}, .mask = {0xFF}, .len = 1}};
+static const hubus_module_rule_t temperature_rules[] = {{.pattern = {TYPE_TEMPERATURE}, .mask = {0xFF}, .len = 1}};
+static const hubus_module_t relay_module = {
+    HUBUS_MODULE_INIT, .name = "relay", .rules = relay_rules, .n_rules = 1, .max_command = 31,
+    .has_state = true, .has_events = true, .has_status_capture = true,
+};
+static const hubus_module_t button_module = {
+    HUBUS_MODULE_INIT, .name = "button", .rules = button_rules, .n_rules = 1, .max_command = 31,
+    .has_events = true, .has_status_capture = true,
+};
+static const hubus_module_t temperature_module = {
+    HUBUS_MODULE_INIT, .name = "temperature", .rules = temperature_rules, .n_rules = 1, .max_command = 31,
+    .has_state = true, .has_events = true, .has_status_capture = true,
+};
+static const hubus_module_t *const sim_modules[] = {&relay_module, &button_module, &temperature_module};
 
 static device_t *add(uint8_t mcid, uint8_t type)
 {
@@ -68,19 +91,20 @@ static device_t *add(uint8_t mcid, uint8_t type)
     v->raw_temp = 298;
     v->temp_be[0] = (uint8_t)(298 >> 8);
     v->temp_be[1] = (uint8_t)298;
-    v->info[0] = type;
-    v->info[1] = 1;
-    v->info[5] = mcid;
+    v->hwid[HUBUS_HWID_TYPE] = type;
+    v->hwid[HUBUS_HWID_VARIANT] = 1;
+    v->hwid[HUBUS_HWID_VERSION] = 1;
+    v->hwid[HUBUS_HWID_SERIAL + 3u] = mcid;
     memset(&c, 0, sizeof c);
     c.mcid = mcid;
-    c.info = v->info;
-    c.info_len = sizeof v->info;
+    c.hwid = v->hwid;
+    c.hwid_len = sizeof v->hwid;
     c.on_status_capture = capture;
     c.on_command = command;
-    if (type == 1) { /* the relay and the sensor expose their state (REQUEST_STATE), the button does not */
+    if (type == TYPE_RELAY) { /* the relay and the sensor expose their state (REQUEST_STATE), the button does not */
         c.state = &v->state;
         c.state_len = 1;
-    } else if (type == 3) {
+    } else if (type == TYPE_TEMPERATURE) {
         c.state = v->temp_be;
         c.state_len = 2;
     }
@@ -152,15 +176,17 @@ int main(int argc, char **argv)
         return 1;
     }
     hubus_sim_init(&sim);
-    add(3, 1);
-    add(5, 2);
-    add(7, 3);
-    add(9, 0x77);
+    add(3, TYPE_RELAY);
+    add(5, TYPE_BUTTON);
+    add(7, TYPE_TEMPERATURE);
+    add(9, TYPE_UNKNOWN);
     hal = hubus_sim_master_hal(&sim);
     memset(&opts, 0, sizeof opts);
     opts.config_path = argv[2];
     opts.poll_hook = hook;
     opts.verbose = 1;
+    opts.modules = sim_modules;
+    opts.n_modules = sizeof sim_modules / sizeof sim_modules[0];
     setvbuf(stdout, NULL, _IOLBF, 0);
     return hubusd_run(cfg, &hal, &opts);
 }

@@ -13,12 +13,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "hubus_proto.h"
+
 #define HUBUS_MODULE_API_VERSION 1u
 
-#define HUBUS_HWID_MAX_LEN 30u      /* SLAVE_INFO payload without byte 0 */
-#define HUBUS_HWID_UPDATER_LEN 14u  /* type 0xFF and the 13 bytes of the updater information */
-#define HUBUS_HWID_FULL_MIN_LEN 4u  /* type, variant, version, hardware revision */
-#define HUBUS_RULE_MAX_LEN 4u       /* rules never cover the serial number */
+#define HUBUS_RULE_MAX_LEN HUBUS_HWID_FULL_MIN_LEN /* rules never cover the serial number */
 #define HUBUS_MODULE_CMD_MAX_ARGS 8u
 
 /* Number of elements of an array, for the counts in the structures below. */
@@ -213,6 +212,14 @@ hubus_module_error_t hubus_module_validate(const hubus_module_t *module);
  * result is HUBUS_MODULE_FOUND. */
 hubus_module_match_t hubus_module_select(const hubus_module_t *const *modules, size_t n_modules, const uint8_t *hwid,
                                          uint8_t len, const hubus_module_t **out);
+
+/* The same from a SLAVE_INFO payload. A protocol version this master does not know counts as an invalid HWID: it may lay
+ * out everything after byte 0 differently. */
+hubus_module_match_t hubus_module_select_info(const hubus_module_t *const *modules, size_t n_modules,
+                                              const uint8_t *payload, uint8_t len, const hubus_module_t **out);
+
+/* 1 if the slave can be blind after any command: it then keeps quiet until the master ends that phase. */
+bool hubus_module_has_blind_time(const hubus_module_t *module);
 
 /* The blind time after a command with this opcode, in milliseconds; 0: the slave is not blind. */
 uint16_t hubus_module_blind_ms(const hubus_module_t *module, uint8_t opcode);

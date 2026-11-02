@@ -25,8 +25,7 @@ typedef struct {
 
 typedef enum {
     HUBUS_UPD_REASON_NONE = 0,
-    HUBUS_UPD_REASON_NOT_SUPPORTED, /* the slave announces neither update capability nor updater */
-    HUBUS_UPD_REASON_NO_UPDATER,    /* the slave did not switch to its updater */
+    HUBUS_UPD_REASON_NO_UPDATER,    /* the slave did not switch to its updater: none installed, or no update support */
     HUBUS_UPD_REASON_BAD_INFO,      /* the updater's SLAVE_INFO or state is not usable */
     HUBUS_UPD_REASON_SIGNATURE,     /* the device signature differs from the image's */
     HUBUS_UPD_REASON_TOO_LARGE,     /* empty image, or larger than the application area without the info page */

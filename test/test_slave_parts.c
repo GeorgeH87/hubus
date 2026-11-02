@@ -19,7 +19,7 @@ static hubus_slave_core_t core[3];
 static unsigned commands[3];
 static unsigned captures;
 static volatile uint8_t live[3][2];
-static const uint8_t info_bytes[] = {0x03, 0x01};
+static const uint8_t hwid_bytes[] = {0xF3, 0x01, 0x00, 0x00};
 
 static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t len)
 {
@@ -43,8 +43,8 @@ static void add(unsigned i, uint8_t mcid)
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
-    cfg.info = info_bytes;
-    cfg.info_len = sizeof info_bytes;
+    cfg.hwid = hwid_bytes;
+    cfg.hwid_len = sizeof hwid_bytes;
     cfg.state = live[i];
     cfg.state_len = sizeof live[i];
     cfg.on_status_capture = on_capture; /* ignored without the event buffer */
@@ -81,12 +81,10 @@ static void test_info_announces_neither_events_nor_capture(void)
     uint8_t buf[40];
 
     add(0, 9);
-    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP + sizeof info_bytes, raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_HWID + sizeof hwid_bytes, raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + HUBUS_INFO_APP + sizeof info_bytes, NULL));
-    TEST_ASSERT_EQUAL_UINT8(0, buf[2 + HUBUS_INFO_CAPS] & (HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE));
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_ENABLE_STATE ? HUBUS_CAP_STATE : 0u, buf[2 + HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
-    TEST_ASSERT_EQUAL_MEMORY(info_bytes, buf + 2 + HUBUS_INFO_APP, sizeof info_bytes);
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + HUBUS_INFO_HWID + sizeof hwid_bytes, NULL));
+    TEST_ASSERT_EQUAL_MEMORY(hwid_bytes, buf + 2 + HUBUS_INFO_HWID, sizeof hwid_bytes);
 }
 
 static void test_request_data_is_never_answered(void)

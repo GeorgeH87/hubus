@@ -158,9 +158,9 @@ int main(int argc, char **argv)
                 const hubus_slave_frame_t *f = &scan.info[mcid];
                 unsigned k;
 
-                printf("mcid %2u: version %u caps 0x%02X max command %u app:", mcid, f->payload[HUBUS_INFO_VERSION],
-                       f->payload[HUBUS_INFO_CAPS], f->payload[HUBUS_INFO_MAX_CMD]);
-                for (k = HUBUS_INFO_APP; k < f->len; k++) {
+                printf("mcid %2u: version %u speed class %u hwid:", mcid, HUBUS_INFO_VERSION(f->payload[HUBUS_INFO_BYTE0]),
+                       HUBUS_INFO_SPEED_CLASS(f->payload[HUBUS_INFO_BYTE0]));
+                for (k = HUBUS_INFO_HWID; k < f->len; k++) {
                     printf(" %02X", f->payload[k]);
                 }
                 printf("\n");
@@ -215,9 +215,9 @@ int main(int argc, char **argv)
 
         s = hubus_master_request_info(&master, (uint8_t)number(argv[i + 1]), &f);
         if (s == HUBUS_OK) {
-            printf("mcid %2u: version %u caps 0x%02X max command %u app:", f.mcid, f.payload[HUBUS_INFO_VERSION],
-                   f.payload[HUBUS_INFO_CAPS], f.payload[HUBUS_INFO_MAX_CMD]);
-            for (k = HUBUS_INFO_APP; k < f.len; k++) {
+            printf("mcid %2u: version %u speed class %u hwid:", f.mcid, HUBUS_INFO_VERSION(f.payload[HUBUS_INFO_BYTE0]),
+                   HUBUS_INFO_SPEED_CLASS(f.payload[HUBUS_INFO_BYTE0]));
+            for (k = HUBUS_INFO_HWID; k < f.len; k++) {
                 printf(" %02X", f.payload[k]);
             }
             putchar('\n');

@@ -22,8 +22,8 @@
 #define OP_EVENT 0x11
 #define OP_BLIND 0x12
 #define BOOT_EVENT 0xB0
-#define FW_INFO_TYPE 0x7E
-#define FW_BLIND_CLASS 3u
+#define FW_INFO_TYPE 0xF1u
+#define FW_BLIND_NS 1000000u /* the longest blind time of the test firmware */
 #define FW_SPEED_CLASS 9u
 #define FW_SPEED_CLASS_NS 64000u /* edge response time R of class 9 (docs/spec/01-physical-layer.md section 1.5) */
 
@@ -108,19 +108,14 @@ static void test_slave_info_from_flash(void)
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&fx.master, 5, &f));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_S_INFO, f.type);
     TEST_ASSERT_EQUAL_UINT8(5, f.mcid);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_INFO_APP + 3u, f.len);
-    TEST_ASSERT_EQUAL_HEX8(HUBUS_CAP_STATUS_CAPTURE | HUBUS_CAP_STATE | HUBUS_CAP_EVENTS,
-                           f.payload[HUBUS_INFO_CAPS]);
-    TEST_ASSERT_EQUAL_UINT8(31, f.payload[HUBUS_INFO_MAX_CMD]);
-    TEST_ASSERT_EQUAL_UINT8(FW_BLIND_CLASS, HUBUS_BLIND_CLASS(f.payload[HUBUS_INFO_TIMING]));
-    TEST_ASSERT_EQUAL_UINT8(FW_SPEED_CLASS, f.payload[HUBUS_INFO_TIMING] & HUBUS_SPEED_CLASS_MASK);
-    TEST_ASSERT_EQUAL_HEX8(FW_INFO_TYPE, f.payload[HUBUS_INFO_APP]);
-    TEST_ASSERT_EQUAL_HEX8(5, f.payload[HUBUS_INFO_APP + 2u]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_INFO_HWID + 5u, f.len);
+    TEST_ASSERT_EQUAL_UINT8(FW_SPEED_CLASS, HUBUS_INFO_SPEED_CLASS(f.payload[HUBUS_INFO_BYTE0]));
+    TEST_ASSERT_EQUAL_HEX8(FW_INFO_TYPE, f.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE]);
+    TEST_ASSERT_EQUAL_HEX8(5, f.payload[HUBUS_INFO_HWID + HUBUS_HWID_SERIAL]);
 
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&fx.master, 10, &f));
     TEST_ASSERT_EQUAL_UINT8(10, f.mcid);
-    TEST_ASSERT_EQUAL_HEX8(0, f.payload[HUBUS_INFO_CAPS]);
-    TEST_ASSERT_EQUAL_HEX8(10, f.payload[HUBUS_INFO_APP + 2u]);
+    TEST_ASSERT_EQUAL_HEX8(10, f.payload[HUBUS_INFO_HWID + HUBUS_HWID_SERIAL]);
 }
 
 static void test_command_and_state(void)
@@ -234,7 +229,7 @@ static void test_blind_section_with_interrupts_disabled(void)
         read_state(6, &f);
         TEST_ASSERT_EQUAL_HEX8(v, f.payload[0]);
     }
-    avr_bus_idle(&bus, HUBUS_BLIND_US(FW_BLIND_CLASS) * 1000u);
+    avr_bus_idle(&bus, FW_BLIND_NS);
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_reset(&fx.master)); /* ends the blind time (section 6.9) */
 
     read_state(5, &f);

@@ -48,11 +48,11 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] HAL for tinyAVR 0/1/2-series (`PORTx`/`VPORTx`, `PINnCTRL`).
 - [x] Automatic HAL selection from the compiler device macro.
 - [x] Public API: init, event buffer write with `MORE`, `STATUS_CAPTURE` callback, command callback, static `SLAVE_INFO`, live state.
-- [x] Compile-time buffer sizes; `SLAVE_INFO` byte 2; ignore oversized commands.
+- [x] Compile-time buffer sizes; ignore oversized commands.
 - [x] Event buffer and state as independent build options.
 - [x] Protect buffer writes against the ISR (atomic access, refuse writes during transmission).
-- [x] Speed class in `SLAVE_INFO` byte 3 (`speed_class` in the configuration, [§1.5](docs/spec/01-physical-layer.md#15-speed-classes)).
-- [x] Blind sections after a command: blind class in `SLAVE_INFO` byte 3, `hubus_slave_blind_begin()`/`hubus_slave_blind_end()` with resynchronization, waiting and deferred readback in hubusd ([§7.8](docs/spec/07-slave.md#78-blind-sections), [§6.9](docs/spec/06-operation.md#69-blind-time-after-a-command)).
+- [x] Speed class in `SLAVE_INFO` byte 0 (`speed_class` in the configuration, [§1.5](docs/spec/01-physical-layer.md#15-speed-classes)).
+- [x] Blind sections after a command: `has_blind_time`, `hubus_slave_blind_begin()`/`hubus_slave_blind_end()` with resynchronization, waiting and deferred readback in hubusd ([§7.8](docs/spec/07-slave.md#78-blind-sections), [§6.9](docs/spec/06-operation.md#69-blind-time-after-a-command)).
 - [x] Flash/RAM budget for the ATtiny85 reference build, checked with `avr-size` ([slave library](docs/slave-library.md#optional-parts)).
 - [x] Run in simavr against the real master and measure ISR cycles, edge response, and stack depth (`test/avr/`, [AVR tests](docs/development.md#avr-tests); input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, and the buffer sizes of 128 B RAM devices, [open issues](docs/project/open-issues.md)).
 - [ ] Run the examples in simavr as well (they sleep in the main loop) and the updater (`SPM`).
@@ -114,7 +114,7 @@ Documentation: [hubusd](docs/daemon.md).
 
 ## 11. Firmware Update
 
-- [x] Specification: capability bits 3 and 4, update opcodes, updater information, info page ([§6.8](docs/spec/06-operation.md#68-firmware-update)).
+- [x] Specification: update opcodes, updater information, info page ([§6.8](docs/spec/06-operation.md#68-firmware-update)).
 - [x] Slave library option `HUBUS_ENABLE_UPDATE`: hand-over to the updater.
 - [x] Updater for classic tinyAVR (ATtiny85, 2 KB at the end of flash).
 - [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of the master example.
@@ -124,13 +124,17 @@ Documentation: [hubusd](docs/daemon.md).
 
 ## 12. Master Modules and Hardware Identifier
 
-Specification draft: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10](docs/spec/06-operation.md#610-master-modules). Until the code follows, it keeps the [previous layout](docs/project/decisions.md#implementation-status).
+Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10](docs/spec/06-operation.md#610-master-modules).
 
 - [x] Specification and glossary.
-- [ ] Central table of HWID types.
-- [ ] Slave library and core: `SLAVE_INFO` byte 0 and HWID, short and full form, serial number from EEPROM or signature row; no capability bits, command size, or blind class on the bus.
-- [ ] Updater: HWID type `0xFF` with the updater information.
+- [x] Central [table of HWID types](docs/hwid-types.md).
+- [x] Slave library and core: `SLAVE_INFO` byte 0 and HWID, short and full form, optional serial number from RAM; no capability bits, command size, or blind class on the bus.
+- [x] Updater: HWID type `0xFF` with the updater information, including its command size.
 - [x] Typed module interface, validation, and selection by match rules (`master/hubus_module.h`, [master library](docs/master-library.md#master-modules)).
-- [ ] Master: load plugins, take modules into operation, report unknown and invalid HWIDs and conflicts, update support and blind times (optionally per opcode) from the module.
-- [ ] hubusd: modules instead of the device type byte and the capabilities, entities from the module for the topics and the discovery.
-- [ ] Examples, tests, and their documentation.
+- [x] Master library: firmware update by the HWID.
+- [x] hubusd: modules selected by the HWID; command size, state, status capture, and blind times per opcode from the module; slaves without a module get no commands.
+- [x] Examples and tests.
+- [ ] Load modules as plugins (`dlopen`, module directory, checks at the start); the example modules are linked into hubusd until then.
+- [ ] hubusd: topics and discovery from the entities of the module, replacing the profiles and their match by the type byte.
+- [ ] Functions of a module (`create`, `on_frame`, `on_set`) outside the bus thread.
+- [ ] Report conflicts between modules at load time.

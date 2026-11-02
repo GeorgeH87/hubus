@@ -183,11 +183,14 @@ static void test_blind_section_ending_anywhere_in_foreign_traffic(void)
 /* Without the resync the stale levels turn the first DATA change into a START: the danger the function exists for. */
 static void test_stale_levels_after_a_blind_section_misread_a_frame(void)
 {
+    static const uint8_t hwid[] = {0x05};
     hubus_slave_core_t c;
     hubus_core_config_t cfg;
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 33;
+    cfg.hwid = hwid;
+    cfg.hwid_len = sizeof hwid;
     TEST_ASSERT_TRUE(hubus_core_init(&c, &cfg, 1, 1)); /* last seen: the STOP, CLK and DATA high */
     /* back in the middle of a frame, CLK high with a 1 bit on DATA */
     hubus_core_pins(&c, 1, 0);
@@ -237,16 +240,16 @@ static void test_pending_slave_announces_after_the_reset_that_ends_the_blind_tim
     TEST_ASSERT_EQUAL_UINT8(0x34, fx.log[0].first);
 }
 
-/* A pending slave with a blind class does not announce itself after a command addressed to it: the announcement would
+/* A pending slave with a blind time does not announce itself after a command addressed to it: the announcement would
  * hold DATA low and keep it from going blind in time. The next transaction, or the RESET that ends the blind time,
  * brings the announcement back. */
-static void test_pending_slave_with_a_blind_class_keeps_quiet_after_a_command(void)
+static void test_pending_slave_with_a_blind_time_keeps_quiet_after_a_command(void)
 {
     hubus_burst_stats_t st;
     unsigned victim = fx_add_full(&fx, 33, 0, 33, 0);
     hubus_slave_core_t *c = &fx.core[victim];
 
-    c->timing = (uint8_t)(3u << HUBUS_BLIND_CLASS_SHIFT);
+    c->has_blind_time = 1;
     fx_startup(&fx);
 
     /* data written after the command */
@@ -276,8 +279,8 @@ static void test_pending_slave_with_a_blind_class_keeps_quiet_after_a_command(vo
     TEST_ASSERT_EQUAL_UINT(1, st.served);
     TEST_ASSERT_EQUAL_UINT8(0x36, fx.log[0].first);
 
-    /* without a blind class the slave announces right after the command */
-    c->timing = 0;
+    /* without a blind time the slave announces right after the command */
+    c->has_blind_time = 0;
     fx_write(&fx, victim, 0x37);
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, 6, 33, 0x21, NULL, 0));
     TEST_ASSERT_EQUAL_UINT8(0, fx.sim.data);
@@ -294,7 +297,7 @@ static void test_foreign_transaction_ends_the_quiet_phase_of_a_pending_slave(voi
     hubus_slave_core_t *c = &fx.core[victim];
 
     fx_add_full(&fx, 12, 0, 12, 1);
-    c->timing = (uint8_t)(3u << HUBUS_BLIND_CLASS_SHIFT);
+    c->has_blind_time = 1;
     fx_startup(&fx);
 
     fx_write(&fx, victim, 0x36);
@@ -366,7 +369,7 @@ int main(void)
     RUN_TEST(test_blind_section_ending_anywhere_in_foreign_traffic);
     RUN_TEST(test_stale_levels_after_a_blind_section_misread_a_frame);
     RUN_TEST(test_pending_slave_announces_after_the_reset_that_ends_the_blind_time);
-    RUN_TEST(test_pending_slave_with_a_blind_class_keeps_quiet_after_a_command);
+    RUN_TEST(test_pending_slave_with_a_blind_time_keeps_quiet_after_a_command);
     RUN_TEST(test_foreign_transaction_ends_the_quiet_phase_of_a_pending_slave);
     RUN_TEST(test_no_blind_section_while_the_slave_drives_data);
     RUN_TEST(test_resync_of_a_disabled_core_does_nothing);

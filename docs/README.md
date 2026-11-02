@@ -6,6 +6,7 @@
 |---|---|
 | [Overview](overview.md) | Goals, design principles, system model, the protocol at a glance |
 | [Glossary](glossary.md) | Short definitions of the terms used everywhere |
+| [Hardware identifier types](hwid-types.md) | The central table of device types |
 | **Specification** | normative, one chapter per layer |
 | [1. Physical layer](spec/01-physical-layer.md) | Lines, logic levels, bit transfer, timing parameters, nodes |
 | [2. Line conditions](spec/02-line-conditions.md) | START, STOP, RESET, idle bus, back-to-back transactions |

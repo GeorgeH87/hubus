@@ -32,9 +32,8 @@
 #error "build the passive sensor with HUBUS_ENABLE_EVENTS=0 and HUBUS_ENABLE_STATE=1"
 #endif
 
-/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
-#define DEVICE_TYPE_TEMPERATURE 0x03
-static const uint8_t info[] PROGMEM = {DEVICE_TYPE_TEMPERATURE, 0x01, 0x00, 0x00, 0x00, 0x08};
+/* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
+static const uint8_t hwid[] PROGMEM = {0x83, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08};
 
 static volatile uint8_t state[2]; /* live state for REQUEST_STATE: raw ADC value, big endian */
 
@@ -65,8 +64,8 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = 0x08,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
         .state = state,
         .state_len = sizeof state,
         .on_command = 0,

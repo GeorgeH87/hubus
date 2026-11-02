@@ -21,7 +21,7 @@ typedef struct {
     uint8_t last_args[HUBUS_MAX_PAYLOAD];
     uint8_t last_len;
     uint8_t status;
-    uint8_t info[4];
+    uint8_t hwid[5]; /* full form with a 1-byte serial number */
     volatile uint8_t state[4]; /* live state exposed for REQUEST_STATE (if state_len > 0) */
 } fx_app_t;
 
@@ -91,10 +91,9 @@ static inline unsigned fx_add_full(fx_t *fx, uint8_t mcid, int capture, uint8_t 
     TEST_ASSERT_TRUE(idx < FX_MAX_SLAVES);
     fx->app[idx].core = &fx->core[idx];
     fx->app[idx].status = (uint8_t)(0x40 + mcid);
-    fx->app[idx].info[0] = 0xD0;
-    fx->app[idx].info[1] = 0x01;
-    fx->app[idx].info[2] = 0x00;
-    fx->app[idx].info[3] = serial;
+    fx->app[idx].hwid[0] = 0xF0;
+    fx->app[idx].hwid[1] = 0x01;
+    fx->app[idx].hwid[HUBUS_HWID_SERIAL] = serial;
     {
         unsigned k;
 
@@ -104,8 +103,8 @@ static inline unsigned fx_add_full(fx_t *fx, uint8_t mcid, int capture, uint8_t 
     }
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
-    cfg.info = fx->app[idx].info;
-    cfg.info_len = sizeof fx->app[idx].info;
+    cfg.hwid = fx->app[idx].hwid;
+    cfg.hwid_len = sizeof fx->app[idx].hwid;
     cfg.on_status_capture = capture ? fx_on_capture : NULL;
     cfg.on_command = fx_on_command;
     cfg.state = state_len ? fx->app[idx].state : NULL;

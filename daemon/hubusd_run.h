@@ -13,6 +13,8 @@ typedef struct {
     void (*poll_hook)(void *ctx, hubusd_t *d); /* called once per loop iteration (may be NULL) */
     void *poll_ctx;
     int verbose;                             /* also print info messages */
+    const hubus_module_t *const *modules;    /* NULL: the built-in modules */
+    size_t n_modules;
 } hubusd_run_opts_t;
 
 /* Returns the process exit code. `cfg` must already be validated. */

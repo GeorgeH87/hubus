@@ -13,7 +13,7 @@
  *
  * Commands are never acknowledged, and this slave has nothing the master
  * could read back. The master therefore keeps the state it commanded in its
- * cache: hubusd sees in SLAVE_INFO that the slave has neither a state nor
+ * cache: hubusd knows from its module that the slave has neither a state nor
  * STATUS_CAPTURE and publishes the commanded state (readback `cache`). A
  * command that did not arrive stays unnoticed; that is the price of this build.
  * Use slave-relay (state readable with REQUEST_STATE) where it matters.
@@ -36,9 +36,8 @@
 #define OP_SET 0x10
 #define OP_TOGGLE 0x11
 
-/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
-#define DEVICE_TYPE_RELAY 0x01
-static const uint8_t info[] PROGMEM = {DEVICE_TYPE_RELAY, 0x01, 0x00, 0x00, 0x00, 0x04};
+/* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
+static const uint8_t hwid[] PROGMEM = {0x81, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04};
 
 static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t len)
 {
@@ -58,8 +57,8 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = 0x04,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
         .on_command = on_command,
         .ctx = 0,
     };

@@ -2,8 +2,6 @@
 
 Interrupt-driven HUBUS slave for tinyAVR microcontrollers, in `slave/`. The protocol logic lives in the hardware-independent core (`core/hubus_slave_core.c`, shared with the master and the host tests) and follows [§7](spec/07-slave.md); `slave/` adds the public API and one small hardware abstraction layer (HAL) per device family.
 
-*This page describes the current code, which still uses the previous `SLAVE_INFO` layout, not yet the hardware identifier of [§4.7](spec/04-frames.md#47-slave-info-slave_info) ([implementation status](project/decisions.md#implementation-status)).*
-
 ## Usage
 
 ```c
@@ -11,7 +9,8 @@ Interrupt-driven HUBUS slave for tinyAVR microcontrollers, in `slave/`. The prot
 #include <avr/pgmspace.h>
 #include "hubus_slave.h"
 
-static const uint8_t info[] PROGMEM = {0x01 /* device type */, 0x01 /* firmware */, 0x00, 0x00, 0x00, 0x2A /* serial */};
+static const uint8_t hwid[] PROGMEM = {0x81 /* type */, 0x01 /* variant */, 0x01 /* version */, 0x00 /* revision */,
+                                       0x00, 0x00, 0x00, 0x2A /* serial number */};
 
 static void on_status_capture(void *ctx)
 {
@@ -27,7 +26,7 @@ static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t l
 int main(void)
 {
     static const hubus_slave_config_t cfg = {
-        .mcid = 3, .info = info, .info_len = sizeof info,
+        .mcid = 3, .hwid = hwid, .hwid_len = sizeof hwid,
         .on_status_capture = on_status_capture, .on_command = on_command,
     };
     hubus_slave_init(&cfg);                    /* pin change interrupts for CLK and DATA */
@@ -42,7 +41,7 @@ int main(void)
 
 | Function | Purpose |
 |---|---|
-| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, more than 27 info bytes, a state longer than 31 bytes, or a speed or blind class above 15. |
+| `hubus_slave_init(cfg)` | Configures the pins, starts the protocol engine, and enables the pin change interrupts. Global interrupts are left to the application: it calls `sei()` after its own setup. Returns 0, and the slave stays silent, for an MCID outside `1..63`, a missing HWID or one longer than 30 bytes, a state longer than 31 bytes, or a speed class above 15. |
 | `hubus_slave_write(data, len, more)` | Writes the event buffer: overwrites unread content, increments `GEN`, sets the pending flag, and announces the data ([§4.8](spec/04-frames.md#48-event-buffer), [§6.1](spec/06-operation.md#61-idle-event-handshake)). `more = 1` marks a fragment followed by more ([§4.11](spec/04-frames.md#411-fragments)). Returns `HUBUS_WRITE_OK`, `HUBUS_WRITE_TOO_LONG`, `HUBUS_WRITE_BUSY` (the buffer is being transmitted, [§3.6](spec/03-transactions.md#36-transaction-end-and-buffer-clearing); retry later), or `HUBUS_WRITE_DISABLED` (init failed). Safe from the main loop and from callbacks. |
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
 | `hubus_slave_blind_begin()`, `hubus_slave_blind_end()` | Frame a blind section ([§7.8](spec/07-slave.md#78-blind-sections)): code that has to run with all interrupts disabled for longer than the speed class allows. `begin` returns 1 with interrupts disabled, or 0 while the slave drives `DATA` or owes an answer (try again). `end` resynchronizes with the current pin levels and enables interrupts again. Main loop only, with interrupts enabled. |
@@ -56,13 +55,14 @@ Configuration (`hubus_slave_config_t`):
 | Field | Meaning |
 |---|---|
 | `mcid` | `1..63`, unique on the bus ([§7.2](spec/07-slave.md#72-mcid)) |
-| `info`, `info_len` | Application bytes of `SLAVE_INFO`, in flash (`PROGMEM`), 0..27 bytes; include a device-unique value ([§4.7](spec/04-frames.md#47-slave-info-slave_info)) |
+| `hwid`, `hwid_len` | Hardware identifier in `SLAVE_INFO`, in flash (`PROGMEM`), `1..30` bytes: the type alone in the short form, or type, variant, version, hardware revision, and an optional serial number in the full form ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)) |
+| `serial`, `serial_len` | With `HUBUS_ENABLE_SERIAL`: a serial number in RAM, sent after `hwid` and counted in its 30 bytes. The application reads it before `hubus_slave_init()`, for example from EEPROM or the signature row. |
 | `state`, `state_len` | Live state for `REQUEST_STATE`: RAM the application keeps up to date, read while transmitting, 1..31 bytes; `NULL` for no state ([§4.10](spec/04-frames.md#410-state)) |
-| `on_status_capture` | Writes the current status with `hubus_slave_write()`; `NULL`: `STATUS_CAPTURE` not supported (capability bit 0 cleared) |
+| `on_status_capture` | Writes the current status with `hubus_slave_write()`; `NULL`: `STATUS_CAPTURE` not supported; its module has to say the same |
 | `on_command` | Application commands, opcodes `0x10..0xFF`; may be `NULL` |
 | `ctx` | Passed to the callbacks |
-| `speed_class` | Speed class `0..15` of this firmware, announced in `SLAVE_INFO` byte 3; `0` (default): not declared ([§1.5](spec/01-physical-layer.md#15-speed-classes)) |
-| `blind_class` | Blind class `0..15`: the longest blind section after a command, announced in `SLAVE_INFO` byte 3; `0` (default): never blind ([§7.8](spec/07-slave.md#78-blind-sections)) |
+| `speed_class` | Speed class `0..15` of this firmware, announced in `SLAVE_INFO` byte 0; `0` (default): not declared ([§1.5](spec/01-physical-layer.md#15-speed-classes)) |
+| `has_blind_time` | `1`: the firmware may be blind after a command, for the time its module states, and keeps quiet until the next START or RESET; `0` (default): never blind ([§7.8](spec/07-slave.md#78-blind-sections)) |
 
 - The speed class depends on the whole firmware, not only on the device: the longest interrupt handler or interrupt-disabled section of the application adds to the library's own response time. Declare the highest class whose edge response time the firmware meets in every situation.
 - A blind section does not count toward the speed class. It is the place for timing-critical code after a command, such as sending a WS2812 frame:
@@ -75,7 +75,7 @@ Configuration (`hubus_slave_config_t`):
   hubus_slave_blind_end();
   ```
 
-  The section must end within the blind time of `blind_class`, counted from the STOP of the command, and it must not depend on further bus traffic. Code that is short enough for the speed class needs no blind section. With a blind class the slave does not announce pending data between a command and the next START or RESET, so that an announcement cannot hold up the blind section ([§7.8](spec/07-slave.md#78-blind-sections)).
+  The section must end within the blind time its module states, counted from the STOP of the command, and it must not depend on further bus traffic. Code that is short enough for the speed class needs no blind section. With `has_blind_time` the slave does not announce pending data between a command and the next START or RESET, so that an announcement cannot hold up the blind section ([§7.8](spec/07-slave.md#78-blind-sections)).
 - An interruptible section is the alternative for work that repeats on its own, without a command, such as the frames of an animation. The slave is never blind: before each piece the code checks for a waiting edge, and gives up the rest of the work when one arrives. The longest piece adds to the response time and counts toward the speed class; nothing is announced to the master.
 
   ```c
@@ -99,12 +99,12 @@ The event buffer and the state ([§7.4](spec/07-slave.md#74-optional-parts)) are
 
 | `HUBUS_ENABLE_EVENTS` | `HUBUS_ENABLE_STATE` | Device | Flash / RAM (bytes) |
 |---|---|---|---:|
-| 1 | 1 | push button with readable inputs | 1930 / 97 |
-| 1 | 0 | event source only | 1830 / 94 |
-| 0 | 1 | sensor that is only read, relay with readback | 1434 / 58 |
-| 0 | 0 | relay without feedback (the master caches its state) | 1354 / 55 |
+| 1 | 1 | push button with readable inputs | 1906 / 100 |
+| 1 | 0 | event source only | 1842 / 97 |
+| 0 | 1 | sensor that is only read, relay with readback | 1420 / 59 |
+| 0 | 0 | relay without feedback (the master caches its state) | 1360 / 56 |
 
-The event buffer costs about 500 bytes of flash and 39 bytes of RAM (including the capture and write code of the reference firmware), the state about 100 bytes of flash and 3 bytes of RAM.
+The event buffer costs about 490 bytes of flash and 41 bytes of RAM (including the capture and write code of the reference firmware), the state about 60 bytes of flash and 3 bytes of RAM.
 
 ## Examples
 
@@ -119,7 +119,7 @@ The event buffer costs about 500 bytes of flash and 39 bytes of RAM (including t
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
 | `slave-ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
 
-The device types in their `SLAVE_INFO` (1 relay, 2 switch, 3 temperature) match the built-in profiles of [hubusd](daemon.md#device-profiles). The LED strip (type 4) uses a custom profile for its button. The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
+Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#device-profiles); the types `0x81` relay, `0x82` switch, and `0x83` temperature also select a built-in profile. The LED strip (`0x84`) uses a custom profile for its button. The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
 
 ## Configuration
 
@@ -134,7 +134,8 @@ Build options, set on the compiler command line; the CMake build takes them as c
 | `HUBUS_ENABLE_UPDATE` | Switch to the updater on `UPDATE_ENTER`: `0` (default) or `1`; needs `HUBUS_UPDATER_ADDR` and an installed updater ([firmware update](#firmware-update)) |
 | `HUBUS_UPDATER_ADDR` | Byte address of the updater, `0x1800` on the ATtiny85 (CMake cache variable of the same name) |
 | `HUBUS_TX_BUF_SIZE` | Event buffer size, `1..31`, default 31 (20 on 128 B RAM devices with the event buffer) |
-| `HUBUS_RX_BUF_SIZE` | Largest accepted command payload including the opcode, `1..31`, default 31 (20 on 128 B RAM devices with the event buffer); announced in `SLAVE_INFO` byte 2. Longer commands are received to the end and ignored ([§4.4](spec/04-frames.md#44-command-opcodes)). |
+| `HUBUS_RX_BUF_SIZE` | Largest accepted command payload including the opcode, `1..31`, default 31 (20 on 128 B RAM devices with the event buffer); its module has to state the same. Longer commands are received to the end and ignored ([§4.4](spec/04-frames.md#44-command-opcodes)). |
+| `HUBUS_ENABLE_SERIAL` | `1`: `serial` and `serial_len` in the configuration; default `0` |
 | `HUBUS_CLK_PCGROUP`, `HUBUS_DATA_PCGROUP` | Pin change group of a pin on classic devices the HAL does not know (see below) |
 
 `DATA` needs an external pull-up to 3.3 V ([§1.1](spec/01-physical-layer.md#11-bus-lines)); the library never enables internal pull-ups.
@@ -149,7 +150,7 @@ A slave can receive new firmware over the bus if it carries the updater ([§6.8]
 | `0x17C0..0x17FF` | info page: length, CRC-16, and entry of the application |
 | `0x1800..0x1FFF` | updater (`updater/`, 2006 bytes) |
 
-**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and `HUBUS_UPDATER_ADDR=0x1800`, and keep it below `0x17C0`; nothing else changes in the firmware. The library then announces capability bit 3 and jumps to the updater on `UPDATE_ENTER`, with the MCID handed over in `GPIOR1`. This costs about 60 bytes of flash. Without an updater at that address the command is ignored. `example_switch_update` is the switch built this way, with a check that it fits.
+**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and `HUBUS_UPDATER_ADDR=0x1800`, and keep it below `0x17C0`; the firmware only needs a HWID whose module states the update support. The library then jumps to the updater on `UPDATE_ENTER`, with the MCID handed over in `GPIOR1`. This costs about 60 bytes of flash. Without an updater at that address the command is ignored. `example_switch_update` is the switch built this way, with a check that it fits.
 
 **Updater.** `build/avr-attiny85/updater/hubus_updater.hex`, linked to `0x1800`. It runs without interrupts, starts the application at reset if the info page checks out (a CRC-16 over the application, about 30 ms at 8 MHz), and otherwise waits for the master. Its MCID comes from the application and is kept in the last EEPROM byte; before an application has stored one, the build option `HUBUS_UPDATER_MCID` (default 63) applies. The application must not use that EEPROM byte.
 

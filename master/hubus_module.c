@@ -13,10 +13,10 @@ hubus_hwid_form_t hubus_hwid_form(const uint8_t *hwid, uint8_t len)
     if (len == 0u || len > HUBUS_HWID_MAX_LEN || hwid[0] == 0x00u) {
         return HUBUS_HWID_INVALID;
     }
-    if (hwid[0] == 0xFFu) {
+    if (hwid[0] == HUBUS_HWID_TYPE_UPDATER) {
         return len == HUBUS_HWID_UPDATER_LEN ? HUBUS_HWID_UPDATER : HUBUS_HWID_INVALID;
     }
-    if (hwid[0] < 0x80u) {
+    if (hwid[0] < HUBUS_HWID_TYPE_FULL_MIN) {
         return len == 1u ? HUBUS_HWID_SHORT : HUBUS_HWID_INVALID;
     }
     return len >= HUBUS_HWID_FULL_MIN_LEN ? HUBUS_HWID_FULL : HUBUS_HWID_INVALID;
@@ -30,7 +30,7 @@ static bool rule_valid(const hubus_module_rule_t *r)
     if (r->len == 0u || r->len > HUBUS_RULE_MAX_LEN || type == 0x00u || r->mask[0] != 0xFFu) {
         return false; /* a rule always names a whole type */
     }
-    if ((type < 0x80u || type == 0xFFu) && r->len != 1u) {
+    if ((type < HUBUS_HWID_TYPE_FULL_MIN || type == HUBUS_HWID_TYPE_UPDATER) && r->len != 1u) {
         return false; /* the short form and the updater have no fields a rule could cover */
     }
     for (i = 0; i < r->len; i++) {
@@ -216,6 +216,28 @@ hubus_module_match_t hubus_module_select(const hubus_module_t *const *modules, s
     }
     *out = best;
     return HUBUS_MODULE_FOUND;
+}
+
+hubus_module_match_t hubus_module_select_info(const hubus_module_t *const *modules, size_t n_modules,
+                                              const uint8_t *payload, uint8_t len, const hubus_module_t **out)
+{
+    *out = NULL;
+    if (len <= HUBUS_INFO_HWID || HUBUS_INFO_VERSION(payload[HUBUS_INFO_BYTE0]) != HUBUS_PROTOCOL_VERSION) {
+        return HUBUS_MODULE_INVALID;
+    }
+    return hubus_module_select(modules, n_modules, &payload[HUBUS_INFO_HWID], (uint8_t)(len - HUBUS_INFO_HWID), out);
+}
+
+bool hubus_module_has_blind_time(const hubus_module_t *m)
+{
+    uint8_t i;
+
+    for (i = 0; i < m->n_blind_ops; i++) {
+        if (m->blind_ops[i].ms != 0u) {
+            return true;
+        }
+    }
+    return m->blind_default_ms != 0u;
 }
 
 uint16_t hubus_module_blind_ms(const hubus_module_t *m, uint8_t opcode)

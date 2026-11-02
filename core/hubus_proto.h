@@ -36,28 +36,27 @@
 #define HUBUS_OP_RESERVED_MAX 0x0Fu /* 0x01..0x0F reserved for protocol use */
 #define HUBUS_OP_APP_MIN 0x10u
 
-/* SLAVE_INFO layout. */
-#define HUBUS_INFO_VERSION 0u
-#define HUBUS_INFO_CAPS 1u
-#define HUBUS_INFO_MAX_CMD 2u
-#define HUBUS_INFO_TIMING 3u /* speed class and blind class */
-#define HUBUS_INFO_APP 4u
-#define HUBUS_CAP_STATUS_CAPTURE 0x01u
-#define HUBUS_CAP_STATE 0x02u /* answers REQUEST_STATE */
-#define HUBUS_CAP_EVENTS 0x04u /* has an event buffer: announces events and answers REQUEST_DATA */
-#define HUBUS_CAP_UPDATE 0x08u  /* application that switches to its updater on UPDATE_ENTER */
-#define HUBUS_CAP_UPDATER 0x10u /* this is the updater: takes the update commands */
-/* Byte 3, bits 3..0: speed class, the edge response time the firmware guarantees (docs/spec/01-physical-layer.md
- * section 1.5); 0 = not declared, 1..15 = slowest..fastest. */
+/* SLAVE_INFO layout (docs/spec/04-frames.md section 4.7): byte 0, then the hardware identifier up to the end. */
+#define HUBUS_INFO_BYTE0 0u
+#define HUBUS_INFO_HWID 1u
+#define HUBUS_HWID_MAX_LEN (HUBUS_MAX_PAYLOAD - HUBUS_INFO_HWID)
+/* Byte 0: bits 7..4 protocol version, bits 3..0 speed class, the edge response time the firmware guarantees
+ * (docs/spec/01-physical-layer.md section 1.5); 0 = not declared, 1..15 = slowest..fastest. */
+#define HUBUS_INFO_VERSION_SHIFT 4u
 #define HUBUS_SPEED_CLASS_MASK 0x0Fu
 #define HUBUS_SPEED_CLASS_MAX 15u
-/* Byte 3, bits 7..4: blind class, how long the slave may ignore the bus after a command addressed to it
- * (docs/spec/07-slave.md section 7.8); 0 = never blind, 1..15 = at most 250 us * 2^(class - 1). */
-#define HUBUS_BLIND_CLASS_SHIFT 4u
-#define HUBUS_BLIND_CLASS_MAX 15u
-#define HUBUS_BLIND_CLASS(info3) ((uint8_t)((uint8_t)(info3) >> HUBUS_BLIND_CLASS_SHIFT))
-/* Upper bound of the blind time of a class in microseconds, 0 for class 0. */
-#define HUBUS_BLIND_US(cls) ((cls) ? 250uL << ((cls) - 1u) : 0uL)
+#define HUBUS_INFO_VERSION(byte0) ((uint8_t)((uint8_t)(byte0) >> HUBUS_INFO_VERSION_SHIFT))
+#define HUBUS_INFO_SPEED_CLASS(byte0) ((uint8_t)((byte0) & HUBUS_SPEED_CLASS_MASK))
+
+/* Hardware identifier: the type decides which fields follow. Offsets from the first byte of the HWID. */
+#define HUBUS_HWID_TYPE 0u
+#define HUBUS_HWID_VARIANT 1u
+#define HUBUS_HWID_VERSION 2u
+#define HUBUS_HWID_REVISION 3u
+#define HUBUS_HWID_SERIAL 4u
+#define HUBUS_HWID_FULL_MIN_LEN HUBUS_HWID_SERIAL /* type, variant, version, hardware revision */
+#define HUBUS_HWID_TYPE_FULL_MIN 0x80u            /* 0x01..0x7F: short form, the type byte alone */
+#define HUBUS_HWID_TYPE_UPDATER 0xFFu
 
 /*
  * Firmware update (docs/spec/06-operation.md section 6.8). UPDATE_ENTER goes to the application, the other opcodes
@@ -70,7 +69,8 @@
 #define HUBUS_UPDATE_KEY0 0x55u     /* 'U' */
 #define HUBUS_UPDATE_KEY1 0x50u     /* 'P' */
 
-/* Application bytes of the updater's SLAVE_INFO (offsets from HUBUS_INFO_APP), multi-byte values big-endian. */
+/* Updater information: follows the HWID type 0xFF, multi-byte values big-endian. Offsets from the byte after 0xFF. */
+#define HUBUS_UPD_INFO_START (HUBUS_INFO_HWID + 1u) /* in the SLAVE_INFO payload */
 #define HUBUS_UPD_INFO_SIGNATURE 0u    /* 3 bytes: device signature */
 #define HUBUS_UPD_INFO_PAGE 3u         /* flash page size in bytes, 0 = 256 */
 #define HUBUS_UPD_INFO_APP_START 4u    /* 2 bytes: first byte of the application area */
@@ -79,7 +79,9 @@
 #define HUBUS_UPD_INFO_FLAGS 9u
 #define HUBUS_UPD_INFO_UPDATER 10u     /* 2 bytes: byte address of the updater */
 #define HUBUS_UPD_INFO_VERSION 12u     /* updater version */
-#define HUBUS_UPD_INFO_LEN 13u
+#define HUBUS_UPD_INFO_MAX_CMD 13u     /* largest accepted command payload including the opcode */
+#define HUBUS_UPD_INFO_LEN 14u
+#define HUBUS_HWID_UPDATER_LEN (1u + HUBUS_UPD_INFO_LEN)
 #define HUBUS_UPD_FLAG_RESET_VECTOR 0x01u /* word 0 of the application area is RJMP to the updater */
 
 /* State of the updater: result of the last UPDATE_WRITE, its address, and a counter of executed writes. */

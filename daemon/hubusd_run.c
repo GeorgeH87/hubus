@@ -155,6 +155,9 @@ int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const 
     iface.ctx = &mq;
     iface.publish = mq_publish;
     hubusd_init(d, cfg, hal, iface, clk);
+    if (opts->modules) {
+        hubusd_set_modules(d, opts->modules, opts->n_modules);
+    }
     mq.d = d;
     hubusd_set_logger(d, log_to_stderr, (void *)opts);
 

@@ -2,8 +2,6 @@
 
 One ATtiny85 with two jobs: it drives a WS2812B LED strip that the master controls over HUBUS, and it reports a push button to the master. The firmware is `examples/slave-ledstrip/ledstrip_example.c`, the animation interpreter `examples/slave-ledstrip/ledvm.c`.
 
-*This page describes the current code, which still announces its blind class in the previous `SLAVE_INFO` layout ([implementation status](project/decisions.md#implementation-status)).*
-
 The slave keeps a raw frame buffer, which the master controls in one of two ways:
 
 - **Fixed frame.** The master writes bytes into the buffer and tells the slave to send it to the strip once.
@@ -132,7 +130,7 @@ The animation pauses while the master is busy on the bus. A frame that was given
 
 Every slave counts the program time with its own oscillator, so strips with the same program drift apart. `PROG_RUN` or `TIME` to a group sets the program time of every strip in it at once; repeat `TIME` from time to time to keep them together. The group must hold LED slaves only, for example MCIDs `48..55` with the prefix `110` (`TARGET_LEN = 3`).
 
-The same holds for fixed frames: the master writes every buffer with exact addressing and then sends one `SHOW` to the group. Every strip in the group is blind afterwards; hubusd waits for each of them according to its own blind class.
+The same holds for fixed frames: the master writes every buffer with exact addressing and then sends one `SHOW` to the group. Every strip in the group is blind afterwards; hubusd waits for each of them according to its own module.
 
 ## Timing
 
@@ -151,9 +149,9 @@ if (show_req && strip_ready() && hubus_slave_blind_begin()) {   /* 0 while the s
 }
 ```
 
-The firmware announces the blind time in `SLAVE_INFO`: the blind class is computed from `LED_BYTES` as the smallest class that covers `LED_BYTES × 12.5 µs + 1.5 ms` (the frame, the reset time of the strip, and the wait for the slave to be free), class 5 (4 ms) for the default 180 bytes. The master does not address the slave for that time after every command to it; the other slaves are served meanwhile ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)). After the section the slave takes the current pin levels as its reference and waits for the next START, so the traffic it missed cannot confuse it. A pending button event is not announced in the meantime: it would hold `DATA` low and delay the section ([§7.8](spec/07-slave.md#78-blind-sections)).
+The module states the blind time of `SHOW`: it covers `LED_BYTES × 12.5 µs + 1.5 ms` (the frame, the reset time of the strip, and the wait for the slave to be free), 4 ms for the default 180 bytes; the firmware refuses to build with a larger strip until the module is adapted. The master does not address the slave for that time after a `SHOW`; the other slaves are served meanwhile ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)). After the section the slave takes the current pin levels as its reference and waits for the next START, so the traffic it missed cannot confuse it. A pending button event is not announced in the meantime: it would hold `DATA` low and delay the section ([§7.8](spec/07-slave.md#78-blind-sections)).
 
-The blind class applies to every command, also to those that do not make the slave blind: the master cannot tell the opcodes apart. That costs a few milliseconds per command, against about 28 ms for a full `WRITE` on the bus.
+Only `SHOW` makes the strip blind, so the other commands cost no waiting time: the module states the blind time per opcode. The slave still keeps quiet after every command, and the master ends that phase with its next transaction or a RESET ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)).
 
 With the default timing (100 µs clock period, [hubusd timing](daemon.md#timing)) a `WRITE` with 28 data bytes takes about 28 ms on the bus. A full frame for 60 LEDs is seven writes and a `SHOW`, about 0.25 s with the blind times, so about four full frames per second. A solid colour is one `FILL` and one `SHOW`, about 25 ms. A faster bus clock speeds up the transfers in proportion. A program needs none of this: once it runs, the bus carries only parameter changes.
 
@@ -167,7 +165,7 @@ ATtiny85, `LED_BYTES` 180, event buffer reduced to 3 bytes (`HUBUS_TX_BUF_SIZE=3
 
 ## Master Side
 
-The master needs no protocol changes and no changes to the master library: the commands are ordinary `SEND_COMMAND` frames, and the button uses the regular event path. hubusd reads the blind class from `SLAVE_INFO` and waits by itself ([hubusd](daemon.md#slaves-that-are-blind-after-a-command)); nothing has to be configured for it.
+The master needs no protocol changes and no changes to the master library: the commands are ordinary `SEND_COMMAND` frames, and the button uses the regular event path. hubusd reads the blind time from the module of the strip and waits by itself ([hubusd](daemon.md#slaves-that-are-blind-after-a-command)); nothing has to be configured for it.
 
 With the default `readback: slave`, hubusd reads the state back after every command once the blind time is over; after a `SHOW` the state carries its `seq`, which confirms that the frame was sent, and after a `PROG_RUN` byte 2 says whether the program runs. `readback: none` saves that state read when the confirmation is not needed.
 
@@ -196,7 +194,7 @@ The button appears in Home Assistant with a custom profile:
 profiles:
   ledstrip:
     component: binary_sensor
-    device_type: 0x04
+    device_type: 0x84
     byte_offset: 0
 slaves:
   - mcid: 11

@@ -2,7 +2,7 @@
  * HUBUS updater: writes a new application into flash over the bus (docs/spec/06-operation.md section 6.8).
  *
  * The protocol part is hardware independent and runs on the device and in the host tests. It is a slave built with
- * HUBUS_UPDATER (capability bit 4), without event buffer, with a state that reports the result of the last page
+ * HUBUS_UPDATER (HWID type 0xFF), without event buffer, with a state that reports the result of the last page
  * write. It keeps one page buffer:
  *
  *   UPDATE_LOAD  offset data...         copy into the page buffer

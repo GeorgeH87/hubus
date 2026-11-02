@@ -25,7 +25,7 @@
 typedef struct {
     uint8_t mcid;
     char name[HUBUSD_NAME_LEN];
-    char profile[HUBUSD_PROFILE_NAME_LEN]; /* empty: recognised from SLAVE_INFO, otherwise raw topics only */
+    char profile[HUBUSD_PROFILE_NAME_LEN]; /* empty: recognised from the HWID type, otherwise raw topics only */
     int readback;                          /* HUBUSD_READBACK_*, -1: use bus.readback */
     unsigned poll_interval_s;              /* read the live state (REQUEST_STATE) this often, 0: off; for slaves
                                               that only answer and never announce changes (passive sensors) */

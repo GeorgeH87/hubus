@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 void *app_core(void);                                      /* the core, for the simulation */
-uint8_t app_start(uint8_t mcid, const uint8_t *info, uint8_t info_len, uint8_t clk, uint8_t data);
+uint8_t app_start(uint8_t mcid, const uint8_t *hwid, uint8_t hwid_len, uint8_t clk, uint8_t data);
 void app_feed(uint8_t clk, uint8_t data);                  /* pin levels, like the interrupt handler */
 uint8_t app_take_update_request(void);                     /* 1 once after a valid UPDATE_ENTER */
 uint8_t app_mcid(void);

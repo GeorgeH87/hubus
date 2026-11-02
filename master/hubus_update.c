@@ -32,7 +32,6 @@ const char *hubus_update_reason_str(hubus_update_reason_t r)
 {
     switch (r) {
     case HUBUS_UPD_REASON_NONE: return "ok";
-    case HUBUS_UPD_REASON_NOT_SUPPORTED: return "slave has no firmware update";
     case HUBUS_UPD_REASON_NO_UPDATER: return "slave did not switch to its updater";
     case HUBUS_UPD_REASON_BAD_INFO: return "unusable updater info or state";
     case HUBUS_UPD_REASON_SIGNATURE: return "device signature does not match the image";
@@ -142,6 +141,11 @@ static hubus_status_t write_page(upd_t *u, uint16_t addr, const uint8_t *data)
     return fail(u, HUBUS_UPD_REASON_WRITE);
 }
 
+static int is_updater(const hubus_slave_frame_t *f)
+{
+    return f->payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE] == HUBUS_HWID_TYPE_UPDATER;
+}
+
 static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
 {
     static const uint8_t key[2] = {HUBUS_UPDATE_KEY0, HUBUS_UPDATE_KEY1};
@@ -149,20 +153,18 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
     uint8_t attempt;
     unsigned i;
 
-    /* The application answers, or the updater if the slave already runs it (after an interrupted update). */
+    /* The application answers, or the updater if the slave already runs it (after an interrupted update). Whether an
+     * application supports the update is a property of its module; one without support ignores UPDATE_ENTER. */
     for (i = 0; i < u->attempts; i++) {
-        if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_CAPS) {
+        if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_HWID) {
             break;
         }
     }
     if (i == u->attempts) {
         return fail(u, HUBUS_UPD_REASON_NO_UPDATER);
     }
-    if (f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) {
+    if (is_updater(f)) {
         return HUBUS_OK;
-    }
-    if (!(f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATE)) {
-        return fail(u, HUBUS_UPD_REASON_NOT_SUPPORTED);
     }
     /* UPDATE_ENTER is fire-and-forget: if the application still answers, it was lost and is repeated. */
     for (attempt = 0; attempt < u->attempts; attempt++) {
@@ -172,8 +174,8 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
         }
         for (i = 0; i < ENTER_TRIES; i++) {
             delay_ms(u->m, ENTER_DELAY_MS);
-            if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_CAPS) {
-                if (f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER) {
+            if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_HWID) {
+                if (is_updater(f)) {
                     return HUBUS_OK;
                 }
                 break;
@@ -200,8 +202,8 @@ static hubus_status_t leave(upd_t *u, hubus_slave_frame_t *f)
         }
         for (i = 0; i < LEAVE_TRIES; i++) {
             delay_ms(u->m, LEAVE_DELAY_MS);
-            if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_CAPS) {
-                if (!(f->payload[HUBUS_INFO_CAPS] & HUBUS_CAP_UPDATER)) {
+            if (hubus_master_request_info(u->m, u->mcid, f) == HUBUS_OK && f->len > HUBUS_INFO_HWID) {
+                if (!is_updater(f)) {
                     return HUBUS_OK;
                 }
                 break;
@@ -213,12 +215,12 @@ static hubus_status_t leave(upd_t *u, hubus_slave_frame_t *f)
 
 static hubus_status_t check_info(upd_t *u, const hubus_slave_frame_t *f)
 {
-    const uint8_t *p = &f->payload[HUBUS_INFO_APP];
+    const uint8_t *p = &f->payload[HUBUS_UPD_INFO_START];
     const uint8_t *sig = u->img->signature;
     uint16_t updater;
     uint32_t k;
 
-    if (f->len < HUBUS_INFO_APP + HUBUS_UPD_INFO_LEN || f->payload[HUBUS_INFO_MAX_CMD] < 3u) {
+    if (f->len != HUBUS_UPD_INFO_START + HUBUS_UPD_INFO_LEN || p[HUBUS_UPD_INFO_MAX_CMD] < 3u) {
         return fail(u, HUBUS_UPD_REASON_BAD_INFO);
     }
     if ((sig[0] | sig[1] | sig[2]) && memcmp(sig, &p[HUBUS_UPD_INFO_SIGNATURE], 3) != 0) {
@@ -230,7 +232,7 @@ static hubus_status_t check_info(upd_t *u, const hubus_slave_frame_t *f)
     u->write_ms = p[HUBUS_UPD_INFO_WRITE_MS];
     u->vector = (uint8_t)(p[HUBUS_UPD_INFO_FLAGS] & HUBUS_UPD_FLAG_RESET_VECTOR);
     updater = be16(&p[HUBUS_UPD_INFO_UPDATER]);
-    u->chunk = (uint8_t)(f->payload[HUBUS_INFO_MAX_CMD] - 2u); /* opcode and offset */
+    u->chunk = (uint8_t)(p[HUBUS_UPD_INFO_MAX_CMD] - 2u); /* opcode and offset */
     if (u->page < 2u || u->app_size < 2u * u->page || u->app_size % u->page || u->app_start % u->page) {
         return fail(u, HUBUS_UPD_REASON_BAD_INFO);
     }

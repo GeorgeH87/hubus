@@ -21,7 +21,8 @@ static uint8_t job;
 static uint16_t job_addr;
 static uint16_t job_crc;
 
-static const uint8_t info[HUBUS_UPD_INFO_LEN] HUBUS_UPD_FLASH_CONST = {
+static const uint8_t hwid[HUBUS_HWID_UPDATER_LEN] HUBUS_UPD_FLASH_CONST = {
+    HUBUS_HWID_TYPE_UPDATER,
     HUBUS_UPD_SIGNATURE,
     (uint8_t)HUBUS_UPD_PAGE_SIZE, /* 256 becomes 0 */
     HI(HUBUS_UPD_APP_START), LO(HUBUS_UPD_APP_START),
@@ -30,6 +31,7 @@ static const uint8_t info[HUBUS_UPD_INFO_LEN] HUBUS_UPD_FLASH_CONST = {
     HUBUS_UPD_FLAGS,
     HI(HUBUS_UPD_ADDR), LO(HUBUS_UPD_ADDR),
     HUBUS_UPD_VERSION,
+    HUBUS_RX_BUF_SIZE,
 };
 
 static uint16_t be16(const uint8_t *p)
@@ -97,8 +99,8 @@ uint8_t hubus_updater_init(uint8_t mcid, uint8_t clk, uint8_t data)
     job = HUBUS_UPD_JOB_NONE;
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
-    cfg.info = info;
-    cfg.info_len = sizeof info;
+    cfg.hwid = hwid;
+    cfg.hwid_len = sizeof hwid;
     cfg.state = state;
     cfg.state_len = HUBUS_UPD_STATE_LEN;
     cfg.on_command = on_command;

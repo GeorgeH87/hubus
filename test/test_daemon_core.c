@@ -97,7 +97,62 @@ static void assert_contains(const char *topic, const char *needle)
 
 /* ---- simulated devices (behave like the example firmware) ---------------------------- */
 
-enum { DEV_RELAY = 1, DEV_SWITCH = 2, DEV_TEMP = 3, DEV_UNKNOWN = 0x77 };
+enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97, DEV_NO_PROFILE = 0x98 };
+
+/* ---- modules of the test devices ---------------------------------------------------------------------------------- */
+
+#define VARIANT_RULE(id, type, variant) \
+    static const hubus_module_rule_t id##_rules[] = {{.pattern = {(type), (variant)}, .mask = {0xFF, 0xFF}, .len = 2}}
+#define DEVICE_MODULE(id, with_state, ...) \
+    static const hubus_module_t id = {     \
+        HUBUS_MODULE_INIT,                 \
+        .name = #id,                       \
+        .rules = id##_rules,               \
+        .n_rules = 1,                      \
+        .max_command = HUBUS_MAX_PAYLOAD,  \
+        .has_state = (with_state),         \
+        .has_events = true,                \
+        .has_status_capture = true,        \
+        __VA_ARGS__                        \
+    }
+
+enum { VARIANT_PLAIN = 1, VARIANT_STATE = 2, VARIANT_BLIND = 3, VARIANT_STATE_BLIND = 4, VARIANT_BLIND_SHOW_ONLY = 5, VARIANT_NO_READBACK = 6 };
+#define OP_BLIND_ONLY 0x42u
+
+VARIANT_RULE(relay_plain, DEV_RELAY, VARIANT_PLAIN);
+VARIANT_RULE(relay_state, DEV_RELAY, VARIANT_STATE);
+VARIANT_RULE(relay_blind, DEV_RELAY, VARIANT_BLIND);
+VARIANT_RULE(relay_state_blind, DEV_RELAY, VARIANT_STATE_BLIND);
+VARIANT_RULE(relay_show_only, DEV_RELAY, VARIANT_BLIND_SHOW_ONLY);
+VARIANT_RULE(relay_no_readback, DEV_RELAY, VARIANT_NO_READBACK);
+VARIANT_RULE(no_profile, DEV_NO_PROFILE, VARIANT_PLAIN);
+VARIANT_RULE(switch_plain, DEV_SWITCH, VARIANT_PLAIN);
+VARIANT_RULE(temp_plain, DEV_TEMP, VARIANT_PLAIN);
+VARIANT_RULE(temp_state, DEV_TEMP, VARIANT_STATE);
+static const hubus_module_blind_t show_only_blind[] = {{.opcode = OP_BLIND_ONLY, .ms = 4}};
+
+DEVICE_MODULE(relay_plain, false);
+DEVICE_MODULE(relay_state, true);
+DEVICE_MODULE(relay_blind, false, .blind_default_ms = 4);
+DEVICE_MODULE(relay_state_blind, true, .blind_default_ms = 4);
+DEVICE_MODULE(relay_show_only, true, .blind_ops = show_only_blind, .n_blind_ops = 1);
+DEVICE_MODULE(no_profile, false);
+DEVICE_MODULE(switch_plain, false);
+static const hubus_module_t relay_no_readback = {
+    HUBUS_MODULE_INIT,
+    .name = "relay_no_readback",
+    .rules = relay_no_readback_rules,
+    .n_rules = 1,
+    .max_command = HUBUS_MAX_PAYLOAD,
+    .has_events = true,
+};
+DEVICE_MODULE(temp_plain, false);
+DEVICE_MODULE(temp_state, true);
+
+static const hubus_module_t *const test_modules[] = {
+    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_profile, &switch_plain, &temp_plain, &temp_state,
+};
+
 
 typedef struct {
     hubus_slave_core_t core;
@@ -106,7 +161,7 @@ typedef struct {
     uint8_t state;      /* relay: 0/1, switch: pressed, temperature: unused */
     uint16_t raw_temp;
     volatile uint8_t temp_be[2]; /* raw_temp as exposed state (big endian) */
-    uint8_t info[6];
+    uint8_t hwid[HUBUS_HWID_SERIAL + 4u];
     unsigned commands;
     unsigned captures;
     int blind_phase;      /* 1: command received, 2: blind after its STOP */
@@ -121,7 +176,10 @@ static unsigned n_dev;
 static hubusd_t *dmn;
 static hubusd_config_t cfg;
 static uint64_t clock_ms;
-static uint8_t dev_blind_mcid;  /* this device is blind for 4 ms after every command (blind class 5) */
+static uint8_t dev_force_variant; /* of slave 3; 0: from the other settings */
+static int dev_blind_op;          /* the only opcode that makes the blind device blind; -1: every opcode */
+static uint8_t dev_nine_type;     /* type of slave 9 in the standard setup */
+static uint8_t dev_blind_mcid;  /* this device is blind for 4 ms after a command */
 
 static void dev_capture(void *ctx)
 {
@@ -143,7 +201,7 @@ static void dev_command(void *ctx, uint8_t op, const uint8_t *args, uint8_t len)
     sim_dev_t *v = ctx;
 
     v->commands++;
-    if (v->mcid == dev_blind_mcid) {
+    if (v->mcid == dev_blind_mcid && (dev_blind_op < 0 || dev_blind_op == op)) {
         v->blind_phase = 1;
         v->stop_mark = sim.n_stop;
         v->blind_end_ms = clock_ms + 4u;
@@ -181,6 +239,19 @@ static void set_temp(sim_dev_t *v, uint16_t raw)
     v->temp_be[1] = (uint8_t)raw;
 }
 
+static uint8_t dev_variant(uint8_t mcid, uint8_t type)
+{
+    int state = dev_with_state && (type == DEV_RELAY || type == DEV_TEMP);
+
+    if (mcid == 3 && dev_force_variant) {
+        return dev_force_variant;
+    }
+    if (mcid == dev_blind_mcid) {
+        return state ? VARIANT_STATE_BLIND : VARIANT_BLIND;
+    }
+    return state ? VARIANT_STATE : VARIANT_PLAIN;
+}
+
 static sim_dev_t *add_dev(uint8_t mcid, uint8_t type)
 {
     sim_dev_t *v = &dev[n_dev++];
@@ -190,17 +261,18 @@ static sim_dev_t *add_dev(uint8_t mcid, uint8_t type)
     v->mcid = mcid;
     v->type = type;
     v->raw_temp = 298;
-    v->info[0] = type;
-    v->info[1] = 1;
-    v->info[5] = mcid; /* serial: 00 00 00 <mcid> */
+    v->hwid[HUBUS_HWID_TYPE] = type;
+    v->hwid[HUBUS_HWID_VARIANT] = dev_variant(mcid, type);
+    v->hwid[HUBUS_HWID_VERSION] = 1;
+    v->hwid[HUBUS_HWID_SERIAL + 3u] = mcid; /* serial: 00 00 00 <mcid> */
     memset(&c, 0, sizeof c);
     c.mcid = mcid;
-    c.info = v->info;
-    c.info_len = sizeof v->info;
+    c.hwid = v->hwid;
+    c.hwid_len = sizeof v->hwid;
     c.on_status_capture = dev_capture;
     c.on_command = dev_command;
     c.speed_class = mcid == 3 ? 4u : 0u;
-    c.blind_class = mcid == dev_blind_mcid ? 5u : 0u;
+    c.has_blind_time = mcid == dev_blind_mcid ? 1u : 0u;
     if (dev_with_state && type == DEV_RELAY) {
         c.state = &v->state;
         c.state_len = 1;
@@ -243,6 +315,7 @@ static void start_daemon(void)
     dmn = malloc(sizeof *dmn);
     TEST_ASSERT_NOT_NULL(dmn);
     hubusd_init(dmn, &cfg, &hal, mq, clk);
+    hubusd_set_modules(dmn, test_modules, sizeof test_modules / sizeof test_modules[0]);
 }
 
 /* Runs the bus thread until it has nothing to do (bounded). */
@@ -289,7 +362,7 @@ static void standard_setup(const char *yaml)
     add_dev(3, DEV_RELAY);
     add_dev(5, DEV_SWITCH);
     add_dev(7, DEV_TEMP);
-    add_dev(9, DEV_UNKNOWN);
+    add_dev(9, dev_nine_type);
     start_daemon();
     settle();
 }
@@ -302,6 +375,9 @@ void setUp(void)
     n_dev = 0;
     dev_with_state = 0;
     dev_blind_mcid = 0;
+    dev_blind_op = -1;
+    dev_force_variant = 0;
+    dev_nine_type = DEV_UNKNOWN;
     sim.filter = dev_blind_filter;
     clock_ms = 100000;
     fail_publish = 0;
@@ -339,12 +415,13 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
     assert_last("hubus/slave/7/availability", "online");
     TEST_ASSERT_NULL(last("hubus/slave/9/availability")); /* unconfigured slaves are ignored */
 
-    assert_contains("hubus/slave/3/info", "\"device_type\":1");
+    assert_contains("hubus/slave/3/info", "\"device_type\":129");
     assert_contains("hubus/slave/3/info", "\"serial\":\"00000003\"");
     assert_contains("hubus/slave/3/info", "\"profile\":\"relay\"");
     assert_contains("hubus/slave/3/info", "\"status_capture\":true");
-    assert_contains("hubus/slave/3/info", "\"update\":false,\"updater\":false");
-    assert_contains("hubus/slave/3/info", "\"capabilities\":5,");
+    assert_contains("hubus/slave/3/info", "\"update\":false");
+    assert_contains("hubus/slave/3/info", "\"updater\":false");
+    assert_contains("hubus/slave/3/info", "\"module\":\"relay_plain\"");
     assert_contains("hubus/slave/3/info", "\"speed_class\":4");
     assert_contains("hubus/slave/5/info", "\"speed_class\":0");
     TEST_ASSERT_TRUE(last_msg("hubus/slave/3/info")->retain);
@@ -359,7 +436,7 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
 static void test_unknown_slave_is_reported_in_master_state_only(void)
 {
     standard_setup(base_yaml);
-    assert_contains("hubus/master/state", "\"unknown_slaves\":[{\"mcid\":9,\"device_type\":119,\"serial\":\"00000009\"}]");
+    assert_contains("hubus/master/state", "\"unknown_slaves\":[{\"mcid\":9,\"device_type\":151,\"serial\":\"00000009\"}]");
     TEST_ASSERT_TRUE(count_containing("hubus/master/log", "unconfigured slave found at MCID 9") >= 1);
     TEST_ASSERT_NULL(last("hubus/slave/9/info"));
     TEST_ASSERT_NULL(last("hubus/slave/9/state"));
@@ -568,6 +645,7 @@ static void test_readback_mode_per_slave_overrides_the_bus_default(void)
 static void test_slave_that_cannot_be_read_back_reports_the_cached_state(void)
 {
     load("bus:\n  readback: slave\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    dev_force_variant = VARIANT_NO_READBACK;
     add_dev(3, DEV_RELAY);
     dev[0].core.on_status_capture = NULL;
     start_daemon();
@@ -675,7 +753,8 @@ static void test_oversized_payload_is_rejected(void)
 
 static void test_set_for_a_slave_without_a_profile_is_rejected(void)
 {
-    standard_setup("bus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 9\n"); /* device type 0x77: no profile */
+    dev_nine_type = DEV_NO_PROFILE;
+    standard_setup("bus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 9\n");
     n_msgs = 0;
     say("hubus/slave/9/set", "ON");
     settle();
@@ -685,6 +764,22 @@ static void test_set_for_a_slave_without_a_profile_is_rejected(void)
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
     TEST_ASSERT_EQUAL_UINT(1, dev[3].commands); /* the raw command reached the slave */
+}
+
+/* An unknown HWID is not taken into operation (docs/spec/06-operation.md section 6.10). */
+static void test_a_slave_without_a_module_gets_no_commands(void)
+{
+    standard_setup("bus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 9\n");
+    TEST_ASSERT_TRUE(dmn->slave[9].have_info);
+    TEST_ASSERT_NULL(dmn->slave[9].module);
+    assert_contains("hubus/slave/9/info", "\"module\":\"\"");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "no module") >= 1u);
+    n_msgs = 0;
+    say("hubus/slave/9/cmd", "0x10 1");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, dev[3].commands);
+    TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "has no module"));
 }
 
 static void test_raw_command_exact(void)
@@ -701,8 +796,12 @@ static void test_raw_command_exact(void)
 
 static void test_raw_command_larger_than_the_slave_accepts_is_rejected(void)
 {
+    hubus_module_t small;
+
     standard_setup(base_yaml);
-    dmn->slave[3].info.payload[HUBUS_INFO_MAX_CMD] = 2; /* announced in SLAVE_INFO */
+    small = *dmn->slave[3].module;
+    small.max_command = 2;
+    dmn->slave[3].module = &small;
     say("hubus/slave/3/cmd", "0x10 1 2");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
@@ -751,8 +850,12 @@ static void test_capture_topic(void)
 
 static void test_capture_of_a_slave_without_support_is_rejected(void)
 {
+    hubus_module_t no_capture;
+
     standard_setup(base_yaml);
-    dmn->slave[5].info.payload[HUBUS_INFO_CAPS] = 0;
+    no_capture = *dmn->slave[5].module;
+    no_capture.has_status_capture = false;
+    dmn->slave[5].module = &no_capture;
     say("hubus/slave/5/capture", "");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
@@ -764,8 +867,8 @@ static void test_scan_command(void)
     n_msgs = 0;
     say("hubus/master/cmd/scan", "");
     settle();
-    assert_contains("hubus/master/scan", "{\"mcid\":3,\"state\":\"present\",\"configured\":true,\"device_type\":1}");
-    assert_contains("hubus/master/scan", "{\"mcid\":9,\"state\":\"present\",\"configured\":false,\"device_type\":119}");
+    assert_contains("hubus/master/scan", "{\"mcid\":3,\"state\":\"present\",\"configured\":true,\"device_type\":129}");
+    assert_contains("hubus/master/scan", "{\"mcid\":9,\"state\":\"present\",\"configured\":false,\"device_type\":151}");
     TEST_ASSERT_NULL(strstr(last("hubus/master/scan"), "\"mcid\":4"));
 }
 
@@ -1018,7 +1121,7 @@ static void test_probe_of_a_duplicate_mcid_is_suspect(void)
     standard_setup(base_yaml);
     add_dev(11, DEV_UNKNOWN);
     add_dev(11, DEV_UNKNOWN);
-    dev[n_dev - 1].info[5] = 0x99; /* different serial number: the responses cannot overlap into a valid frame */
+    dev[n_dev - 1].hwid[HUBUS_HWID_SERIAL + 3u] = 0x99; /* different serial number: the responses cannot overlap into a valid frame */
     n_msgs = 0;
     say("hubus/master/cmd/probe", "11");
     settle();
@@ -1115,7 +1218,7 @@ static void test_diagnosis_reports_a_duplicate_mcid(void)
     add_dev(3, DEV_RELAY);
     add_dev(5, DEV_SWITCH);
     add_dev(5, DEV_SWITCH); /* configuration fault: second slave with MCID 5 */
-    dev[2].info[5] = 0x99;
+    dev[2].hwid[HUBUS_HWID_SERIAL + 3u] = 0x99;
     start_daemon();
     settle();
     hubus_sim_slave_write(&sim, 1, &v1, 1, 0);
@@ -1179,7 +1282,7 @@ static void test_reload_adds_and_removes_slaves(void)
     /* slave 3 stays with the new name */
     assert_contains("homeassistant/switch/hubus_3/config", "\"name\":\"Renamed\"");
     assert_last("hubus/slave/3/availability", "online");
-    /* slave 9 has no profile for device type 0x77: online, but only raw topics */
+    /* slave 9 has no profile: online, but only raw topics */
     assert_last("hubus/slave/9/availability", "online");
     TEST_ASSERT_NULL(last("homeassistant/switch/hubus_9/config"));
     assert_contains("hubus/master/state", "\"configured_slaves\":2");
@@ -1278,6 +1381,35 @@ static void test_messages_from_another_thread(void)
 
 /* ---- blind time after a command ------------------------------------------------------------------------------------ */
 
+/* The module states the blind time per opcode; the slave keeps quiet after every command, so even an opcode without a
+ * blind time needs the RESET or transaction that ends this phase. */
+static void test_the_blind_time_depends_on_the_opcode(void)
+{
+    dev_with_state = 1;
+    dev_blind_mcid = 3;
+    dev_blind_op = OP_BLIND_ONLY;
+    dev_force_variant = VARIANT_BLIND_SHOW_ONLY;
+    standard_setup(base_yaml);
+
+    say("hubus/slave/3/cmd", "0x10 1");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT64(clock_ms + 1u, dmn->slave[3].blind_until_ms); /* not blind, but quiet: one tick */
+    clock_ms += 2u;
+    settle();
+    TEST_ASSERT_EQUAL_UINT64(0, dmn->slave[3].blind_until_ms);
+
+    say("hubus/slave/3/cmd", "0x42");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(2, dev[0].commands);
+    TEST_ASSERT_EQUAL_UINT64(clock_ms + 5u, dmn->slave[3].blind_until_ms); /* 4 ms and one tick */
+    TEST_ASSERT_EQUAL_UINT8(2, dev[0].blind_phase);
+    clock_ms += 5u;
+    settle();
+    TEST_ASSERT_EQUAL_UINT64(0, dmn->slave[3].blind_until_ms);
+}
+
+
 static void test_readback_waits_for_the_blind_time_and_a_reset_ends_it(void)
 {
     unsigned resets;
@@ -1285,8 +1417,8 @@ static void test_readback_waits_for_the_blind_time_and_a_reset_ends_it(void)
     dev_with_state = 1;
     dev_blind_mcid = 3;
     standard_setup(base_yaml);
-    assert_contains("hubus/slave/3/info", "\"blind_class\":5");
-    assert_contains("hubus/slave/5/info", "\"blind_class\":0");
+    assert_contains("hubus/slave/3/info", "\"blind\":true");
+    assert_contains("hubus/slave/5/info", "\"blind\":false");
     n_msgs = 0;
     say("hubus/slave/3/set", "ON");
     settle();
@@ -1396,7 +1528,9 @@ int main(void)
     RUN_TEST(test_unrelated_topics_are_ignored);
     RUN_TEST(test_oversized_payload_is_rejected);
     RUN_TEST(test_set_for_a_slave_without_a_profile_is_rejected);
+    RUN_TEST(test_a_slave_without_a_module_gets_no_commands);
     RUN_TEST(test_raw_command_exact);
+    RUN_TEST(test_the_blind_time_depends_on_the_opcode);
     RUN_TEST(test_raw_command_larger_than_the_slave_accepts_is_rejected);
     RUN_TEST(test_group_and_broadcast_commands);
     RUN_TEST(test_group_status_capture_collects_states);

@@ -6,6 +6,7 @@
 #include "hubusd_json.h"
 #include "hubusd_profile.h"
 #include "hubusd_yaml.h"
+#include "hubusd_modules.h"
 #include "unity.h"
 
 void setUp(void) {}
@@ -360,9 +361,18 @@ static void test_builtin_profiles(void)
     TEST_ASSERT_NOT_NULL(sw);
     TEST_ASSERT_NOT_NULL(temp);
     TEST_ASSERT_NULL(hubusd_builtin_profile("toaster"));
-    TEST_ASSERT_EQUAL_PTR(relay, hubusd_builtin_profile_by_type(0x01));
-    TEST_ASSERT_EQUAL_PTR(sw, hubusd_builtin_profile_by_type(0x02));
-    TEST_ASSERT_EQUAL_PTR(temp, hubusd_builtin_profile_by_type(0x03));
+    {
+        size_t n, i;
+        const hubus_module_t *const *modules = hubusd_builtin_modules(&n);
+
+        TEST_ASSERT_TRUE(n > 0u);
+        for (i = 0; i < n; i++) {
+            TEST_ASSERT_EQUAL_MESSAGE(HUBUS_MODULE_VALID, hubus_module_validate(modules[i]), modules[i]->name);
+        }
+    }
+    TEST_ASSERT_EQUAL_PTR(relay, hubusd_builtin_profile_by_type(0x81));
+    TEST_ASSERT_EQUAL_PTR(sw, hubusd_builtin_profile_by_type(0x82));
+    TEST_ASSERT_EQUAL_PTR(temp, hubusd_builtin_profile_by_type(0x83));
     TEST_ASSERT_NULL(hubusd_builtin_profile_by_type(0x77));
 
     TEST_ASSERT_TRUE(hubusd_profile_decode(relay, &on, 1, out, sizeof out));

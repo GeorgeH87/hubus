@@ -28,7 +28,7 @@ static hubus_sim_t sim;
 static raw_t rm;
 static hubus_slave_core_t core[MAX_TEST_SLAVES];
 static app_t app[MAX_TEST_SLAVES];
-static const uint8_t info_bytes[] = {0xD1, 0x01, 0xDE, 0xAD};
+static const uint8_t hwid_bytes[] = {0xF2, 0x01, 0x00, 0x00, 0xDE, 0xAD};
 
 static void on_capture(void *ctx)
 {
@@ -58,8 +58,8 @@ static void add_slave_state(unsigned idx, uint8_t mcid, int capture, uint8_t sta
     app[idx].status = (uint8_t)(0x40 + mcid);
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
-    cfg.info = info_bytes;
-    cfg.info_len = sizeof info_bytes;
+    cfg.hwid = hwid_bytes;
+    cfg.hwid_len = sizeof hwid_bytes;
     cfg.on_status_capture = capture ? on_capture : NULL;
     cfg.on_command = on_command;
     cfg.state = state_len ? app[idx].state : NULL;
@@ -111,6 +111,8 @@ static void test_init_rejects_invalid_config(void)
     hubus_core_config_t cfg;
 
     memset(&cfg, 0, sizeof cfg);
+    cfg.hwid = hwid_bytes;
+    cfg.hwid_len = sizeof hwid_bytes;
     cfg.mcid = 0;
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1)); /* MCID 0 is reserved */
     cfg.mcid = 64;
@@ -118,22 +120,22 @@ static void test_init_rejects_invalid_config(void)
     cfg.mcid = 63;
     TEST_ASSERT_TRUE(hubus_core_init(&c, &cfg, 0, 1));
     cfg.mcid = 1;
-    cfg.info_len = HUBUS_INFO_APP_MAX + 1u;
-    cfg.info = info_bytes;
+    cfg.hwid_len = HUBUS_HWID_MAX_LEN;
+    TEST_ASSERT_TRUE(hubus_core_init(&c, &cfg, 0, 1));
+    cfg.hwid_len = HUBUS_HWID_MAX_LEN + 1u; /* more than LEN can carry next to byte 0 */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
-    cfg.info_len = 2;
-    cfg.info = NULL;
+    cfg.hwid_len = 0; /* SLAVE_INFO always has a HWID */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
-    cfg.info_len = 0;
+    cfg.hwid_len = 2;
+    cfg.hwid = NULL;
+    TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
+    cfg.hwid = hwid_bytes;
     cfg.state_len = HUBUS_MAX_PAYLOAD + 1u; /* longer than a LEN field: rejected, not truncated */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
     cfg.state_len = 0;
-    cfg.speed_class = HUBUS_SPEED_CLASS_MAX + 1u; /* would spill into the blind class */
+    cfg.speed_class = HUBUS_SPEED_CLASS_MAX + 1u; /* would spill into the protocol version */
     TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
-    cfg.speed_class = 0;
-    cfg.blind_class = HUBUS_BLIND_CLASS_MAX + 1u; /* does not fit into four bits */
-    TEST_ASSERT_FALSE(hubus_core_init(&c, &cfg, 0, 1));
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_DISABLED, hubus_core_write(&c, info_bytes, 1, 0));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_WRITE_DISABLED, hubus_core_write(&c, hwid_bytes, 1, 0));
 }
 
 static void test_disabled_core_stays_silent(void)
@@ -164,25 +166,13 @@ static void test_request_info(void)
     n = raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf);
     raw_stop(&rm, 0);
 
-    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP + sizeof info_bytes, n);
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_HWID + sizeof hwid_bytes, n);
     TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, &h));
     TEST_ASSERT_EQUAL_UINT8(HUBUS_S_INFO, h.type);
     TEST_ASSERT_EQUAL_UINT8(9, h.mcid);
     TEST_ASSERT_EQUAL_UINT8(0, h.field); /* MORE and GEN are 000 in SLAVE_INFO */
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_PROTOCOL_VERSION, buf[2 + HUBUS_INFO_VERSION]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, buf[2 + HUBUS_INFO_MAX_CMD]);
-    TEST_ASSERT_EQUAL_MEMORY(info_bytes, &buf[2 + HUBUS_INFO_APP], sizeof info_bytes);
-}
-
-static void test_request_info_without_status_capture_clears_capability(void)
-{
-    uint8_t buf[40];
-
-    add_slave(0, 9, 0);
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
-    raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS]); /* events, but no capture */
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_PROTOCOL_VERSION, HUBUS_INFO_VERSION(buf[2 + HUBUS_INFO_BYTE0]));
+    TEST_ASSERT_EQUAL_MEMORY(hwid_bytes, &buf[2 + HUBUS_INFO_HWID], sizeof hwid_bytes);
 }
 
 static void test_request_info_announces_the_speed_class(void)
@@ -192,34 +182,38 @@ static void test_request_info_announces_the_speed_class(void)
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 9;
+    cfg.hwid = hwid_bytes;
+    cfg.hwid_len = sizeof hwid_bytes;
     cfg.speed_class = HUBUS_SPEED_CLASS_MAX;
     TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
     hubus_sim_add(&sim, &core[0]);
     TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_SPEED_CLASS_MAX, buf[2 + HUBUS_INFO_TIMING]); /* blind class 0 in bits 7..4 */
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS, buf[2 + HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_SPEED_CLASS_MAX, HUBUS_INFO_SPEED_CLASS(buf[2 + HUBUS_INFO_BYTE0]));
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_PROTOCOL_VERSION, HUBUS_INFO_VERSION(buf[2 + HUBUS_INFO_BYTE0]));
 }
 
-static void test_request_info_announces_the_blind_class(void)
+static void test_a_short_form_slave_info_is_two_bytes(void)
 {
+    static const uint8_t short_form[] = {0x05};
     hubus_core_config_t cfg;
+    hubus_header_t h;
     uint8_t buf[40];
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 9;
+    cfg.hwid = short_form;
+    cfg.hwid_len = sizeof short_form;
     cfg.speed_class = 3;
-    cfg.blind_class = HUBUS_BLIND_CLASS_MAX;
+    cfg.has_blind_time = 1; /* stated in the module, nothing of it on the bus */
     TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
     hubus_sim_add(&sim, &core[0]);
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
+    TEST_ASSERT_EQUAL_UINT(3 + 2, raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_HEX8(0xF3, buf[2 + HUBUS_INFO_TIMING]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_BLIND_CLASS_MAX, HUBUS_BLIND_CLASS(buf[2 + HUBUS_INFO_TIMING]));
-    TEST_ASSERT_EQUAL_UINT32(0u, HUBUS_BLIND_US(0u));
-    TEST_ASSERT_EQUAL_UINT32(250u, HUBUS_BLIND_US(1u));
-    TEST_ASSERT_EQUAL_UINT32(4000u, HUBUS_BLIND_US(5u));
-    TEST_ASSERT_EQUAL_UINT32(4096000u, HUBUS_BLIND_US(15u));
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + 2, &h));
+    TEST_ASSERT_EQUAL_UINT8(2, h.len);
+    TEST_ASSERT_EQUAL_HEX8(0x03, buf[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x05, buf[3]);
 }
 
 static void test_request_info_does_not_clear_buffer(void)
@@ -241,11 +235,13 @@ static void test_request_info_without_app_bytes(void)
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 3;
+    cfg.hwid = hwid_bytes;
+    cfg.hwid_len = 1;
     TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
     hubus_sim_add(&sim, &core[0]);
-    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP, raw_request(&rm, HUBUS_M_REQUEST_INFO, 3, buf)); /* header + protocol bytes + CRC */
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_HWID + 1u, raw_request(&rm, HUBUS_M_REQUEST_INFO, 3, buf)); /* header, byte 0, HWID, CRC */
     raw_stop(&rm, 0);
-    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + HUBUS_INFO_APP, NULL));
+    TEST_ASSERT_TRUE(hubus_frame_decode(buf, 3 + HUBUS_INFO_HWID + 1u, NULL));
 }
 
 /* ---- REQUEST_DATA -------------------------------------------------------- */
@@ -1045,24 +1041,6 @@ static void test_request_state_without_state_is_silent(void)
     TEST_ASSERT_EQUAL_UINT8(1, sim.data);
 }
 
-static void test_slave_info_announces_the_state_capability(void)
-{
-    uint8_t buf[40];
-
-    add_slave_state(0, 9, 1, 1);
-    add_slave(1, 10, 1);
-    add_slave_state(2, 11, 0, 1);
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
-    raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE | HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 10, buf));
-    raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 11, buf));
-    raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATE, buf[2 + HUBUS_INFO_CAPS]);
-}
-
 static void test_group_state_request_lets_every_slave_with_a_state_contend(void)
 {
     hubus_arb_result_t r;
@@ -1132,6 +1110,8 @@ static void test_maximum_state_and_state_without_pointer(void)
     }
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 5;
+    cfg.hwid = hwid_bytes;
+    cfg.hwid_len = sizeof hwid_bytes;
     cfg.state = st;
     cfg.state_len = 31;
     TEST_ASSERT_TRUE(hubus_core_init(&core[0], &cfg, sim.clk, sim.data));
@@ -1425,9 +1405,8 @@ int main(void)
     RUN_TEST(test_init_rejects_invalid_config);
     RUN_TEST(test_disabled_core_stays_silent);
     RUN_TEST(test_request_info);
-    RUN_TEST(test_request_info_without_status_capture_clears_capability);
     RUN_TEST(test_request_info_announces_the_speed_class);
-    RUN_TEST(test_request_info_announces_the_blind_class);
+    RUN_TEST(test_a_short_form_slave_info_is_two_bytes);
     RUN_TEST(test_request_info_does_not_clear_buffer);
     RUN_TEST(test_request_info_without_app_bytes);
     RUN_TEST(test_request_data_empty_buffer_is_silent);
@@ -1474,7 +1453,6 @@ int main(void)
     RUN_TEST(test_request_state_returns_the_live_state);
     RUN_TEST(test_request_state_changes_neither_buffer_nor_gen);
     RUN_TEST(test_request_state_without_state_is_silent);
-    RUN_TEST(test_slave_info_announces_the_state_capability);
     RUN_TEST(test_group_state_request_lets_every_slave_with_a_state_contend);
     RUN_TEST(test_event_request_drops_slaves_without_pending_data_while_state_request_does_not);
     RUN_TEST(test_write_during_state_transmission_is_not_busy);

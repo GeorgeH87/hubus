@@ -30,9 +30,8 @@
 #define OP_SET 0x10
 #define OP_TOGGLE 0x11
 
-/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
-#define DEVICE_TYPE_RELAY 0x01
-static const uint8_t info[] PROGMEM = {DEVICE_TYPE_RELAY, 0x01, 0x00, 0x00, 0x00, 0x01};
+/* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
+static const uint8_t hwid[] PROGMEM = {0x81, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01};
 
 static volatile uint8_t relay_state; /* live state exposed to REQUEST_STATE */
 
@@ -68,8 +67,8 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = 0x03,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
         .state = &relay_state,
         .state_len = 1,
         .on_status_capture = on_status_capture,

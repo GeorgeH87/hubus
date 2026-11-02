@@ -28,7 +28,7 @@ typedef struct {
 
 typedef struct {
     char name[HUBUSD_PROFILE_NAME_LEN];
-    int device_type; /* first application byte of SLAVE_INFO; -1: not recognised automatically */
+    int device_type; /* type byte of the HWID; -1: not recognised automatically */
     hubusd_component_t component;
     uint8_t byte_offset; /* position of the value in the SLAVE_DATA payload */
     uint8_t byte_len;    /* 1 or 2 */
@@ -43,7 +43,7 @@ typedef struct {
     hubusd_cmd_t off;    /* switch: command for OFF */
 } hubusd_profile_t;
 
-/* Built-in profiles: "relay" (0x01), "switch" (0x02), "temperature" (0x03). NULL if unknown. */
+/* Built-in profiles: "relay" (0x81), "switch" (0x82), "temperature" (0x83). NULL if unknown. */
 const hubusd_profile_t *hubusd_builtin_profile(const char *name);
 const hubusd_profile_t *hubusd_builtin_profile_by_type(int device_type);
 

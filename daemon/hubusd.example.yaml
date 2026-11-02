@@ -52,7 +52,7 @@ bus:
 slaves:
   - mcid: 3
     name: Garden relay
-    profile: relay        # optional: recognised from SLAVE_INFO if the firmware reports its device type
+    profile: relay        # optional: recognised from the type in the hardware identifier
   - mcid: 5
     name: Door button
   - mcid: 7
@@ -68,7 +68,7 @@ slaves:
 # profiles:
 #   dimmer:
 #     component: switch               # switch | binary_sensor | sensor
-#     device_type: 0x20               # first application byte of SLAVE_INFO (automatic recognition)
+#     device_type: 0xA0               # type byte of the hardware identifier (automatic recognition)
 #     on:  {opcode: 0x30, args: [255]}
 #     off: {opcode: 0x30, args: [0]}
 #   pressure:

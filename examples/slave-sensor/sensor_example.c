@@ -22,9 +22,8 @@
 
 #include "hubus_slave.h"
 
-/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
-#define DEVICE_TYPE_TEMPERATURE 0x03
-static const uint8_t info[] PROGMEM = {DEVICE_TYPE_TEMPERATURE, 0x01, 0x00, 0x00, 0x00, 0x03};
+/* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
+static const uint8_t hwid[] PROGMEM = {0x83, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03};
 
 static volatile uint16_t latest;
 
@@ -57,8 +56,8 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = 0x07,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
         .on_status_capture = on_status_capture,
         .on_command = 0,
         .ctx = 0,

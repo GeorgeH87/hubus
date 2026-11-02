@@ -32,6 +32,8 @@ static void on_capture(void *ctx)
     (void)hubus_core_write(&core, status, sizeof status, 0);
 }
 
+static const uint8_t hwid[] = {0xF3, 0x02, 0x00, 0x00};
+
 void setUp(void)
 {
     hubus_core_config_t cfg;
@@ -42,6 +44,8 @@ void setUp(void)
     captures = 0;
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 9;
+    cfg.hwid = hwid;
+    cfg.hwid_len = sizeof hwid;
     cfg.on_command = on_command;
     cfg.on_status_capture = on_capture;
     TEST_ASSERT_TRUE(hubus_core_init(&core, &cfg, sim.clk, sim.data));
@@ -64,15 +68,6 @@ static void test_sizes_are_configured(void)
 {
     TEST_ASSERT_EQUAL_INT(4, HUBUS_RX_BUF_SIZE);
     TEST_ASSERT_EQUAL_INT(6, HUBUS_TX_BUF_SIZE);
-}
-
-static void test_info_announces_the_accepted_command_size(void)
-{
-    uint8_t buf[40];
-
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 9, buf));
-    raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(4, buf[2 + HUBUS_INFO_MAX_CMD]);
 }
 
 static void test_command_that_fits_is_executed(void)
@@ -136,22 +131,20 @@ static void test_state_support_is_compiled_out(void)
     TEST_ASSERT_EQUAL_INT(0, HUBUS_ENABLE_STATE);
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = 10;
+    cfg.hwid = hwid;
+    cfg.hwid_len = sizeof hwid;
     cfg.state = live;
     cfg.state_len = sizeof live;
     TEST_ASSERT_TRUE(hubus_core_init(&other, &cfg, sim.clk, sim.data));
     hubus_sim_add(&sim, &other);
     TEST_ASSERT_EQUAL_UINT(0, raw_request(&rm, HUBUS_M_REQUEST_STATE, 10, buf));
     raw_stop(&rm, 0);
-    TEST_ASSERT_TRUE(raw_request(&rm, HUBUS_M_REQUEST_INFO, 10, buf));
-    raw_stop(&rm, 0);
-    TEST_ASSERT_EQUAL_UINT8(0, buf[2 + HUBUS_INFO_CAPS] & HUBUS_CAP_STATE);
 }
 
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_sizes_are_configured);
-    RUN_TEST(test_info_announces_the_accepted_command_size);
     RUN_TEST(test_command_that_fits_is_executed);
     RUN_TEST(test_oversized_command_is_ignored_and_the_slave_stays_in_sync);
     RUN_TEST(test_transmit_buffer_limit);

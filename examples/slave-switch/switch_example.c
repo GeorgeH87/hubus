@@ -24,9 +24,13 @@
 #define BUTTON_BIT PB1
 #define DEBOUNCE_SAMPLES 10 /* samples of 1 ms */
 
-/* SLAVE_INFO application bytes: device type, firmware version, serial number. */
-#define DEVICE_TYPE_SWITCH 0x02
-static const uint8_t info[] PROGMEM = {DEVICE_TYPE_SWITCH, 0x01, 0x00, 0x00, 0x00, 0x02};
+/* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
+#if HUBUS_ENABLE_UPDATE
+#define SWITCH_VARIANT 0x02 /* with firmware update: a property of the image, stated by its module */
+#else
+#define SWITCH_VARIANT 0x01
+#endif
+static const uint8_t hwid[] PROGMEM = {0x82, SWITCH_VARIANT, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02};
 
 static volatile uint8_t pressed;
 
@@ -42,8 +46,8 @@ int main(void)
 {
     static const hubus_slave_config_t cfg = {
         .mcid = 0x05,
-        .info = info,
-        .info_len = sizeof info,
+        .hwid = hwid,
+        .hwid_len = sizeof hwid,
         .state = &pressed,
         .state_len = 1,
         .on_status_capture = on_status_capture,

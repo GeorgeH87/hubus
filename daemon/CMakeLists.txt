@@ -9,7 +9,7 @@ endif()
 
 if(YAML_FOUND)
     add_library(hubusd_lib STATIC
-        hubusd_yaml.c hubusd_config.c hubusd_profile.c hubusd_json.c hubusd_core.c)
+        hubusd_yaml.c hubusd_config.c hubusd_profile.c hubusd_modules.c hubusd_json.c hubusd_core.c)
     target_include_directories(hubusd_lib PUBLIC . ${YAML_INCLUDE_DIRS})
     target_link_libraries(hubusd_lib PUBLIC hubus_master ${YAML_LIBRARIES} pthread)
     target_compile_options(hubusd_lib PRIVATE ${HUBUS_WARNINGS})

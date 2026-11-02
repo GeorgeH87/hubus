@@ -16,7 +16,7 @@ static unsigned captures;
 static unsigned commands;
 static uint8_t last_opcode;
 static uint8_t last_len;
-static const uint8_t info[] = {0x42, 0x01, 0x0A, 0x0B};
+static const uint8_t hwid[] = {0xF2, 0x01, 0x00, 0x00, 0x0A, 0x0B};
 
 /* ---- wire --------------------------------------------------------------- */
 
@@ -144,8 +144,8 @@ static hubus_slave_config_t config(uint8_t mcid)
 
     memset(&cfg, 0, sizeof cfg);
     cfg.mcid = mcid;
-    cfg.info = info;
-    cfg.info_len = sizeof info;
+    cfg.hwid = hwid;
+    cfg.hwid_len = sizeof hwid;
     cfg.on_status_capture = on_capture;
     cfg.on_command = on_command;
     return cfg;
@@ -191,7 +191,7 @@ static void test_init_with_invalid_mcid_leaves_the_slave_silent(void)
     cfg.mcid = 64;
     TEST_ASSERT_FALSE(hubus_slave_init(&cfg));
     cfg = config(5);
-    cfg.info_len = 28; /* only 27 application bytes fit next to the 4 protocol bytes */
+    cfg.hwid_len = 31; /* only 30 bytes fit next to byte 0 */
     TEST_ASSERT_FALSE(hubus_slave_init(&cfg));
 }
 
@@ -235,11 +235,9 @@ static void test_request_info(void)
     turnaround();
     n = recv_frame(buf);
     stop();
-    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_APP + sizeof info, n);
+    TEST_ASSERT_EQUAL_UINT(3 + HUBUS_INFO_HWID + sizeof hwid, n);
     TEST_ASSERT_TRUE(hubus_frame_decode(buf, n, NULL));
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE, buf[2 + HUBUS_INFO_CAPS]);
-    TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, buf[2 + HUBUS_INFO_MAX_CMD]);
-    TEST_ASSERT_EQUAL_MEMORY(info, &buf[2 + HUBUS_INFO_APP], sizeof info);
+    TEST_ASSERT_EQUAL_MEMORY(hwid, &buf[2 + HUBUS_INFO_HWID], sizeof hwid);
 }
 
 static void test_status_capture_callback_writes_the_buffer_from_the_isr(void)

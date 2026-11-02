@@ -78,7 +78,7 @@ static void rx_done(hubus_slave_core_t *c, uint8_t crc_ok)
 #if HUBUS_ENABLE_EVENTS
             /* A slave that may be blind now keeps quiet until the master ends the blind time (section 7.8): an
              * announcement would hold DATA low and keep the blind section from beginning in time. */
-            c->hold = (uint8_t)(HUBUS_BLIND_CLASS(c->timing) != 0u);
+            c->hold = c->has_blind_time;
 #endif
 #if HUBUS_ENABLE_EVENTS
             if (op == HUBUS_OP_STATUS_CAPTURE) {
@@ -236,31 +236,16 @@ static uint8_t tx_byte(hubus_slave_core_t *c, uint8_t idx)
             b = c->buf[i];
         } else
 #endif
-        if (i == HUBUS_INFO_VERSION) {
-            b = HUBUS_PROTOCOL_VERSION;
-        } else if (i == HUBUS_INFO_CAPS) {
-#if HUBUS_ENABLE_EVENTS
-            b = c->on_status_capture ? (HUBUS_CAP_EVENTS | HUBUS_CAP_STATUS_CAPTURE) : HUBUS_CAP_EVENTS;
-#else
-            b = 0u;
+        if (i == HUBUS_INFO_BYTE0) {
+            b = c->info_byte0;
+        } else
+#if HUBUS_ENABLE_SERIAL
+        if (i > c->hwid_len) {
+            b = c->serial[i - HUBUS_INFO_HWID - c->hwid_len];
+        } else
 #endif
-#if HUBUS_ENABLE_STATE
-            if (c->app_state_len) {
-                b |= HUBUS_CAP_STATE;
-            }
-#endif
-#if HUBUS_ENABLE_UPDATE
-            b |= HUBUS_CAP_UPDATE;
-#endif
-#if HUBUS_UPDATER
-            b |= HUBUS_CAP_UPDATER;
-#endif
-        } else if (i == HUBUS_INFO_MAX_CMD) {
-            b = HUBUS_RX_BUF_SIZE;
-        } else if (i == HUBUS_INFO_TIMING) {
-            b = c->timing;
-        } else {
-            b = HUBUS_INFO_READ(&c->info[i - HUBUS_INFO_APP]);
+        {
+            b = HUBUS_INFO_READ(&c->hwid[i - HUBUS_INFO_HWID]);
         }
     } else {
         return hubus_crc8_final(c->crc);
@@ -278,7 +263,10 @@ static void tx_init(hubus_slave_core_t *c)
      * the respective part compiled in. */
     if (c->rx_type == HUBUS_M_REQUEST_INFO) {
         type = HUBUS_S_INFO;
-        c->tx_len = (uint8_t)(HUBUS_INFO_APP + c->info_len);
+        c->tx_len = (uint8_t)(HUBUS_INFO_HWID + c->hwid_len);
+#if HUBUS_ENABLE_SERIAL
+        c->tx_len = (uint8_t)(c->tx_len + c->serial_len);
+#endif
     }
 #if HUBUS_ENABLE_STATE
     else if (c->rx_type == HUBUS_M_REQUEST_STATE) {
@@ -403,15 +391,27 @@ uint8_t hubus_core_init(hubus_slave_core_t *c, const hubus_core_config_t *cfg, u
     memset(c, 0, sizeof *c); /* state IDLE, MCID 0: disabled until the configuration is accepted */
     c->clk = clk ? 1u : 0u;
     c->data = data ? 1u : 0u;
-    if (cfg->mcid < HUBUS_MCID_MIN || cfg->mcid > HUBUS_MCID_MAX ||
-        cfg->info_len > HUBUS_INFO_APP_MAX || (cfg->info_len > 0u && cfg->info == NULL) ||
-        cfg->state_len > HUBUS_MAX_PAYLOAD || cfg->speed_class > HUBUS_SPEED_CLASS_MAX ||
-        cfg->blind_class > HUBUS_BLIND_CLASS_MAX) {
+    if (cfg->mcid < HUBUS_MCID_MIN || cfg->mcid > HUBUS_MCID_MAX || cfg->hwid == NULL || cfg->hwid_len == 0u ||
+        cfg->state_len > HUBUS_MAX_PAYLOAD || cfg->speed_class > HUBUS_SPEED_CLASS_MAX) {
         return 0;
     }
-    c->timing = (uint8_t)(cfg->speed_class | (uint8_t)(cfg->blind_class << HUBUS_BLIND_CLASS_SHIFT));
-    c->info = cfg->info;
-    c->info_len = cfg->info_len;
+#if HUBUS_ENABLE_SERIAL
+    if ((unsigned)cfg->hwid_len + cfg->serial_len > HUBUS_HWID_MAX_LEN || (cfg->serial_len > 0u && cfg->serial == NULL)) {
+        return 0;
+    }
+    c->serial = cfg->serial;
+    c->serial_len = cfg->serial_len;
+#else
+    if (cfg->hwid_len > HUBUS_HWID_MAX_LEN) {
+        return 0;
+    }
+#endif
+    c->info_byte0 = (uint8_t)((HUBUS_PROTOCOL_VERSION << HUBUS_INFO_VERSION_SHIFT) | cfg->speed_class);
+    c->hwid = cfg->hwid;
+    c->hwid_len = cfg->hwid_len;
+#if HUBUS_ENABLE_EVENTS
+    c->has_blind_time = cfg->has_blind_time ? 1u : 0u;
+#endif
 #if HUBUS_ENABLE_STATE
     c->app_state = cfg->state;
     c->app_state_len = cfg->state ? cfg->state_len : 0u;

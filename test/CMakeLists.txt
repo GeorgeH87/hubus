@@ -62,6 +62,8 @@ hubus_core_variant_test(test_small_buffers test_small_buffers.c HUBUS_RX_BUF_SIZ
 # Without the event buffer: a passive slave that is only read, and one that only executes commands.
 hubus_core_variant_test(test_slave_passive test_slave_parts.c HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1)
 hubus_core_variant_test(test_slave_command_only test_slave_parts.c HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=0)
+# A serial number from RAM after the constant part of the HWID.
+hubus_core_variant_test(test_slave_serial test_slave_serial.c HUBUS_ENABLE_SERIAL=1)
 
 # Firmware update end to end: master library, updater logic, and an application core with update support on one
 # simulated bus. The core and the master are compiled again for the updater configuration.

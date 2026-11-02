@@ -29,7 +29,7 @@ static uint8_t reset_requested;
 static uint8_t in_updater;
 static uint16_t booted_entry;
 static unsigned flash_writes;
-static const uint8_t app_info[] = {0x02, 0x07, 0x00, 0x09};
+static const uint8_t app_hwid[] = {0xF4, 0x01, 0x07, 0x00, 0x09};
 
 /* ---- platform of the updater ------------------------------------------------------------------------------------ */
 
@@ -75,7 +75,7 @@ static void boot(void)
     if (hubus_updater_app_valid(&entry)) {
         in_updater = 0;
         booted_entry = entry;
-        TEST_ASSERT_TRUE(app_start(eeprom_mcid, app_info, sizeof app_info, sim.clk, sim.data));
+        TEST_ASSERT_TRUE(app_start(eeprom_mcid, app_hwid, sizeof app_hwid, sim.clk, sim.data));
         sim.slave[dev] = (hubus_slave_core_t *)app_core();
         sim.pins[dev] = app_pins;
         hubus_sim_settle(&sim);
@@ -227,12 +227,13 @@ void tearDown(void)
 static void test_updater_announces_itself(void)
 {
     hubus_slave_frame_t f;
-    const uint8_t *p = &f.payload[HUBUS_INFO_APP];
+    const uint8_t *p = &f.payload[HUBUS_UPD_INFO_START];
 
     TEST_ASSERT_TRUE(in_updater);
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&master, MCID, &f));
-    TEST_ASSERT_EQUAL_HEX8(HUBUS_CAP_UPDATER | HUBUS_CAP_STATE, f.payload[HUBUS_INFO_CAPS]);
-    TEST_ASSERT_EQUAL_UINT(HUBUS_INFO_APP + HUBUS_UPD_INFO_LEN, f.len);
+    TEST_ASSERT_EQUAL_HEX8(HUBUS_HWID_TYPE_UPDATER, f.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE]);
+    TEST_ASSERT_EQUAL_UINT(HUBUS_INFO_HWID + HUBUS_HWID_UPDATER_LEN, f.len);
+    TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, p[HUBUS_UPD_INFO_MAX_CMD]);
     TEST_ASSERT_EQUAL_HEX8(0x1E, p[HUBUS_UPD_INFO_SIGNATURE]);
     TEST_ASSERT_EQUAL_UINT8(PAGE, p[HUBUS_UPD_INFO_PAGE]);
     TEST_ASSERT_EQUAL_HEX8(0x18, p[HUBUS_UPD_INFO_APP_SIZE]); /* 0x1800 */
@@ -253,7 +254,7 @@ static void test_update_from_updater_then_from_application(void)
     TEST_ASSERT_EQUAL_UINT16(18, res.pages);
     TEST_ASSERT_EQUAL_UINT16(0, res.retries);
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&master, MCID, &f));
-    TEST_ASSERT_EQUAL_HEX8(HUBUS_CAP_UPDATE | HUBUS_CAP_STATE, f.payload[HUBUS_INFO_CAPS]);
+    TEST_ASSERT_EQUAL_HEX8(0xF4, f.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE]);
 
     /* The application switches to its updater on UPDATE_ENTER. */
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &b, NULL, NULL, &res));
