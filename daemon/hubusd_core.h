@@ -149,6 +149,32 @@ void hubusd_set_logger(hubusd_t *d, hubusd_log_fn fn, void *ctx);
 /* Before the first hubusd_step(): use these validated modules instead of the built-in ones. Not copied. */
 void hubusd_set_modules(hubusd_t *d, const hubus_module_t *const *modules, size_t n_modules);
 
+/*
+ * On the bus thread, between two hubusd_step(): whether these modules can replace the current ones. NULL if so; otherwise the
+ * name of a module that a slave of the configuration `cfg` uses and that would find no successor: its slave would go out of
+ * operation, and the caller keeps the current modules.
+ */
+const char *hubusd_modules_missing(const hubusd_t *d, const hubusd_config_t *cfg, const hubus_module_t *const *modules,
+                                   size_t n_modules);
+
+/*
+ * On the bus thread, between two hubusd_step(): uses these validated modules from now on. Not copied. A module with the same
+ * address stays as it is, with its thread and instances. For the others this waits until no function of theirs runs and
+ * destroys their instances; afterwards the old modules are no longer used, unless hubusd_worker_abandoned() says so.
+ */
+void hubusd_replace_modules(hubusd_t *d, const hubus_module_t *const *modules, size_t n_modules);
+
+/*
+ * On the bus thread, between two hubusd_step(): reads the built-in modules and the plugins of the configuration `cfg` anew, and
+ * uses them instead of those in `current`, a set that hubusd_set_modules() was given. An unchanged plugin file keeps its module,
+ * thread, and instances. Returns 1 if the modules were replaced, 0 if a slave would lose its module: then nothing changes.
+ */
+int hubusd_reload_modules(hubusd_t *d, hubus_module_set_t *current, const hubusd_config_t *cfg, hubus_load_report_fn report,
+                          void *report_ctx);
+
+/* Closes a set of modules that is no longer used. A plugin stays in memory if a thread that could not be stopped may run in it. */
+void hubusd_unload_modules(hubus_module_set_t *set);
+
 /* One iteration of the bus thread; call it in a loop. Returns 1 if the bus was busy (call again soon). */
 int hubusd_step(hubusd_t *d);
 

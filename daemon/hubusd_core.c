@@ -1027,6 +1027,16 @@ static void check_workers(hubusd_t *d, uint64_t now)
     }
 }
 
+static void stop_worker(hubusd_t *d, size_t k)
+{
+    const char *name = hubusd_worker_module(d->worker[k])->name;
+
+    if (!hubusd_worker_stop(d->worker[k], MODULE_STOP_WAIT_MS)) {
+        log_event(d, 2, "module %s did not stop within %u ms", name, MODULE_STOP_WAIT_MS);
+    }
+    d->worker[k] = NULL;
+}
+
 /* Destroys the instances and ends the threads. Can be called again. */
 static void stop_modules(hubusd_t *d)
 {
@@ -1036,14 +1046,118 @@ static void stop_modules(hubusd_t *d)
     sync_instances(d);
     for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
         if (d->worker[k]) {
-            const char *name = hubusd_worker_module(d->worker[k])->name;
-
-            if (!hubusd_worker_stop(d->worker[k], MODULE_STOP_WAIT_MS)) {
-                log_event(d, 2, "module %s did not stop within %u ms", name, MODULE_STOP_WAIT_MS);
-            }
-            d->worker[k] = NULL;
+            stop_worker(d, k);
         }
     }
+}
+
+static int module_listed(const hubus_module_t *m, const hubus_module_t *const *modules, size_t n_modules)
+{
+    size_t i;
+
+    for (i = 0; i < n_modules; i++) {
+        if (modules[i] == m) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+const char *hubusd_modules_missing(const hubusd_t *d, const hubusd_config_t *cfg, const hubus_module_t *const *modules,
+                                   size_t n_modules)
+{
+    unsigned i;
+
+    for (i = 0; i < cfg->n_slaves; i++) {
+        const hubusd_slave_t *s = &d->slave[cfg->slaves[i].mcid];
+        const hubus_module_t *found;
+
+        if (s->have_info && s->module &&
+            hubus_module_select_info(modules, n_modules, s->info.payload, s->info.len, &found) != HUBUS_MODULE_FOUND) {
+            return s->module->name;
+        }
+    }
+    return NULL;
+}
+
+void hubusd_replace_modules(hubusd_t *d, const hubus_module_t *const *modules, size_t n_modules)
+{
+    unsigned mcid;
+    size_t k;
+
+    d->modules = modules;
+    d->n_modules = n_modules;
+    for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
+        if (d->worker[k] && !module_listed(hubusd_worker_module(d->worker[k]), modules, n_modules)) {
+            const hubus_module_t *gone = hubusd_worker_module(d->worker[k]);
+
+            stop_worker(d, k); /* waits for what runs, and destroys its instances */
+            for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+                if (d->slave[mcid].inst_module == gone) {
+                    d->slave[mcid].inst_module = NULL;
+                }
+            }
+        }
+    }
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        hubusd_slave_t *s = &d->slave[mcid];
+        const hubus_module_t *before = s->module;
+
+        if (!s->configured) {
+            continue;
+        }
+        resolve_module(d, mcid);
+        if (s->module != before) {
+            if (before) { /* the old module is still in memory: its entities can be taken back */
+                uint8_t e;
+
+                remove_slave_discovery(d, mcid, before);
+                for (e = 0; e < before->n_entities; e++) {
+                    pub_topic(d, 1, "", "slave/%u/%s/state", mcid, before->entities[e].key);
+                }
+            }
+            memset(s->last_state, 0, sizeof s->last_state);
+            publish_slave_info(d, mcid);
+            publish_slave_discovery(d, mcid);
+        }
+    }
+    sync_instances(d);
+}
+
+void hubusd_unload_modules(hubus_module_set_t *set)
+{
+    size_t i;
+
+    for (i = 0; i < set->n; i++) {
+        if (hubusd_worker_abandoned(set->module[i])) {
+            hubus_module_set_keep(set, i);
+        }
+    }
+    hubus_module_set_unload(set);
+}
+
+int hubusd_reload_modules(hubusd_t *d, hubus_module_set_t *current, const hubusd_config_t *cfg, hubus_load_report_fn report,
+                          void *report_ctx)
+{
+    hubus_module_set_t fresh, old;
+    const char *missing;
+    size_t plugins;
+
+    hubus_module_set_init(&fresh);
+    fresh.trust_all = current->trust_all;
+    plugins = hubusd_load_modules(cfg, &fresh, report, report_ctx);
+    missing = hubusd_modules_missing(d, cfg, fresh.module, fresh.n);
+    if (missing) {
+        log_event(d, 2, "modules not reloaded: a slave uses module %s, and no module would replace it", missing);
+        hubus_module_set_unload(&fresh);
+        return 0;
+    }
+    old = *current;
+    *current = fresh; /* the daemon points into this structure */
+    hubusd_replace_modules(d, current->module, current->n);
+    hubusd_unload_modules(&old);
+    log_event(d, 0, "modules reloaded: %u, %u of them plugins", (unsigned)current->n, (unsigned)plugins);
+    return 1;
 }
 
 static void bind_config(hubusd_t *d)
@@ -2062,6 +2176,7 @@ static void apply_reload(hubusd_t *d, hubusd_config_t *nc)
     d->cfg.bus = nc->bus;
     d->cfg.mqtt.stats_interval_s = nc->mqtt.stats_interval_s;
     d->cfg.mqtt.discovery = nc->mqtt.discovery;
+    d->cfg.modules.call_timeout_ms = nc->modules.call_timeout_ms;
     bind_config(d);
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
         d->slave[mcid].have_info = old[mcid].have_info;

@@ -106,7 +106,7 @@ static void test_a_plugin_is_loaded_and_selected_by_its_rules(void)
     TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, r.status);
     TEST_ASSERT_EQUAL_STRING("plugin_good", r.name);
     TEST_ASSERT_EQUAL_UINT(1, set.n);
-    TEST_ASSERT_NOT_NULL(set.handle[0]);
+    TEST_ASSERT_NOT_NULL(set.plugin[0]);
     TEST_ASSERT_EQUAL(HUBUS_MODULE_FOUND, hubus_module_select(set.module, set.n, hwid, sizeof hwid, &out));
     TEST_ASSERT_EQUAL_PTR(set.module[0], out);
     TEST_ASSERT_EQUAL_STRING("temperature", out->entities[0].key);
@@ -238,7 +238,7 @@ static void test_statically_linked_modules_join_the_set(void)
     hubus_module_t invalid = m;
 
     TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, hubus_module_set_add(&set, &m).status);
-    TEST_ASSERT_NULL(set.handle[0]);
+    TEST_ASSERT_NULL(set.plugin[0]);
     invalid.name = "other";
     invalid.max_command = 0;
     TEST_ASSERT_EQUAL(HUBUS_LOAD_INVALID, hubus_module_set_add(&set, &invalid).status);
@@ -278,6 +278,72 @@ static void test_conflicts_need_the_same_number_of_mask_bits_and_a_common_device
     TEST_ASSERT_TRUE(hubus_module_conflicts(&rev, &v7));
 }
 
+/* A new file with the content of the plugin under this name, as `install` and `mv` make it. */
+static void install_plugin(const char *from, const char *to)
+{
+    static char buf[1 << 20];
+    char tmp[300];
+    size_t n;
+    FILE *in = fopen(from, "rb");
+    FILE *out;
+
+    TEST_ASSERT_NOT_NULL(in);
+    snprintf(tmp, sizeof tmp, "%s.new", to);
+    out = fopen(tmp, "wb");
+    TEST_ASSERT_NOT_NULL(out);
+    n = fread(buf, 1, sizeof buf, in);
+    TEST_ASSERT_EQUAL_size_t(n, fwrite(buf, 1, n, out));
+    fclose(in);
+    fclose(out);
+    TEST_ASSERT_EQUAL_INT(0, chmod(tmp, 0755));
+    TEST_ASSERT_EQUAL_INT(0, rename(tmp, to));
+}
+
+static void test_the_same_file_gives_the_same_module_and_a_new_file_a_new_one(void)
+{
+    char dir[] = "/tmp/hubus_plugin_XXXXXX";
+    char path[200];
+    hubus_module_set_t second, third;
+    const hubus_module_t *first;
+
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    snprintf(path, sizeof path, "%s/good.so", dir);
+    install_plugin(PLUGIN("a_good"), path);
+    TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, hubus_module_set_load_file(&set, path).status);
+    first = set.module[0];
+
+    hubus_module_set_init(&second);
+    second.trust_all = true;
+    TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, hubus_module_set_load_file(&second, path).status);
+    TEST_ASSERT_EQUAL_PTR(first, second.module[0]);
+
+    install_plugin(PLUGIN("a_good"), path);
+    hubus_module_set_init(&third);
+    third.trust_all = true;
+    TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, hubus_module_set_load_file(&third, path).status);
+    TEST_ASSERT_TRUE(third.module[0] != first);
+
+    /* each stays usable while its set is loaded, and closing one set leaves the other alone */
+    hubus_module_set_unload(&second);
+    TEST_ASSERT_EQUAL_STRING("plugin_good", first->name);
+    hubus_module_set_unload(&set);
+    TEST_ASSERT_EQUAL_STRING("plugin_good", third.module[0]->name);
+    hubus_module_set_unload(&third);
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+}
+
+static void test_a_plugin_that_is_kept_stays_loaded(void)
+{
+    const hubus_module_t *m;
+
+    TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, load("a_good").status);
+    m = set.module[0];
+    hubus_module_set_keep(&set, 0);
+    hubus_module_set_unload(&set);
+    TEST_ASSERT_EQUAL_STRING("plugin_good", m->name);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -291,6 +357,8 @@ int main(void)
     RUN_TEST(test_a_directory_is_read_in_the_order_of_the_names);
     RUN_TEST(test_a_directory_that_does_not_exist_is_reported);
     RUN_TEST(test_the_set_holds_a_limited_number_of_modules);
+    RUN_TEST(test_the_same_file_gives_the_same_module_and_a_new_file_a_new_one);
+    RUN_TEST(test_a_plugin_that_is_kept_stays_loaded);
     RUN_TEST(test_statically_linked_modules_join_the_set);
     RUN_TEST(test_conflicts_need_the_same_number_of_mask_bits_and_a_common_device);
     return UNITY_END();

@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,7 +74,7 @@ static void copy_name(hubus_load_result_t *r, const hubus_module_t *m)
     }
 }
 
-static hubus_load_result_t add(hubus_module_set_t *set, const hubus_module_t *m, void *handle)
+static hubus_load_result_t add(hubus_module_set_t *set, const hubus_module_t *m, void *plugin)
 {
     hubus_load_result_t r = result_for(HUBUS_LOAD_INVALID);
     size_t i;
@@ -102,7 +103,7 @@ static hubus_load_result_t add(hubus_module_set_t *set, const hubus_module_t *m,
         }
     }
     set->module[set->n] = m;
-    set->handle[set->n] = handle;
+    set->plugin[set->n] = plugin;
     set->n++;
     r.status = HUBUS_LOAD_OK;
     r.module = m;
@@ -112,6 +113,99 @@ static hubus_load_result_t add(hubus_module_set_t *set, const hubus_module_t *m,
 hubus_load_result_t hubus_module_set_add(hubus_module_set_t *set, const hubus_module_t *module)
 {
     return add(set, module, NULL);
+}
+
+/*
+ * The files that are loaded. Under its own name the loader of the system would give back a plugin that is loaded already, even
+ * if another file has that name now, so a file is opened and loaded through its descriptor. That name stays with the plugin as
+ * long as it is in memory, so the descriptor has to stay open too: a later file must not get the same number. The same file
+ * in a second set is the same entry here, without a further dlopen(), which would add a further name.
+ */
+typedef struct plugin {
+    struct plugin *next;
+    dev_t dev;
+    ino_t ino;
+    void *handle;
+    const hubus_module_t *module;
+    int fd;
+    unsigned refs;
+} plugin_t;
+
+static plugin_t *plugins;
+
+static plugin_t *plugin_find(const struct stat *st)
+{
+    plugin_t *p;
+
+    for (p = plugins; p; p = p->next) {
+        if (p->dev == st->st_dev && p->ino == st->st_ino) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+static void plugin_release(plugin_t *plugin)
+{
+    plugin_t **link = &plugins;
+
+    if (--plugin->refs != 0u) {
+        return;
+    }
+    while (*link != plugin) {
+        link = &(*link)->next;
+    }
+    *link = plugin->next;
+    dlclose(plugin->handle);
+    close(plugin->fd);
+    free(plugin);
+}
+
+/* Loads the open file `fd`, which it takes over on success. Fills r on failure. */
+static plugin_t *plugin_open(int fd, const struct stat *st, hubus_load_result_t *r)
+{
+    const hubus_module_t *(*entry)(void);
+    plugin_t *p = malloc(sizeof *p);
+    char by_fd[40];
+    void *sym;
+
+    if (!p) {
+        r->status = HUBUS_LOAD_OPEN;
+        snprintf(r->detail, sizeof r->detail, "%s", strerror(ENOMEM));
+        return NULL;
+    }
+    snprintf(by_fd, sizeof by_fd, "/proc/self/fd/%d", fd);
+    p->handle = dlopen(by_fd, RTLD_NOW | RTLD_LOCAL);
+    if (!p->handle) {
+        const char *msg = dlerror();
+
+        r->status = HUBUS_LOAD_OPEN;
+        snprintf(r->detail, sizeof r->detail, "%s", msg ? msg : "dlopen failed");
+        free(p);
+        return NULL;
+    }
+    sym = dlsym(p->handle, "hubus_module_entry");
+    if (!sym) {
+        r->status = HUBUS_LOAD_NO_ENTRY;
+    } else {
+        memcpy(&entry, &sym, sizeof entry);
+        p->module = entry();
+        if (!p->module) {
+            r->status = HUBUS_LOAD_NO_MODULE;
+        }
+    }
+    if (r->status != HUBUS_LOAD_OK) {
+        dlclose(p->handle);
+        free(p);
+        return NULL;
+    }
+    p->dev = st->st_dev;
+    p->ino = st->st_ino;
+    p->fd = fd;
+    p->refs = 1;
+    p->next = plugins;
+    plugins = p;
+    return p;
 }
 
 /* Checks a file or directory; fills r->detail if it is not safe. */
@@ -141,36 +235,36 @@ static bool path_safe(const hubus_module_set_t *set, const char *path, bool want
 hubus_load_result_t hubus_module_set_load_file(hubus_module_set_t *set, const char *path)
 {
     hubus_load_result_t r = result_for(HUBUS_LOAD_OK);
-    const hubus_module_t *(*entry)(void);
-    const hubus_module_t *m;
-    void *handle;
-    void *sym;
+    struct stat st;
+    plugin_t *p;
+    int fd;
 
     if (!path_safe(set, path, false, &r)) {
         return r;
     }
-    handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    if (!handle) {
-        const char *msg = dlerror();
-
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) != 0) {
         r.status = HUBUS_LOAD_OPEN;
-        snprintf(r.detail, sizeof r.detail, "%s", msg ? msg : "dlopen failed");
+        snprintf(r.detail, sizeof r.detail, "%s", strerror(errno));
+        if (fd >= 0) {
+            close(fd);
+        }
         return r;
     }
-    sym = dlsym(handle, "hubus_module_entry");
-    if (!sym) {
-        dlclose(handle);
-        return result_for(HUBUS_LOAD_NO_ENTRY);
+    p = plugin_find(&st);
+    if (p) {
+        p->refs++;
+        close(fd);
+    } else {
+        p = plugin_open(fd, &st, &r);
+        if (!p) {
+            close(fd);
+            return r;
+        }
     }
-    memcpy(&entry, &sym, sizeof entry);
-    m = entry();
-    if (!m) {
-        dlclose(handle);
-        return result_for(HUBUS_LOAD_NO_MODULE);
-    }
-    r = add(set, m, handle);
+    r = add(set, p->module, p);
     if (r.status != HUBUS_LOAD_OK) {
-        dlclose(handle); /* r.name is a copy; r.module belongs to the set */
+        plugin_release(p); /* r.name is a copy; r.module belongs to the set */
     }
     return r;
 }
@@ -233,9 +327,14 @@ void hubus_module_set_unload(hubus_module_set_t *set)
     size_t i;
 
     for (i = 0; i < set->n; i++) {
-        if (set->handle[i]) {
-            dlclose(set->handle[i]);
+        if (set->plugin[i]) {
+            plugin_release(set->plugin[i]);
         }
     }
     hubus_module_set_init(set);
+}
+
+void hubus_module_set_keep(hubus_module_set_t *set, size_t i)
+{
+    set->plugin[i] = NULL; /* its reference is never given back */
 }

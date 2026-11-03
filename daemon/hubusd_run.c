@@ -109,7 +109,7 @@ static void cb_message(struct mosquitto *client, void *obj, const struct mosquit
 
 /* ---- reload -------------------------------------------------------------------------------- */
 
-static void do_reload(hubusd_t *d, const char *path)
+static void do_reload(hubusd_t *d, hubus_module_set_t *modules, const char *path)
 {
     hubusd_config_t *nc = malloc(sizeof *nc);
     char err[300];
@@ -125,6 +125,9 @@ static void do_reload(hubusd_t *d, const char *path)
     }
     for (i = 0; i < nc->n_warnings; i++) {
         fprintf(stderr, "<4>hubusd: %s\n", nc->warnings[i]);
+    }
+    if (modules) {
+        (void)hubusd_reload_modules(d, modules, nc, hubusd_report_module, NULL);
     }
     hubusd_request_reload(d, nc);
 }
@@ -212,7 +215,7 @@ int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const 
 
         if (reload_flag) {
             reload_flag = 0;
-            do_reload(d, opts->config_path);
+            do_reload(d, opts->modules ? NULL : &modules, opts->config_path);
         }
         if (opts->poll_hook) {
             opts->poll_hook(opts->poll_ctx, d);
@@ -236,7 +239,7 @@ int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const 
 done:
     mosquitto_destroy(mq.client);
     hubusd_destroy(d);
-    hubus_module_set_unload(&modules); /* after the daemon: it points into the plugins */
+    hubusd_unload_modules(&modules); /* after the daemon: it points into the plugins */
     free(d);
     mosquitto_lib_cleanup();
     return exit_code;

@@ -3,9 +3,12 @@
  * events, commands, availability, statistics, discovery, faults, reload.
  */
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "hubus_crc.h"
 #include "hubus_sim.h"
@@ -298,7 +301,6 @@ static hubus_module_status_t func_on_set(hubus_module_instance_t *self, const hu
 }
 
 VARIANT_RULE(func_module, DEV_FUNC, VARIANT_PLAIN);
-VARIANT_RULE(func_fail_module, DEV_FUNC, VARIANT_STATE);
 static const hubus_entity_t func_entities[] = {
     {.key = "lamp", .name = "Lamp", .component = HUBUS_COMPONENT_LIGHT},
     {.key = "fan", .name = "Fan", .component = HUBUS_COMPONENT_SWITCH},
@@ -314,10 +316,9 @@ static const hubus_entity_t func_entities[] = {
 };
 #define FUNCTIONS .create = func_create, .destroy = func_destroy, .on_frame = func_on_frame, .on_set = func_on_set
 DEVICE_MODULE(func_module, false, FUNCTIONS, ENTITIES(func_entities));
-DEVICE_MODULE(func_fail_module, false, FUNCTIONS, ENTITIES(func_entities));
 
 static const hubus_module_t *const test_modules[] = {
-    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_entities, &switch_plain, &temp_plain, &temp_state, &temp_two, &relay_second, &func_module, &func_fail_module,
+    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_entities, &switch_plain, &temp_plain, &temp_state, &temp_two, &relay_second, &func_module,
 };
 
 
@@ -1983,6 +1984,145 @@ static void test_a_refused_program_is_reported(void)
     PUMP_UNTIL(strcmp(last("hubus/slave/3/animation/state"), "refused by the slave") == 0);
 }
 
+/* ---- replacing the modules (SIGHUP) ------------------------------------------------------------------------------ */
+
+VARIANT_RULE(func_next, DEV_FUNC, VARIANT_PLAIN);
+static const hubus_entity_t func_next_entities[] = {{.key = "lamp", .name = "Lamp", .component = HUBUS_COMPONENT_LIGHT}};
+DEVICE_MODULE(func_next, false, FUNCTIONS, ENTITIES(func_next_entities));
+
+static void test_replacing_a_module_makes_new_instances_and_entities(void)
+{
+    static const hubus_module_t *const next[] = {&func_next};
+
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    assert_contains("homeassistant/switch/hubus_4_fan/config", "\"name\"");
+    say("hubus/slave/4/lamp/set", "ON");
+    PUMP_UNTIL(last("hubus/slave/4/lamp/state") != NULL);
+    n_msgs = 0;
+
+    TEST_ASSERT_NULL(hubusd_modules_missing(dmn, &cfg, next, 1));
+    hubusd_replace_modules(dmn, next, 1);
+    TEST_ASSERT_EQUAL_UINT(2, func_read(&func_destroyed)); /* the thread of the old module has ended */
+    PUMP_UNTIL(func_read(&func_created) == 4u);
+    TEST_ASSERT_EQUAL_UINT(2, func_read(&func_live));
+
+    TEST_ASSERT_EQUAL_PTR(&func_next, dmn->slave[4].module);
+    assert_contains("hubus/slave/4/info", "\"module\":\"func_next\"");
+    assert_last("homeassistant/switch/hubus_4_fan/config", ""); /* gone with the old module */
+    assert_last("hubus/slave/4/fan/state", "");
+    assert_contains("homeassistant/light/hubus_4_lamp/config", "\"model\":\"func_next\"");
+    TEST_ASSERT_EQUAL_STRING("", dmn->slave[4].last_state[0]);
+
+    say("hubus/slave/4/lamp/set", "OFF");
+    PUMP_UNTIL(func_dev->last_op == OP_FUNC_POWER && func_dev->last_args[0] == 0u);
+}
+
+static void test_replacing_with_the_same_module_changes_nothing(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    n_msgs = 0;
+    hubusd_replace_modules(dmn, test_modules, sizeof test_modules / sizeof test_modules[0]);
+    settle();
+    sleep_ms(5);
+    settle();
+    TEST_ASSERT_EQUAL_UINT(2, func_read(&func_created));
+    TEST_ASSERT_EQUAL_UINT(0, func_read(&func_destroyed));
+    TEST_ASSERT_NULL(last("hubus/slave/4/info"));
+}
+
+static void test_modules_a_slave_needs_are_not_given_up(void)
+{
+    static const hubus_module_t *const others[] = {&relay_plain};
+    hubusd_config_t none;
+
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    TEST_ASSERT_EQUAL_STRING("func_module", hubusd_modules_missing(dmn, &cfg, others, 1));
+    TEST_ASSERT_NULL(hubusd_modules_missing(dmn, &cfg, test_modules, sizeof test_modules / sizeof test_modules[0]));
+    /* if the slave is not in the new configuration, nothing needs its module */
+    none = cfg;
+    none.n_slaves = 0;
+    TEST_ASSERT_NULL(hubusd_modules_missing(dmn, &none, others, 1));
+}
+
+/* A new file with the content of the plugin under this name, as `install` and `mv` make it. */
+static void install_plugin(const char *from, const char *to)
+{
+    static char buf[1 << 20];
+    char tmp[300];
+    size_t n;
+    FILE *in = fopen(from, "rb");
+    FILE *out;
+
+    TEST_ASSERT_NOT_NULL(in);
+    snprintf(tmp, sizeof tmp, "%s.new", to);
+    out = fopen(tmp, "wb");
+    TEST_ASSERT_NOT_NULL(out);
+    n = fread(buf, 1, sizeof buf, in);
+    TEST_ASSERT_EQUAL_size_t(n, fwrite(buf, 1, n, out));
+    fclose(in);
+    fclose(out);
+    TEST_ASSERT_EQUAL_INT(0, chmod(tmp, 0755));
+    TEST_ASSERT_EQUAL_INT(0, rename(tmp, to));
+}
+
+static void test_a_reload_reads_the_plugins_anew(void)
+{
+    char dir[] = "/tmp/hubus_reload_XXXXXX";
+    char path[200], yaml[300];
+    hubus_module_set_t set;
+    const hubus_module_t *first, *second;
+
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    snprintf(path, sizeof path, "%s/good.so", dir);
+    install_plugin(HUBUS_TEST_PLUGIN_DIR "/a_good.so", path);
+    snprintf(yaml, sizeof yaml,
+             "mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 0\n  scan_interval_s: 0\nmodules:\n  dir: %s\nslaves:\n  - mcid: 3\n", dir);
+    load(yaml);
+    hubus_module_set_init(&set);
+    TEST_ASSERT_EQUAL_UINT(1, hubusd_load_modules(&cfg, &set, NULL, NULL));
+    dev_force_variant = 1;
+    add_dev(3, 0x90);
+    start_daemon();
+    hubusd_set_modules(dmn, set.module, set.n);
+    settle();
+    assert_contains("hubus/slave/3/info", "\"module\":\"plugin_good\"");
+    first = dmn->slave[3].module;
+    TEST_ASSERT_NOT_NULL(first);
+
+    /* the file is still the same: so is the module */
+    n_msgs = 0;
+    TEST_ASSERT_EQUAL_INT(1, hubusd_reload_modules(dmn, &set, &cfg, NULL, NULL));
+    TEST_ASSERT_EQUAL_PTR(first, dmn->slave[3].module);
+    TEST_ASSERT_NULL(last("hubus/slave/3/info"));
+
+    /* a new file: a new module under the old name */
+    install_plugin(HUBUS_TEST_PLUGIN_DIR "/a_good.so", path);
+    TEST_ASSERT_EQUAL_INT(1, hubusd_reload_modules(dmn, &set, &cfg, NULL, NULL));
+    second = dmn->slave[3].module;
+    TEST_ASSERT_NOT_NULL(second);
+    TEST_ASSERT_TRUE(second != first);
+    assert_contains("hubus/slave/3/info", "\"module\":\"plugin_good\"");
+    assert_contains("homeassistant/sensor/hubus_3_temperature/config", "\"model\":\"plugin_good\"");
+    TEST_ASSERT_EQUAL_STRING("plugin_good", second->name);
+
+    /* the file is gone but the slave needs it: everything stays */
+    n_msgs = 0;
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    TEST_ASSERT_EQUAL_INT(0, hubusd_reload_modules(dmn, &set, &cfg, NULL, NULL));
+    TEST_ASSERT_EQUAL_PTR(second, dmn->slave[3].module);
+    TEST_ASSERT_EQUAL_STRING("plugin_good", dmn->slave[3].module->name);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "modules not reloaded") >= 1);
+
+    hubusd_destroy(dmn);
+    free(dmn);
+    dmn = NULL;
+    hubusd_unload_modules(&set);
+    TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+}
+
 static void test_empty_payloads_arrive_as_null(void)
 {
     standard_setup(base_yaml);
@@ -2245,6 +2385,10 @@ int main(void)
     RUN_TEST(test_the_lamp_ends_an_animation_and_none_returns_to_the_lamp);
     RUN_TEST(test_after_a_power_up_the_strip_gets_back_what_it_showed);
     RUN_TEST(test_a_refused_program_is_reported);
+    RUN_TEST(test_replacing_a_module_makes_new_instances_and_entities);
+    RUN_TEST(test_replacing_with_the_same_module_changes_nothing);
+    RUN_TEST(test_modules_a_slave_needs_are_not_given_up);
+    RUN_TEST(test_a_reload_reads_the_plugins_anew);
     RUN_TEST(test_empty_payloads_arrive_as_null);
     RUN_TEST(test_messages_from_another_thread);
     return UNITY_END();

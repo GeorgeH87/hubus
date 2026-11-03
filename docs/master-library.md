@@ -228,7 +228,7 @@ Every module is checked before it joins the set, and a plugin that fails is clos
 | `HUBUS_LOAD_CONFLICT` | A module of the set has rules that conflict with its own ([above](#master-modules)); `module` points to it. |
 | `HUBUS_LOAD_FULL` | The set holds `HUBUS_MODULE_SET_MAX` (64) modules. |
 
-`hubus_module_set_load_dir()` reads the files ending in `.so` in the order of their names, so that the module that loses a conflict is always the same, and calls `report` for each file. `hubus_module_set_unload()` closes the plugins; do it after the last use of a module. `set.trust_all` skips the permission check, for tests on file systems that have no permissions.
+`hubus_module_set_load_dir()` reads the files ending in `.so` in the order of their names, so that the module that loses a conflict is always the same, and calls `report` for each file. `hubus_module_set_unload()` closes the plugins; do it after the last use of a module. `hubus_module_set_load_file()` goes by the file itself, not by its name: a file that is loaded gives the same module in a second set, and a file that was replaced gives a new one next to the old, so that a master can load a new set before it gives up the old one. `hubus_module_set_keep()` keeps a plugin in memory for good, for a module whose code a thread that cannot be stopped may still run. `set.trust_all` skips the permission check, for tests on file systems that have no permissions.
 
 A plugin is built with `gcc -shared -fPIC -I master -o temperature.so temperature.c`; `test/plugins/a_good.c` is a complete one.
 

@@ -40,7 +40,7 @@ typedef struct {
 
 typedef struct {
     const hubus_module_t *module[HUBUS_MODULE_SET_MAX];
-    void *handle[HUBUS_MODULE_SET_MAX]; /* of dlopen(); NULL: linked statically */
+    void *plugin[HUBUS_MODULE_SET_MAX]; /* the loaded file; NULL: linked statically */
     size_t n;
     bool trust_all; /* skip the owner and permission checks; for tests on file systems without permissions */
 } hubus_module_set_t;
@@ -53,6 +53,9 @@ void hubus_module_set_init(hubus_module_set_t *set);
 /* Adds a module that is linked statically. */
 hubus_load_result_t hubus_module_set_add(hubus_module_set_t *set, const hubus_module_t *module);
 
+/* Loads the file that is at `path` now. A file loaded before that is still in place gives the same module, with the same
+ * address, also from another set; a file that was replaced (a new file under the same name, as `install` and `mv` do) gives
+ * a new module next to the old one. Do not write into a plugin that is loaded: that changes the code of the running module. */
 hubus_load_result_t hubus_module_set_load_file(hubus_module_set_t *set, const char *path);
 
 /* Loads every file ending in ".so" in the directory, in the order of their names. A directory that others could have
@@ -61,6 +64,10 @@ size_t hubus_module_set_load_dir(hubus_module_set_t *set, const char *dir, hubus
 
 /* Closes the plugins. The modules of the set must no longer be used. */
 void hubus_module_set_unload(hubus_module_set_t *set);
+
+/* The plugin of entry `i` stays in memory for good: hubus_module_set_unload() does not close it. For a module whose code a
+ * thread that cannot be stopped may still run. */
+void hubus_module_set_keep(hubus_module_set_t *set, size_t i);
 
 /* True if a file of this owner and mode may be loaded by a process with the effective user `euid`: owned by root or by
  * that user, and not writable by its group or by others. */
