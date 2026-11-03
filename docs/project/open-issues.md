@@ -32,11 +32,6 @@ What is still open. The specification is complete except for values that can onl
 - **Status:** implemented for classic tinyAVR, tested in the bus simulation ([§6.8](../spec/06-operation.md#68-firmware-update)); not yet run on an ATtiny85.
 - **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule); updates from hubusd, so that the service does not have to be stopped.
 
-## Master Modules
-
-- **Status:** one question left. The interface, the selection, the loading of plugins, the entities, and the [functions of a module](../daemon.md#module-functions) are implemented ([§6.10](../spec/06-operation.md#610-master-modules), [decisions](decisions.md#master-modules)); none of it has run on hardware yet.
-- **Open:** a crash in a plugin ends the whole service; systemd restarts it and the startup sequence recovers the bus ([§8.9](../spec/08-faults.md#89-master-stops-mid-transaction)). Running a plugin in a process of its own would isolate crashes too, at the price of a second interface and a copy of the data. Decide once the LED strip module has run for a while.
-
 ## D3: Fairness Strategy
 
 - **Status:** largely resolved. A burst serves every slave pending at its start ([§6.2](../spec/06-operation.md#62-burst)); starvation across bursts is only possible if bursts are aborted before completion.
