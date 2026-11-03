@@ -209,6 +209,7 @@ void hubusd_config_defaults(hubusd_config_t *cfg)
     cfg->bus.ping_failures = 3;
     cfg->bus.scan_interval_s = 300;
     cfg->bus.startup_retry_s = 10;
+    cfg->modules.call_timeout_ms = 1000;
 }
 
 /* ---- sections -------------------------------------------------------------- */
@@ -374,6 +375,7 @@ static void load_modules(ctx_t *c, yn_t *root)
         return;
     }
     read_str(c, s, "dir", cfg->modules.dir, sizeof cfg->modules.dir);
+    read_unsigned(c, s, "call_timeout_ms", 10, 60000, &cfg->modules.call_timeout_ms);
     warn_unknown(c, s, "modules");
 }
 

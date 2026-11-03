@@ -1,6 +1,6 @@
 # Hardware Identifier Types
 
-The central table of the types in the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). A new device gets its type or variant here. Each row has a module in `daemon/hubusd_modules.c` ([§6.10](spec/06-operation.md#610-master-modules)), which also lists the [entities](daemon.md#entities) of the device.
+The central table of the types in the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). A new device gets its type or variant here. Each row has a module in `daemon/hubusd_modules.c` or `daemon/hubusd_ledstrip.c` ([§6.10](spec/06-operation.md#610-master-modules)), which also lists the [entities](daemon.md#entities) of the device.
 
 | Type | Variant | Device | Firmware | Module |
 |---|---|---|---|---|

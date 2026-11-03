@@ -53,6 +53,7 @@ bus:
 #   dir: /usr/local/lib/hubus/modules   # plugins (*.so) for further slaves; read at the start, not on SIGHUP.
 #                                       # Only root or the user of the service may own the directory and the files,
 #                                       # and nobody else may write them: a plugin runs with the rights of the service.
+#   call_timeout_ms: 1000               # a module function that runs longer stops its module until hubusd restarts
 
 slaves:
   - mcid: 3

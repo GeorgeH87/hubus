@@ -9,8 +9,10 @@ endif()
 
 if(YAML_FOUND)
     add_library(hubusd_lib STATIC
-        hubusd_yaml.c hubusd_config.c hubusd_modules.c hubusd_json.c hubusd_core.c)
+        hubusd_yaml.c hubusd_config.c hubusd_modules.c hubusd_ledstrip.c hubusd_ledc.c hubusd_worker.c hubusd_json.c
+        hubusd_core.c ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip/ledvm.c)
     target_include_directories(hubusd_lib PUBLIC . ${YAML_INCLUDE_DIRS})
+    target_include_directories(hubusd_lib PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
     target_link_libraries(hubusd_lib PUBLIC hubus_master ${YAML_LIBRARIES} pthread)
     target_compile_options(hubusd_lib PRIVATE ${HUBUS_WARNINGS})
     set(HUBUSD_LIB_AVAILABLE TRUE PARENT_SCOPE)

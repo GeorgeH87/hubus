@@ -4,7 +4,6 @@
 
 #define RULE_VARIANT(type, variant) {.pattern = {(type), (variant)}, .mask = {0xFF, 0xFF}, .len = 2}
 
-#define OP_LED_SHOW 0x42u
 #define OP_RELAY_SET 0x10u
 
 /* The relay answers with its state; it is switched by OP_RELAY_SET 1 or 0. */
@@ -118,24 +117,6 @@ static const hubus_module_t temperature_passive = {
     ENTITIES(temperature_entities),
 };
 
-/* Only SHOW makes the strip blind: 180 bytes of 12.5 us, the reset time of the strip, and the wait for the slave to be
- * free (docs/example-ledstrip.md). The strip itself needs functions of the module (the next step); the button does not. */
-static const hubus_module_rule_t ledstrip_rules[] = {RULE_VARIANT(0x84, 0x01)};
-static const hubus_module_blind_t ledstrip_blind[] = {{.opcode = OP_LED_SHOW, .ms = 4}};
-static const hubus_module_t ledstrip = {
-    HUBUS_MODULE_INIT,
-    .name = "ledstrip",
-    .rules = ledstrip_rules,
-    .n_rules = HUBUS_MODULE_LEN(ledstrip_rules),
-    .max_command = HUBUS_MAX_PAYLOAD,
-    .has_state = true,
-    .has_events = true,
-    .has_status_capture = true,
-    .blind_ops = ledstrip_blind,
-    .n_blind_ops = HUBUS_MODULE_LEN(ledstrip_blind),
-    ENTITIES(button_entities),
-};
-
 /* One module for every updater; what differs per device is in the updater information. */
 static const hubus_module_rule_t updater_rules[] = {{.pattern = {HUBUS_HWID_TYPE_UPDATER}, .mask = {0xFF}, .len = 1}};
 static const hubus_module_t updater = {
@@ -148,7 +129,7 @@ static const hubus_module_t updater = {
 };
 
 static const hubus_module_t *const modules[] = {
-    &relay, &relay_simple, &switch_module, &switch_update, &temperature, &temperature_passive, &ledstrip, &updater,
+    &relay, &relay_simple, &switch_module, &switch_update, &temperature, &temperature_passive, &hubusd_ledstrip_module, &updater,
 };
 
 const hubus_module_t *const *hubusd_builtin_modules(size_t *count)
@@ -194,6 +175,7 @@ const char *hubusd_component_name(hubus_component_t component)
     case HUBUS_COMPONENT_BINARY_SENSOR: return "binary_sensor";
     case HUBUS_COMPONENT_SWITCH: return "switch";
     case HUBUS_COMPONENT_LIGHT: return "light";
+    case HUBUS_COMPONENT_TEXT: return "text";
     case HUBUS_COMPONENT_COUNT: break;
     }
     return "sensor";

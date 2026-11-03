@@ -145,7 +145,7 @@ These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAU
 
 ## Master Modules
 
-`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). hubusd selects the module of every slave with it. Calling the functions of a module is still missing ([roadmap](../TODO.md#12-master-modules-and-hardware-identifier)).
+`master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). hubusd selects the module of every slave with it and calls its functions ([hubusd](daemon.md#module-functions)).
 
 A module is a constant structure. A device whose bytes and commands can be described as data needs no code:
 
@@ -182,7 +182,23 @@ static const hubus_module_t module = {
 const hubus_module_t *hubus_module_entry(void) { return &module; }
 ```
 
-Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperature.c`. The keys of the entities are part of MQTT topics, so they have only letters, digits, `_` and `-` (at most 23), and a module has at most 8 entities. A device that needs code adds functions to the structure, such as `on_set`, which gets a typed `hubus_value_t` and sends commands through `hubus_module_host_t`. They never run in the bus thread. `test/test_module.c` has a complete example.
+Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperature.c`. The keys of the entities are part of MQTT topics, so they have only letters, digits, `_` and `-` (at most 23), and a module has at most 8 entities. A device that needs code adds functions to the structure:
+
+| Function | Purpose |
+|---|---|
+| `create(host)`, `destroy(self)` | The state of the module for one slave, `hubus_module_instance_t`. Optional, but they come together. `create` returns `NULL` if it cannot. |
+| `on_frame(self, host, kind, data, len, gap)` | A frame of the slave. `gap`: frames were lost before it. |
+| `on_set(self, host, entity, value)` | A value for an entity without fixed commands, as a typed `hubus_value_t`: a bool, RGB, or text. Returns `HUBUS_MODULE_REJECTED` for a value it does not take. |
+
+A master calls them on a thread of the module, never on its bus thread, and one after the other for one module. A function has to return in a short time: in hubusd a call that takes longer than `modules.call_timeout_ms` stops the module ([hubusd](daemon.md#module-functions)). A function reaches the master only through `hubus_module_host_t`, which it may also keep until `destroy` has returned:
+
+| Function | Purpose |
+|---|---|
+| `host->send(host, opcode, args, len)` | Queues a command to this slave. Opcode `0` or `0x10..0xFF`, at most 31 bytes with the opcode. |
+| `host->set_state(host, key, text)` | Publishes the value of an entity of this slave that no frame reports, such as the state of a light. |
+| `host->log(host, text)` | A line for the log of the master, for example why a value was refused. |
+
+They only queue, so they return at once, with `HUBUS_MODULE_REJECTED` for what is never allowed and `HUBUS_MODULE_FAILED` if the queue is full. What depends on the bus shows up in the log only. `test/test_module.c` and `daemon/hubusd_ledstrip.c` have complete examples.
 
 | Function | Purpose |
 |---|---|

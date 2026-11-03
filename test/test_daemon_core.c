@@ -5,9 +5,14 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
+#include "hubus_crc.h"
 #include "hubus_sim.h"
 #include "hubusd_core.h"
+#include "hubusd_ledc.h"
+#include "hubusd_modules.h"
+#include "ledvm.h"
 #include "unity.h"
 
 /* ---- fake MQTT ------------------------------------------------------------------ */
@@ -97,7 +102,7 @@ static void assert_contains(const char *topic, const char *needle)
 
 /* ---- simulated devices (behave like the example firmware) ---------------------------- */
 
-enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97, DEV_NO_ENTITIES = 0x98 };
+enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97, DEV_NO_ENTITIES = 0x98, DEV_FUNC = 0xF0 };
 
 /* ---- modules of the test devices ---------------------------------------------------------------------------------- */
 
@@ -199,8 +204,120 @@ DEVICE_MODULE(temp_state, true, ENTITIES(temp_entity));
 DEVICE_MODULE(temp_two, false, ENTITIES(two_entities));
 DEVICE_MODULE(relay_second, false, ENTITIES(switch_second_entities));
 
+/* A module with functions: a light and a switch without fixed commands, and a sensor that frames fill as data. */
+#define OP_FUNC_COLOUR 0x40u
+#define OP_FUNC_POWER 0x41u
+#define OP_FUNC_BURST 0x42u
+#define FUNC_BURST_COMMANDS 45u
+
+static pthread_mutex_t func_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t func_changed = PTHREAD_COND_INITIALIZER;
+static unsigned func_live, func_created, func_destroyed, func_frames;
+static unsigned func_frame_byte;
+static hubus_frame_kind_t func_frame_kind;
+static bool func_frame_gap;
+static int func_hang; /* the next call of on_set waits until this is 0 */
+static unsigned func_hanging;
+static int func_create_fails;
+
+static hubus_module_instance_t *func_create(const hubus_module_host_t *host)
+{
+    static int instance;
+
+    (void)host;
+    pthread_mutex_lock(&func_lock);
+    func_created++;
+    if (!func_create_fails) {
+        func_live++;
+    }
+    pthread_mutex_unlock(&func_lock);
+    return func_create_fails ? NULL : (hubus_module_instance_t *)&instance;
+}
+
+static void func_destroy(hubus_module_instance_t *self)
+{
+    (void)self;
+    pthread_mutex_lock(&func_lock);
+    func_live--;
+    func_destroyed++;
+    pthread_mutex_unlock(&func_lock);
+}
+
+static void func_on_frame(hubus_module_instance_t *self, const hubus_module_host_t *host, hubus_frame_kind_t kind,
+                          const uint8_t *data, uint8_t len, bool gap)
+{
+    (void)self;
+    (void)host;
+    pthread_mutex_lock(&func_lock);
+    func_frames++;
+    func_frame_byte = len ? data[0] : 0;
+    func_frame_kind = kind;
+    func_frame_gap = gap;
+    pthread_mutex_unlock(&func_lock);
+}
+
+static hubus_module_status_t func_on_set(hubus_module_instance_t *self, const hubus_module_host_t *host,
+                                         const hubus_entity_t *entity, const hubus_value_t *value)
+{
+    uint8_t args[3];
+    unsigned i;
+
+    (void)self;
+    pthread_mutex_lock(&func_lock);
+    if (func_hang) {
+        func_hanging = 1;
+        pthread_cond_broadcast(&func_changed);
+        while (func_hang) {
+            pthread_cond_wait(&func_changed, &func_lock);
+        }
+        func_hanging = 0;
+    }
+    pthread_mutex_unlock(&func_lock);
+    if (strcmp(entity->key, "burst") == 0) {
+        for (i = 0; i < FUNC_BURST_COMMANDS; i++) {
+            args[0] = (uint8_t)i;
+            if (host->send(host, OP_FUNC_BURST, args, 1) != HUBUS_MODULE_OK) {
+                return HUBUS_MODULE_FAILED;
+            }
+        }
+        return HUBUS_MODULE_OK;
+    }
+    if (value->type == HUBUS_VALUE_RGB) {
+        if (value->as.rgb.r == 1) {
+            return HUBUS_MODULE_REJECTED;
+        }
+        args[0] = value->as.rgb.r;
+        args[1] = value->as.rgb.g;
+        args[2] = value->as.rgb.b;
+        (void)host->set_state(host, entity->key, "ON");
+        return host->send(host, OP_FUNC_COLOUR, args, 3);
+    }
+    args[0] = value->as.on ? 1 : 0;
+    (void)host->set_state(host, entity->key, value->as.on ? "ON" : "OFF");
+    return host->send(host, OP_FUNC_POWER, args, 1);
+}
+
+VARIANT_RULE(func_module, DEV_FUNC, VARIANT_PLAIN);
+VARIANT_RULE(func_fail_module, DEV_FUNC, VARIANT_STATE);
+static const hubus_entity_t func_entities[] = {
+    {.key = "lamp", .name = "Lamp", .component = HUBUS_COMPONENT_LIGHT},
+    {.key = "fan", .name = "Fan", .component = HUBUS_COMPONENT_SWITCH},
+    {.key = "burst", .name = "Burst", .component = HUBUS_COMPONENT_SWITCH},
+    {
+        .key = "relay",
+        .name = "Relay",
+        .component = HUBUS_COMPONENT_SWITCH,
+        .on = {.used = true, .opcode = 0x10, .n_args = 1, .args = {1}},
+        .off = {.used = true, .opcode = 0x10, .n_args = 1, .args = {0}},
+    },
+    {.key = "first", .name = "First byte", .component = HUBUS_COMPONENT_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
+};
+#define FUNCTIONS .create = func_create, .destroy = func_destroy, .on_frame = func_on_frame, .on_set = func_on_set
+DEVICE_MODULE(func_module, false, FUNCTIONS, ENTITIES(func_entities));
+DEVICE_MODULE(func_fail_module, false, FUNCTIONS, ENTITIES(func_entities));
+
 static const hubus_module_t *const test_modules[] = {
-    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_entities, &switch_plain, &temp_plain, &temp_state, &temp_two, &relay_second,
+    &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_entities, &switch_plain, &temp_plain, &temp_state, &temp_two, &relay_second, &func_module, &func_fail_module,
 };
 
 
@@ -214,6 +331,11 @@ typedef struct {
     uint8_t hwid[HUBUS_HWID_SERIAL + 4u];
     unsigned commands;
     unsigned captures;
+    uint8_t last_op;
+    uint8_t last_args[HUBUS_MAX_PAYLOAD];
+    uint8_t last_len;
+    uint8_t ops[16];      /* the first opcodes, as a history */
+    uint8_t code[64];     /* what PROG_WRITE delivered */
     int blind_phase;      /* 1: command received, 2: blind after its STOP */
     unsigned stop_mark;
     uint64_t blind_end_ms;
@@ -251,7 +373,18 @@ static void dev_command(void *ctx, uint8_t op, const uint8_t *args, uint8_t len)
 {
     sim_dev_t *v = ctx;
 
+    if (v->commands < sizeof v->ops) {
+        v->ops[v->commands] = op;
+    }
     v->commands++;
+    v->last_op = op;
+    v->last_len = len;
+    if (len) {
+        memcpy(v->last_args, args, len);
+    }
+    if (op == 0x43 && len >= 1 && args[0] + len - 1u <= sizeof v->code) { /* PROG_WRITE of the LED strip */
+        memcpy(&v->code[args[0]], &args[1], len - 1u);
+    }
     if (v->mcid == dev_blind_mcid && (dev_blind_op < 0 || dev_blind_op == op)) {
         v->blind_phase = 1;
         v->stop_mark = sim.n_stop;
@@ -437,6 +570,11 @@ void setUp(void)
     clock_ms = 100000;
     fail_publish = 0;
     dmn = NULL;
+    func_live = func_created = func_destroyed = func_frames = 0;
+    func_frame_byte = 0;
+    func_frame_gap = false;
+    func_hang = 0;
+    func_create_fails = 0;
 }
 
 void tearDown(void)
@@ -1450,13 +1588,399 @@ static void test_subscriptions_and_status_topic(void)
     standard_setup(base_yaml);
     sub_n = 0;
     hubusd_subscriptions(dmn, collect_sub, NULL);
-    TEST_ASSERT_EQUAL_UINT(6, sub_n);
+    TEST_ASSERT_EQUAL_UINT(7, sub_n);
     TEST_ASSERT_EQUAL_STRING("hubus/master/cmd/+", sub_topics[0]);
     TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/set", sub_topics[1]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[4]);
-    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[5]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/rgb/set", sub_topics[2]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[5]);
+    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[6]);
     TEST_ASSERT_EQUAL_UINT(strlen("hubus/master/status"), hubusd_status_topic(dmn, status, sizeof status));
     TEST_ASSERT_EQUAL_STRING("hubus/master/status", status);
+}
+
+/* ---- module functions ------------------------------------------------------------------------------------------ */
+
+static const char *func_yaml =
+    "mqtt:\n"
+    "  stats_interval_s: 0\n"
+    "bus:\n"
+    "  ping_interval_s: 0\n"
+    "  scan_interval_s: 0\n"
+    "  readback: none\n"
+    "modules:\n"
+    "  call_timeout_ms: 100\n"
+    "slaves:\n"
+    "  - mcid: 4\n"
+    "    name: Func\n"
+    "  - mcid: 6\n"
+    "    name: Second\n";
+
+static sim_dev_t *func_dev;
+
+static void func_setup(void)
+{
+    load(func_yaml);
+    func_dev = add_dev(4, DEV_FUNC);
+    add_dev(6, DEV_FUNC);
+    start_daemon();
+    settle();
+}
+
+static void sleep_ms(unsigned ms)
+{
+    struct timespec t = {(time_t)(ms / 1000u), (long)(ms % 1000u) * 1000000L};
+
+    nanosleep(&t, NULL);
+}
+
+/* The worker runs on its own thread with the real clock: steps until the test sees what it waits for. */
+#define PUMP_UNTIL(condition)                                  \
+    do {                                                       \
+        unsigned pump_;                                        \
+        for (pump_ = 0; pump_ < 3000u && !(condition); pump_++) { \
+            settle();                                          \
+            sleep_ms(1);                                       \
+        }                                                      \
+        settle();                                              \
+        TEST_ASSERT_TRUE_MESSAGE((condition), #condition);     \
+    } while (0)
+
+static unsigned func_read(const unsigned *value)
+{
+    unsigned v;
+
+    pthread_mutex_lock(&func_lock);
+    v = *value;
+    pthread_mutex_unlock(&func_lock);
+    return v;
+}
+
+static void func_set_hang(int on)
+{
+    pthread_mutex_lock(&func_lock);
+    func_hang = on;
+    pthread_cond_broadcast(&func_changed);
+    pthread_mutex_unlock(&func_lock);
+}
+
+static void test_functions_get_one_instance_per_slave_and_one_thread_per_module(void)
+{
+    hubusd_config_t *nc = malloc(sizeof *nc);
+    char err[200];
+    const char *yaml = "bus:\n  scan_interval_s: 0\n  ping_interval_s: 0\nslaves:\n  - mcid: 6\n";
+
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    TEST_ASSERT_EQUAL_UINT(2, func_created);
+
+    TEST_ASSERT_NOT_NULL(nc);
+    TEST_ASSERT_EQUAL_INT(0, hubusd_config_parse(yaml, strlen(yaml), nc, err, sizeof err));
+    hubusd_request_reload(dmn, nc); /* slave 4 goes away, slave 6 keeps its instance */
+    settle();
+    PUMP_UNTIL(func_read(&func_destroyed) == 1u);
+    TEST_ASSERT_EQUAL_UINT(1, func_live);
+    TEST_ASSERT_EQUAL_UINT(2, func_created);
+
+    hubusd_shutdown(dmn);
+    TEST_ASSERT_EQUAL_UINT(0, func_live);
+    TEST_ASSERT_EQUAL_UINT(2, func_destroyed);
+}
+
+static void test_light_on_off_and_colour_go_through_on_set(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    n_msgs = 0;
+
+    say("hubus/slave/4/lamp/set", "on");
+    PUMP_UNTIL(func_dev->last_op == OP_FUNC_POWER);
+    TEST_ASSERT_EQUAL_UINT8(1, func_dev->last_args[0]);
+    assert_last("hubus/slave/4/lamp/state", "ON");
+
+    say("hubus/slave/4/lamp/rgb/set", " 10, 20 ,30 ");
+    PUMP_UNTIL(func_dev->last_op == OP_FUNC_COLOUR);
+    TEST_ASSERT_EQUAL_UINT8(3, func_dev->last_len);
+    TEST_ASSERT_EQUAL_UINT8(10, func_dev->last_args[0]);
+    TEST_ASSERT_EQUAL_UINT8(20, func_dev->last_args[1]);
+    TEST_ASSERT_EQUAL_UINT8(30, func_dev->last_args[2]);
+
+    say("hubus/slave/4/fan/set", "OFF");
+    PUMP_UNTIL(func_dev->last_op == OP_FUNC_POWER);
+    TEST_ASSERT_EQUAL_UINT8(0, func_dev->last_args[0]);
+    assert_last("hubus/slave/4/fan/state", "OFF");
+}
+
+static void test_values_that_cannot_be_used_are_rejected(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    n_msgs = 0;
+
+    say("hubus/slave/4/lamp/rgb/set", "red");
+    say("hubus/slave/4/lamp/rgb/set", "1,2");
+    say("hubus/slave/4/lamp/rgb/set", "256,0,0");
+    say("hubus/slave/4/lamp/set", "bright");
+    say("hubus/slave/4/fan/rgb/set", "1,2,3");
+    say("hubus/slave/4/first/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(6, dmn->stats.commands_rejected);
+    TEST_ASSERT_EQUAL_UINT(0, func_dev->commands);
+
+    say("hubus/slave/4/lamp/rgb/set", "1,2,3"); /* the function does not take it */
+    PUMP_UNTIL(dmn->stats.commands_rejected == 7u);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "rejected the value") >= 1);
+}
+
+static void test_a_fixed_command_needs_no_function(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    say("hubus/slave/4/relay/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_HEX8(0x10, func_dev->last_op);
+}
+
+static void test_frames_reach_on_frame_with_kind_and_gap(void)
+{
+    uint8_t b = 0x5A;
+
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    TEST_ASSERT_EQUAL_INT(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 0, &b, 1, 0));
+    PUMP_UNTIL(func_read(&func_frame_byte) == 0x5Au);
+    TEST_ASSERT_EQUAL(HUBUS_FRAME_EVENT, func_frame_kind);
+    TEST_ASSERT_FALSE(func_frame_gap);
+    TEST_ASSERT_NOT_NULL(last("hubus/slave/4/first/state")); /* the data of a module is decoded as ever */
+}
+
+static void test_a_long_series_of_commands_is_not_lost(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    say("hubus/slave/4/burst/set", "ON");
+    PUMP_UNTIL(func_dev->commands == FUNC_BURST_COMMANDS);
+    TEST_ASSERT_EQUAL_UINT8(FUNC_BURST_COMMANDS - 1u, func_dev->last_args[0]);
+    TEST_ASSERT_EQUAL_UINT(0, dmn->stats.queue_full);
+}
+
+static void test_a_function_that_hangs_stops_only_its_module(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    func_set_hang(1);
+    say("hubus/slave/4/lamp/set", "ON");
+    PUMP_UNTIL(func_read(&func_hanging) == 1u);
+    clock_ms += 50;
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, count_containing("hubus/slave/4/info", "\"module_failed\":true"));
+    clock_ms += 100;
+    settle();
+    assert_contains("hubus/slave/4/info", "\"module_failed\":true");
+    assert_contains("hubus/slave/6/info", "\"module_failed\":true");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "did not return within 100 ms") >= 1);
+
+    /* no more calls, but everything that is data still works */
+    n_msgs = 0;
+    say("hubus/slave/4/lamp/set", "OFF");
+    settle();
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "has failed") >= 1);
+    say("hubus/slave/4/relay/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_HEX8(0x10, func_dev->last_op);
+
+    func_set_hang(0);
+    hubusd_shutdown(dmn);
+    TEST_ASSERT_EQUAL_UINT(0, func_destroyed); /* a failed module gets no more calls */
+}
+
+static void test_create_that_fails_is_logged_and_set_is_rejected(void)
+{
+    func_create_fails = 1;
+    func_setup();
+    PUMP_UNTIL(count_containing("hubus/master/log", "could not create") >= 2u);
+    say("hubus/slave/4/lamp/set", "ON");
+    PUMP_UNTIL(count_containing("hubus/master/log", "has no instance") >= 1u);
+    TEST_ASSERT_EQUAL_UINT(0, func_dev->commands);
+}
+
+static void test_discovery_of_lights_and_switches_without_commands(void)
+{
+    func_setup();
+    assert_contains("homeassistant/light/hubus_4_lamp/config", "\"command_topic\":\"hubus/slave/4/lamp/set\"");
+    assert_contains("homeassistant/light/hubus_4_lamp/config", "\"rgb_command_topic\":\"hubus/slave/4/lamp/rgb/set\"");
+    assert_contains("homeassistant/light/hubus_4_lamp/config", "\"state_topic\":\"hubus/slave/4/lamp/state\"");
+    TEST_ASSERT_NULL(strstr(last("homeassistant/light/hubus_4_lamp/config"), "state_on"));
+    assert_contains("homeassistant/switch/hubus_4_fan/config", "\"command_topic\":\"hubus/slave/4/fan/set\"");
+    assert_contains("hubus/slave/4/info", "\"module_failed\":false");
+}
+
+/* ---- the module of the LED strip -------------------------------------------------------------------------------- */
+
+#define OP_FILL 0x41u
+#define OP_SHOW 0x42u
+#define OP_PROG_WRITE 0x43u
+#define OP_PROG_RUN 0x44u
+
+static sim_dev_t *strip;
+
+static void strip_setup(void)
+{
+    static const hubus_module_t *const modules[] = {&hubusd_ledstrip_module};
+
+    load("mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 0\n  scan_interval_s: 0\n  readback: none\nslaves:\n  - mcid: 3\n");
+    dev_force_variant = 1;
+    strip = add_dev(3, 0x84);
+    start_daemon();
+    hubusd_set_modules(dmn, modules, 1);
+    settle();
+    PUMP_UNTIL(last("hubus/slave/3/info") != NULL);
+}
+
+/* Steps until the slave has got `n` commands. A SHOW makes it blind for 4 ms, so the clock has to go on. */
+static void strip_until_commands(unsigned n)
+{
+    unsigned k;
+
+    for (k = 0; k < 2000u && strip->commands < n; k++) {
+        clock_ms += 5;
+        settle();
+        sleep_ms(1);
+    }
+    TEST_ASSERT_EQUAL_UINT(n, strip->commands);
+}
+
+static void test_the_strip_offers_a_lamp_an_animation_and_a_button(void)
+{
+    strip_setup();
+    assert_contains("homeassistant/light/hubus_3_lamp/config", "\"rgb_command_topic\":\"hubus/slave/3/lamp/rgb/set\"");
+    assert_contains("homeassistant/text/hubus_3_animation/config", "\"command_topic\":\"hubus/slave/3/animation/set\"");
+    assert_contains("homeassistant/text/hubus_3_animation/config", "\"max\":95");
+    assert_contains("homeassistant/binary_sensor/hubus_3_button/config", "\"state_topic\":\"hubus/slave/3/button/state\"");
+}
+
+static void test_the_lamp_fills_the_strip_with_its_colour(void)
+{
+    strip_setup();
+    say("hubus/slave/3/lamp/rgb/set", "255,10,20");
+    strip_until_commands(2);
+    TEST_ASSERT_EQUAL_HEX8(OP_FILL, strip->ops[0]);
+    TEST_ASSERT_EQUAL_HEX8(OP_SHOW, strip->ops[1]);
+    TEST_ASSERT_EQUAL_UINT8(1, strip->last_args[0]); /* seq */
+    PUMP_UNTIL(last("hubus/slave/3/lamp/state") != NULL);
+    assert_last("hubus/slave/3/lamp/state", "ON");
+
+    say("hubus/slave/3/lamp/set", "ON"); /* Home Assistant sends this after the colour */
+    clock_ms += 5;
+    settle();
+    sleep_ms(5);
+    settle();
+    TEST_ASSERT_EQUAL_UINT(2, strip->commands);
+
+    say("hubus/slave/3/lamp/set", "OFF");
+    strip_until_commands(4);
+    TEST_ASSERT_EQUAL_UINT8(2, strip->last_args[0]);
+    PUMP_UNTIL(strcmp(last("hubus/slave/3/lamp/state"), "OFF") == 0);
+}
+
+static void test_a_formula_is_compiled_and_sent_as_a_program(void)
+{
+    static const char *formula = "hsv(i * 4 + (t >> 3), 255, sin8((t >> 2) + i * 16))";
+    uint8_t code[LEDVM_CODE_MAX];
+    uint8_t len;
+
+    strip_setup();
+    say("hubus/slave/3/animation/set", formula);
+    strip_until_commands(2);
+    len = hubusd_ledc_compile(formula, code, NULL, 0);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_WRITE, strip->ops[0]);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_RUN, strip->ops[1]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(code, strip->code, len);
+    TEST_ASSERT_EQUAL_UINT8(4, strip->last_len);
+    TEST_ASSERT_EQUAL_UINT8(len, strip->last_args[0]);
+    TEST_ASSERT_EQUAL_UINT8(hubus_crc8(code, len), strip->last_args[1]);
+    TEST_ASSERT_EQUAL_UINT8(LEDVM_LAYOUT_GRB, strip->last_args[2]);
+    TEST_ASSERT_TRUE(strip->last_args[3] > 0u);
+    PUMP_UNTIL(last("hubus/slave/3/animation/state") != NULL);
+    assert_last("hubus/slave/3/animation/state", formula);
+    assert_last("hubus/slave/3/lamp/state", "ON");
+}
+
+static void test_a_long_program_goes_in_pieces(void)
+{
+    /* more than the 29 bytes one PROG_WRITE takes */
+    static const char *formula = "v0 = v0 + 1; v1 = v1 + 2; v2 = v2 + 3; v3 = v3 + 4; rgb(v0 + v1 + v2, v3 + i, t + n)";
+    uint8_t code[LEDVM_CODE_MAX];
+    uint8_t len = hubusd_ledc_compile(formula, code, NULL, 0);
+
+    TEST_ASSERT_TRUE(len > 29u);
+    strip_setup();
+    say("hubus/slave/3/animation/set", formula);
+    strip_until_commands(3);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_WRITE, strip->ops[0]);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_WRITE, strip->ops[1]);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_RUN, strip->ops[2]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(code, strip->code, len);
+}
+
+static void test_a_formula_that_is_wrong_is_rejected_with_the_reason(void)
+{
+    strip_setup();
+    n_msgs = 0;
+    say("hubus/slave/3/animation/set", "rgb(1, 2, foo)");
+    PUMP_UNTIL(count_containing("hubus/master/log", "unknown name 'foo'") >= 1u);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "rejected the value") >= 1);
+    TEST_ASSERT_EQUAL_UINT(0, strip->commands);
+    TEST_ASSERT_NULL(last("hubus/slave/3/animation/state"));
+}
+
+static void test_the_lamp_ends_an_animation_and_none_returns_to_the_lamp(void)
+{
+    strip_setup();
+    say("hubus/slave/3/lamp/rgb/set", "1,2,3");
+    strip_until_commands(2);
+    say("hubus/slave/3/animation/set", "rgb(i, 0, 0)");
+    strip_until_commands(4);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_RUN, strip->last_op);
+
+    say("hubus/slave/3/lamp/set", "ON"); /* the same colour, but the strip shows the animation */
+    strip_until_commands(6);
+    TEST_ASSERT_EQUAL_HEX8(OP_SHOW, strip->last_op);
+    PUMP_UNTIL(strcmp(last("hubus/slave/3/animation/state"), "none") == 0);
+
+    say("hubus/slave/3/animation/set", "rgb(i, 0, 0)");
+    strip_until_commands(8);
+    say("hubus/slave/3/animation/set", "");
+    strip_until_commands(10);
+    TEST_ASSERT_EQUAL_HEX8(OP_SHOW, strip->last_op);
+}
+
+static void test_after_a_power_up_the_strip_gets_back_what_it_showed(void)
+{
+    uint8_t report[3] = {0, 0, 0}; /* no SHOW, no program: what the slave reports after a power-up */
+
+    strip_setup();
+    say("hubus/slave/3/animation/set", "rgb(i, 0, 0)");
+    strip_until_commands(2);
+    TEST_ASSERT_EQUAL_INT(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 0, report, 3, 0));
+    strip_until_commands(4);
+    TEST_ASSERT_EQUAL_HEX8(OP_PROG_RUN, strip->last_op);
+
+    say("hubus/slave/3/lamp/rgb/set", "1,2,3");
+    strip_until_commands(6);
+    TEST_ASSERT_EQUAL_INT(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 0, report, 3, 0));
+    strip_until_commands(8);
+    TEST_ASSERT_EQUAL_HEX8(OP_SHOW, strip->last_op);
+}
+
+static void test_a_refused_program_is_reported(void)
+{
+    uint8_t report[3] = {0, 0, 2}; /* PROG_REFUSED */
+
+    strip_setup();
+    say("hubus/slave/3/animation/set", "rgb(i, 0, 0)");
+    strip_until_commands(2);
+    TEST_ASSERT_EQUAL_INT(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 0, report, 3, 0));
+    PUMP_UNTIL(strcmp(last("hubus/slave/3/animation/state"), "refused by the slave") == 0);
 }
 
 static void test_empty_payloads_arrive_as_null(void)
@@ -1704,6 +2228,23 @@ int main(void)
     RUN_TEST(test_reload_adds_and_removes_slaves);
     RUN_TEST(test_shutdown_publishes_offline_and_resets_the_bus);
     RUN_TEST(test_subscriptions_and_status_topic);
+    RUN_TEST(test_functions_get_one_instance_per_slave_and_one_thread_per_module);
+    RUN_TEST(test_light_on_off_and_colour_go_through_on_set);
+    RUN_TEST(test_values_that_cannot_be_used_are_rejected);
+    RUN_TEST(test_a_fixed_command_needs_no_function);
+    RUN_TEST(test_frames_reach_on_frame_with_kind_and_gap);
+    RUN_TEST(test_a_long_series_of_commands_is_not_lost);
+    RUN_TEST(test_a_function_that_hangs_stops_only_its_module);
+    RUN_TEST(test_create_that_fails_is_logged_and_set_is_rejected);
+    RUN_TEST(test_discovery_of_lights_and_switches_without_commands);
+    RUN_TEST(test_the_strip_offers_a_lamp_an_animation_and_a_button);
+    RUN_TEST(test_the_lamp_fills_the_strip_with_its_colour);
+    RUN_TEST(test_a_formula_is_compiled_and_sent_as_a_program);
+    RUN_TEST(test_a_long_program_goes_in_pieces);
+    RUN_TEST(test_a_formula_that_is_wrong_is_rejected_with_the_reason);
+    RUN_TEST(test_the_lamp_ends_an_animation_and_none_returns_to_the_lamp);
+    RUN_TEST(test_after_a_power_up_the_strip_gets_back_what_it_showed);
+    RUN_TEST(test_a_refused_program_is_reported);
     RUN_TEST(test_empty_payloads_arrive_as_null);
     RUN_TEST(test_messages_from_another_thread);
     return UNITY_END();

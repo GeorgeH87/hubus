@@ -169,7 +169,49 @@ The master needs no protocol changes and no changes to the master library: the c
 
 With the default `readback: slave`, hubusd reads the state back after every command once the blind time is over; after a `SHOW` the state carries its `seq`, which confirms that the frame was sent, and after a `PROG_RUN` byte 2 says whether the program runs. `readback: none` saves that state read when the confirmation is not needed.
 
-Through MQTT the strip can already be driven with raw commands on the `cmd` topic ([hubusd topics](daemon.md#commands-subscribed)):
+The module `ledstrip` (`daemon/hubusd_ledstrip.c`) turns the strip into entities, so that it appears in Home Assistant without any configuration:
+
+```yaml
+slaves:
+  - mcid: 11
+    name: Hall strip
+```
+
+| Entity | Kind | Topics below `hubus/slave/11/` | Effect |
+|---|---|---|---|
+| `lamp` | light | `lamp/set` takes `ON` or `OFF`, `lamp/rgb/set` takes `r,g,b`, `lamp/state` reports `ON` or `OFF` | A `FILL` and a `SHOW`. `ON` without a colour gives white or the last colour. This ends an animation. |
+| `animation` | text | `animation/set` takes a formula, `animation/state` reports it | Compiles the formula and sends it with `PROG_WRITE` and `PROG_RUN`, at 50 frames per second. `none` or an empty text ends it and returns to the lamp. |
+| `button` | binary sensor | `button/state` | The first byte of the state. |
+
+```sh
+mosquitto_pub -t hubus/slave/11/lamp/rgb/set -m '255,80,0'
+mosquitto_pub -t hubus/slave/11/animation/set -m 'hsv(i * 4 + (t >> 3), 255, sin8((t >> 2) + i * 16))'
+mosquitto_pub -t hubus/slave/11/animation/set -m 'none'
+```
+
+A formula has at most 95 characters. A formula that is wrong is refused, with the reason and the position on `hubus/master/log`; the strip keeps what it shows. After a power-up the slave reports an event with no `SHOW` and no program, and the module sends the colour or the program again. If a slave refuses a program, `animation/state` says so.
+
+### Formulas
+
+```text
+v0 = v0 + 1;                     # optional assignments to the variables v0..v3, each ending with ';'
+hsv(i * 4 + (t >> 3), 255, v0)   # the colour: rgb(r, g, b), rgbw(r, g, b, w), or hsv(h, s, v)
+```
+
+| Part | Meaning |
+|---|---|
+| Numbers | `0..65535`, decimal or `0x` hexadecimal |
+| `i`, `n`, `t`, `rand` | Index of the LED, number of LEDs, time in ms, a random number |
+| `p0..p7`, `v0..v3` | [Parameters](#animations) and variables |
+| `sin8(a)`, `tri8(a)`, `abs(a)`, `min(a, b)`, `max(a, b)` | The functions of the [instructions](#instructions) |
+| `prev(c)` | What channel `c` of this LED holds: `0` R, `1` G, `2` B, `3` W |
+| `?:`, `\|`, `^`, `&`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `<<`, `>>`, `+`, `-`, `*`, `/`, `%`, unary `-`, `!`, `~` | As in C, with the same precedence. The bytecode has no jumps, so `c ? a : b` computes both sides. |
+
+The compiler checks what the slave will check: a program of at most 48 bytes that needs at most eight values on the stack. The parameters come from raw commands (`PARAM`). The module assumes the byte order of the WS2812B; another strip needs another module.
+
+### Raw Commands
+
+Through MQTT the strip can also be driven with raw commands on the `cmd` topic ([hubusd topics](daemon.md#commands-subscribed)):
 
 ```sh
 mosquitto_pub -t hubus/slave/11/cmd -m '0x41 0 0 0 180 0 255 0'   # FILL: all 60 LEDs red (GRB 00 FF 00)
@@ -184,14 +226,4 @@ mosquitto_pub -t hubus/slave/11/cmd -m '0x43 0 8 9 4 0 3 41 2 0 8 34 32 51 34 0 
 mosquitto_pub -t hubus/slave/11/cmd -m '0x44 19 71 0 20'                      # PROG_RUN: 19 bytes, CRC 71, GRB, 20 ms
 ```
 
-A compiler from formulas to bytecode in hubusd is not implemented yet.
-
-The commands of one frame or program are separate queue entries: if the queue overflows, part of a frame can be lost ([hubusd](daemon.md#how-it-works)). A topic that takes a whole frame would avoid that; it is not implemented yet. A lost program piece is caught by the CRC.
-
-The button is the entity `button` of the module `ledstrip`, a binary sensor with the topic `hubus/slave/11/button/state`; it appears in Home Assistant without any configuration:
-
-```yaml
-slaves:
-  - mcid: 11
-    name: Hall strip
-```
+The raw commands of one frame or program are separate queue entries: if the queue overflows, part of a frame can be lost ([hubusd](daemon.md#how-it-works)). A topic that takes a whole frame would avoid that; it is not implemented yet. A lost program piece is caught by the CRC. The commands of the module do not have this problem: they wait until the queue has room.

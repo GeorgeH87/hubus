@@ -1,5 +1,6 @@
 #include "hubusd_core.h"
 #include "hubusd_modules.h"
+#include "hubusd_worker.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -13,6 +14,9 @@
 #include "hubusd_json.h"
 
 #define PAYLOAD_MAX 1024
+#define MODULE_STOP_WAIT_MS 2000u
+
+static void reject(hubusd_t *d, const char *fmt, ...);
 
 /* ---- helpers ------------------------------------------------------------------ */
 
@@ -152,6 +156,40 @@ static int info_has_state(const hubusd_slave_t *s)
     return s->module && s->module->has_state;
 }
 
+/* ---- module functions ------------------------------------------------------------------------------------------- */
+
+static int module_has_functions(const hubus_module_t *m)
+{
+    return m->create != NULL || m->on_frame != NULL || m->on_set != NULL;
+}
+
+/* The worker of a module, started on demand. NULL if the module has none (yet). */
+static hubusd_worker_t *worker_of(hubusd_t *d, const hubus_module_t *m, int start)
+{
+    size_t k, slot = HUBUS_MODULE_SET_MAX;
+
+    for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
+        if (d->worker[k] && hubusd_worker_module(d->worker[k]) == m) {
+            return d->worker[k];
+        }
+        if (!d->worker[k] && slot == HUBUS_MODULE_SET_MAX) {
+            slot = k;
+        }
+    }
+    if (!start || d->stopping || slot == HUBUS_MODULE_SET_MAX) {
+        return NULL;
+    }
+    d->worker[slot] = hubusd_worker_start(m);
+    return d->worker[slot];
+}
+
+static int module_failed(hubusd_t *d, const hubus_module_t *m)
+{
+    hubusd_worker_t *w = m ? worker_of(d, m, 0) : NULL;
+
+    return w && hubusd_worker_failed(w);
+}
+
 static int slave_readback(const hubusd_t *d, unsigned mcid)
 {
     const hubusd_slave_t *s = &d->slave[mcid];
@@ -283,6 +321,11 @@ static unsigned queue_depth(hubusd_t *d)
     return n;
 }
 
+static int queue_has_room(hubusd_t *d)
+{
+    return queue_depth(d) < HUBUSD_QUEUE_LEN;
+}
+
 static void enqueue_reject(hubusd_t *d, const char *fmt, ...)
 {
     hubusd_request_t r;
@@ -403,7 +446,7 @@ static void publish_diagnosis(hubusd_t *d, int force)
 
 static void publish_stats(hubusd_t *d)
 {
-    char buf[1024];
+    char buf[1280];
     char t[160];
     jw_t w;
     const hubus_master_counters_t *c = &d->master.counters;
@@ -438,6 +481,7 @@ static void publish_stats(hubusd_t *d)
     pthread_mutex_lock(&d->lock);
     jw_uint(&w, "queue_full", d->stats.queue_full);
     pthread_mutex_unlock(&d->lock);
+    jw_uint(&w, "module_jobs_dropped", d->stats.module_jobs_dropped);
     jw_uint(&w, "publish_errors", d->stats.publish_errors);
     jw_str(&w, "bus", bus_text(d));
     jw_obj_end(&w);
@@ -514,6 +558,7 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
         jw_bool(&w, "update", m->has_update);
         jw_uint(&w, "max_command", m->max_command);
         jw_bool(&w, "blind", hubus_module_has_blind_time(m));
+        jw_bool(&w, "module_failed", module_failed(d, m));
     }
     jw_bool(&w, "updater", info_device_type(s) == HUBUS_HWID_TYPE_UPDATER);
     jw_arr_begin(&w, "entities");
@@ -541,11 +586,9 @@ static void master_identifier(const hubusd_t *d, char *out, size_t size)
     snprintf(out, size, "hubusd_%s", id);
 }
 
-/* Home Assistant entities of the components a module can offer without functions. */
 static int entity_has_discovery(const hubus_entity_t *e)
 {
-    return e->component == HUBUS_COMPONENT_SENSOR || e->component == HUBUS_COMPONENT_BINARY_SENSOR ||
-           e->component == HUBUS_COMPONENT_SWITCH;
+    return e->component < HUBUS_COMPONENT_COUNT;
 }
 
 static void entity_object(unsigned mcid, const hubus_entity_t *e, char *out, size_t size)
@@ -576,9 +619,14 @@ static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_ent
     jw_str(&w, "unique_id", object);
     topic(d, t, sizeof t, "slave/%u/%s/state", mcid, e->key);
     jw_str(&w, "state_topic", t);
-    if (e->component == HUBUS_COMPONENT_SWITCH) {
+    if (e->component == HUBUS_COMPONENT_SWITCH || e->component == HUBUS_COMPONENT_LIGHT ||
+        e->component == HUBUS_COMPONENT_TEXT) {
         topic(d, t, sizeof t, "slave/%u/%s/set", mcid, e->key);
         jw_str(&w, "command_topic", t);
+    }
+    if (e->component == HUBUS_COMPONENT_LIGHT) {
+        topic(d, t, sizeof t, "slave/%u/%s/rgb/set", mcid, e->key);
+        jw_str(&w, "rgb_command_topic", t);
     }
     if ((text = hubusd_unit_text(e->unit)) != NULL) {
         jw_str(&w, "unit_of_measurement", text);
@@ -588,6 +636,8 @@ static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_ent
     }
     if (e->component == HUBUS_COMPONENT_SENSOR) {
         jw_str(&w, "state_class", "measurement");
+    } else if (e->component == HUBUS_COMPONENT_TEXT) {
+        jw_uint(&w, "max", HUBUS_MODULE_TEXT_MAX);
     } else {
         jw_str(&w, "payload_on", "ON");
         jw_str(&w, "payload_off", "OFF");
@@ -820,6 +870,182 @@ static void resolve_module(hubusd_t *d, unsigned mcid)
     }
 }
 
+/* ---- instances of module functions, and what they produce ------------------------------------------------------------- */
+
+/* Queues a create or destroy. False only if it has to be tried again: the queue is full now. A module that has failed is
+ * not called any more, so there is nothing to wait for. */
+static int post_lifecycle(hubusd_t *d, hubusd_worker_t *w, hubusd_job_kind_t kind, unsigned mcid)
+{
+    hubusd_job_t job;
+
+    memset(&job, 0, sizeof job);
+    job.kind = kind;
+    job.mcid = (uint8_t)mcid;
+    return hubusd_worker_post(w, &job) || hubusd_worker_failed(w) || d->stopping;
+}
+
+/* Keeps one instance per slave whose module has functions: creates the ones that are missing, destroys the ones whose slave
+ * or module is gone. Only queues jobs; the worker does the work. A create or destroy never gets lost: what does not fit into
+ * a queue now is done in a later step. */
+static void sync_instances(hubusd_t *d)
+{
+    unsigned mcid;
+
+    d->sync_again = 0;
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        hubusd_slave_t *s = &d->slave[mcid];
+        const hubus_module_t *want = (!d->stopping && s->configured && s->module && module_has_functions(s->module)) ? s->module : NULL;
+        hubusd_worker_t *w;
+
+        if (want == s->inst_module) {
+            continue;
+        }
+        if (s->inst_module && (w = worker_of(d, s->inst_module, 0)) != NULL &&
+            !post_lifecycle(d, w, HUBUSD_JOB_DESTROY, mcid)) {
+            d->sync_again = 1;
+            continue;
+        }
+        s->inst_module = NULL;
+        if (!want) {
+            continue;
+        }
+        w = worker_of(d, want, 1);
+        if (!w) {
+            log_event(d, 2, "module %s: no instance for slave %u: its thread cannot be started", want->name, mcid);
+        } else if (hubusd_worker_failed(w)) {
+            log_event(d, 2, "module %s: no instance for slave %u: the module has failed", want->name, mcid);
+        } else if (post_lifecycle(d, w, HUBUSD_JOB_CREATE, mcid)) {
+            s->inst_module = want;
+        } else {
+            d->sync_again = 1;
+        }
+    }
+}
+
+/* Passes a frame of a slave to the on_frame function of its module. A repeated frame is not news for the module. */
+static void post_frame(hubusd_t *d, hubusd_slave_t *s, const hubus_slave_frame_t *f, const char *result, uint8_t lost)
+{
+    hubusd_worker_t *w;
+    hubusd_job_t job;
+
+    if (!s->inst_module || !s->inst_module->on_frame || strcmp(result, "duplicate") == 0 ||
+        !(w = worker_of(d, s->inst_module, 0)) || hubusd_worker_failed(w)) {
+        return;
+    }
+    memset(&job, 0, sizeof job);
+    job.kind = HUBUSD_JOB_FRAME;
+    job.mcid = f->mcid;
+    job.frame_kind = strcmp(result, "state") == 0 ? HUBUS_FRAME_STATE : HUBUS_FRAME_EVENT;
+    job.gap = lost > 0u || strcmp(result, "gap") == 0 || s->jobs_lost;
+    job.len = f->len;
+    memcpy(job.data, f->payload, f->len);
+    if (hubusd_worker_post(w, &job)) {
+        s->jobs_lost = 0;
+    } else {
+        s->jobs_lost = 1;
+        d->stats.module_jobs_dropped++;
+    }
+}
+
+/* The commands and states that module functions have produced since the last step. Returns 1 if there were any. What does not
+ * fit into the command queue stays with the worker until the next step: a module gets told only when its own queue is full. */
+static int drain_modules(hubusd_t *d)
+{
+    int busy = 0;
+    size_t k;
+    hubusd_out_t o;
+
+    for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
+        hubusd_worker_t *w = d->worker[k];
+        const hubus_module_t *m = w ? hubusd_worker_module(w) : NULL;
+
+        while (w && queue_has_room(d) && hubusd_worker_take(w, &o)) {
+            hubusd_slave_t *s = &d->slave[o.mcid];
+
+            busy = 1;
+            if (!s->configured || s->module != m) {
+                continue; /* the slave went away or has another module: what the old one produced is stale */
+            }
+            switch (o.kind) {
+            case HUBUSD_OUT_SEND: {
+                hubusd_request_t r;
+
+                memset(&r, 0, sizeof r);
+                r.kind = HUBUSD_REQ_RAW;
+                r.target_len = HUBUS_TARGET_LEN_EXACT;
+                r.prefix = o.mcid;
+                r.opcode = o.opcode;
+                r.n_args = o.n;
+                memcpy(r.args, o.args, o.n);
+                enqueue(d, &r); /* like any command: in order, and after the blind time of the slave */
+                break;
+            }
+            case HUBUSD_OUT_STATE:
+                if (o.entity < m->n_entities) {
+                    snprintf(s->last_state[o.entity], sizeof s->last_state[o.entity], "%s", o.text);
+                    pub_topic(d, 1, o.text, "slave/%u/%s/state", o.mcid, m->entities[o.entity].key);
+                }
+                break;
+            case HUBUSD_OUT_LOG:
+                log_event(d, 1, "module %s, slave %u: %s", m->name, o.mcid, o.text);
+                break;
+            case HUBUSD_OUT_SET_REFUSED:
+                reject(d, "module %s %s the value for entity '%s' of slave %u", m->name,
+                       o.status == HUBUS_MODULE_REJECTED ? "rejected" : "could not use", m->entities[o.entity].key, o.mcid);
+                break;
+            case HUBUSD_OUT_NOT_RUNNING:
+                reject(d, "module %s has no instance for slave %u yet; entity '%s' was not set", m->name, o.mcid,
+                       m->entities[o.entity].key);
+                break;
+            case HUBUSD_OUT_CREATE_FAILED:
+                log_event(d, 2, "module %s could not create an instance for slave %u", m->name, o.mcid);
+                break;
+            }
+        }
+    }
+    return busy;
+}
+
+/* A call that has run longer than the limit stops its module. */
+static void check_workers(hubusd_t *d, uint64_t now)
+{
+    size_t k;
+    unsigned mcid;
+
+    for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
+        if (d->worker[k] && hubusd_worker_check(d->worker[k], now, d->cfg.modules.call_timeout_ms)) {
+            const hubus_module_t *m = hubusd_worker_module(d->worker[k]);
+
+            log_event(d, 2, "module %s: a function did not return within %u ms; the module is stopped until hubusd restarts",
+                      m->name, d->cfg.modules.call_timeout_ms);
+            for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+                if (d->slave[mcid].configured && d->slave[mcid].module == m) {
+                    publish_slave_info(d, mcid);
+                }
+            }
+        }
+    }
+}
+
+/* Destroys the instances and ends the threads. Can be called again. */
+static void stop_modules(hubusd_t *d)
+{
+    size_t k;
+
+    d->stopping = 1;
+    sync_instances(d);
+    for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
+        if (d->worker[k]) {
+            const char *name = hubusd_worker_module(d->worker[k])->name;
+
+            if (!hubusd_worker_stop(d->worker[k], MODULE_STOP_WAIT_MS)) {
+                log_event(d, 2, "module %s did not stop within %u ms", name, MODULE_STOP_WAIT_MS);
+            }
+            d->worker[k] = NULL;
+        }
+    }
+}
+
 static void bind_config(hubusd_t *d)
 {
     unsigned i;
@@ -840,6 +1066,7 @@ static void bind_config(hubusd_t *d)
         s->unknown_seen = 0;
         resolve_module(d, d->cfg.slaves[i].mcid);
     }
+    sync_instances(d);
 }
 
 void hubusd_set_modules(hubusd_t *d, const hubus_module_t *const *modules, size_t n_modules)
@@ -871,6 +1098,7 @@ void hubusd_init(hubusd_t *d, const hubusd_config_t *cfg, const hubus_master_hal
 
 void hubusd_destroy(hubusd_t *d)
 {
+    stop_modules(d);
     free(d->reload_cfg);
     d->reload_cfg = NULL;
     pthread_mutex_destroy(&d->lock);
@@ -942,6 +1170,7 @@ static void deliver(hubusd_t *d, const hubus_slave_frame_t *f, const char *resul
             pub_topic(d, 1, text, "slave/%u/%s/state", f->mcid, e->key);
         }
     }
+    post_frame(d, s, f, result, lost);
 }
 
 static void on_data(void *ctx, const hubus_slave_frame_t *f, hubus_gen_result_t gen, uint8_t lost)
@@ -1005,6 +1234,7 @@ static void store_info(hubusd_t *d, unsigned mcid, const hubus_slave_frame_t *in
         if (before && before != s->module) {
             remove_slave_discovery(d, mcid, before); /* the entities of the module it had */
         }
+        sync_instances(d);
         publish_slave_info(d, mcid);
         publish_slave_discovery(d, mcid);
     }
@@ -1433,6 +1663,66 @@ static int request_waits(const hubusd_t *d, const hubusd_request_t *q)
     }
 }
 
+/* ON or OFF, in any case. */
+static int parse_on_off(const char *text, int *on)
+{
+    if (strcasecmp(text, "ON") == 0) {
+        *on = 1;
+        return 1;
+    }
+    if (strcasecmp(text, "OFF") == 0) {
+        *on = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* "r,g,b" with three numbers 0..255. */
+static int parse_rgb(const char *text, hubus_value_t *v)
+{
+    unsigned r, g, b;
+    char extra;
+
+    if (sscanf(text, " %u , %u , %u %c", &r, &g, &b, &extra) != 3 || r > 255u || g > 255u || b > 255u) {
+        return 0;
+    }
+    v->type = HUBUS_VALUE_RGB;
+    v->as.rgb.r = (uint8_t)r;
+    v->as.rgb.g = (uint8_t)g;
+    v->as.rgb.b = (uint8_t)b;
+    return 1;
+}
+
+/* Hands a value to the on_set function of the module of the slave. `text`: the content of a text value. */
+static void dispatch_set(hubusd_t *d, unsigned mcid, int entity, const hubus_value_t *value, const char *text)
+{
+    const hubusd_slave_t *s = &d->slave[mcid];
+    const char *key = s->module->entities[entity].key;
+    hubusd_worker_t *w = worker_of(d, s->module, 0);
+    hubusd_job_t job;
+
+    if (!s->module->on_set) {
+        reject(d, "entity '%s' of slave %u has no command and its module has no function for it", key, mcid);
+    } else if (w && hubusd_worker_failed(w)) {
+        reject(d, "module %s has failed and is not called any more", s->module->name);
+    } else if (!w || s->inst_module != s->module) {
+        reject(d, "module %s has no instance for slave %u", s->module->name, mcid);
+    } else {
+        memset(&job, 0, sizeof job);
+        job.kind = HUBUSD_JOB_SET;
+        job.mcid = (uint8_t)mcid;
+        job.entity = (uint8_t)entity;
+        job.value = *value;
+        if (text) {
+            snprintf(job.text, sizeof job.text, "%s", text);
+        }
+        if (!hubusd_worker_post(w, &job)) {
+            d->stats.module_jobs_dropped++;
+            reject(d, "module %s is busy: the value for entity '%s' of slave %u was dropped", s->module->name, key, mcid);
+        }
+    }
+}
+
 static void exec_request(hubusd_t *d, const hubusd_request_t *q)
 {
     hubus_status_t r;
@@ -1471,7 +1761,8 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
         const hubusd_slave_t *s = &d->slave[q->prefix];
         const hubus_module_command_t *cmd = NULL;
         const hubus_entity_t *e;
-        int idx;
+        hubus_value_t v;
+        int idx, on = 0;
 
         if (!s->configured) {
             reject(d, "slave %u is not configured", q->prefix);
@@ -1479,17 +1770,30 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
             reject(d, "slave %u has no module; use the raw command topic", q->prefix);
         } else if ((idx = hubus_module_find_entity(s->module, q->key)) < 0) {
             reject(d, "slave %u has no entity '%s'", q->prefix, q->key);
-        } else if ((e = &s->module->entities[idx])->component != HUBUS_COMPONENT_SWITCH) {
+        } else if (q->rgb) {
+            e = &s->module->entities[idx];
+            if (e->component != HUBUS_COMPONENT_LIGHT) {
+                reject(d, "entity '%s' of slave %u is no light and takes no colour", q->key, q->prefix);
+            } else if (!parse_rgb(q->text, &v)) {
+                reject(d, "'%s' is not a colour for entity '%s' (r,g,b with numbers 0..255)", q->text, q->key);
+            } else {
+                dispatch_set(d, q->prefix, idx, &v, NULL);
+            }
+        } else if ((e = &s->module->entities[idx])->component == HUBUS_COMPONENT_TEXT) {
+            v.type = HUBUS_VALUE_TEXT;
+            dispatch_set(d, q->prefix, idx, &v, q->text);
+        } else if (e->component != HUBUS_COMPONENT_SWITCH && e->component != HUBUS_COMPONENT_LIGHT) {
             reject(d, "entity '%s' of slave %u takes no commands", q->key, q->prefix);
-        } else if (strcasecmp(q->text, "ON") != 0 && strcasecmp(q->text, "OFF") != 0) {
+        } else if (!parse_on_off(q->text, &on)) {
             reject(d, "'%s' is not a valid command for entity '%s' (ON or OFF)", q->text, q->key);
         } else {
-            cmd = strcasecmp(q->text, "ON") == 0 ? &e->on : &e->off;
-            if (!cmd->used) {
-                reject(d, "entity '%s' of slave %u needs a function of its module, which hubusd does not call yet", q->key,
-                       q->prefix);
+            cmd = on ? &e->on : &e->off;
+            if (e->component == HUBUS_COMPONENT_SWITCH && cmd->used) {
+                send_exact(d, q->prefix, cmd->opcode, cmd->args, cmd->n_args, idx, on ? "ON" : "OFF");
             } else {
-                send_exact(d, q->prefix, cmd->opcode, cmd->args, cmd->n_args, idx, strcasecmp(q->text, "ON") == 0 ? "ON" : "OFF");
+                v.type = HUBUS_VALUE_BOOL;
+                v.as.on = on != 0;
+                dispatch_set(d, q->prefix, idx, &v, NULL);
             }
         }
         break;
@@ -1635,10 +1939,11 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
         r.prefix = (uint8_t)a;
         end++;
         slash = strchr(end, '/');
-        if (slash && slash > end && strcmp(slash + 1, "set") == 0) {
+        if (slash && slash > end && (strcmp(slash + 1, "set") == 0 || strcmp(slash + 1, "rgb/set") == 0)) {
             size_t key_len = (size_t)(slash - end);
 
             r.kind = HUBUSD_REQ_SET;
+            r.rgb = slash[1] == 'r';
             if (key_len >= sizeof r.key) {
                 enqueue_reject(d, "entity key in '%s' is too long", topic_in);
                 return;
@@ -1705,7 +2010,7 @@ void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg)
 
 void hubusd_subscriptions(const hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx)
 {
-    static const char *const filters[] = {"master/cmd/+", "slave/+/+/set", "slave/+/cmd", "slave/+/capture", "slave/+/read",
+    static const char *const filters[] = {"master/cmd/+", "slave/+/+/set", "slave/+/+/rgb/set", "slave/+/cmd", "slave/+/capture", "slave/+/read",
                                           "group/+/+/cmd"};
     char t[160];
     unsigned i;
@@ -1775,6 +2080,7 @@ static void apply_reload(hubusd_t *d, hubusd_config_t *nc)
             }
         }
     }
+    sync_instances(d);
     log_event(d, 0, "configuration reloaded: %u slaves", d->cfg.n_slaves);
     publish_all_retained(d);
 }
@@ -1809,6 +2115,13 @@ int hubusd_step(hubusd_t *d)
     }
     if (republish) {
         publish_all_retained(d);
+        busy = 1;
+    }
+    check_workers(d, now);
+    if (d->sync_again) {
+        sync_instances(d);
+    }
+    if (drain_modules(d)) {
         busy = 1;
     }
 
@@ -1931,6 +2244,7 @@ void hubusd_shutdown(hubusd_t *d)
         }
     }
     publish_master_status(d, 0);
+    stop_modules(d);
     if (d->bus == HUBUSD_BUS_OK) {
         (void)hubus_master_shutdown(&d->master);
     }

@@ -34,38 +34,8 @@ What is still open. The specification is complete except for values that can onl
 
 ## Master Modules
 
-- **Status:** open. The interface, the selection, the loading of plugins, and the entities of a module are implemented ([§6.10](../spec/06-operation.md#610-master-modules), [master library](../master-library.md#master-modules)); the functions of a module are not called yet.
-- **Problem:** a module function (`on_set`, `on_frame`) is plugin code that runs in the master process. It must not block the bus thread, which keeps the timing of the bus, and a function that hangs or crashes must not take the bus down with it more than it has to. A crash in a plugin ends the whole service today; systemd restarts it and the startup sequence recovers the bus ([§8.9](../spec/08-faults.md#89-master-stops-mid-transaction)).
-- **Direction:** the functions run on threads of their own, never on the bus thread; see the proposal below. Running a plugin in a process of its own would isolate crashes too, at the price of a second interface; decide once the first module with functions (the LED strip) exists.
-
-### Proposed Threading Model
-
-*Proposal of 2026-11-02, to be confirmed before it is implemented.*
-
-hubusd has two threads today: the MQTT thread only queues requests, and the bus thread owns the bus, the slave table, and everything published. The proposal keeps it that way.
-
-1. **The bus thread never calls a module function.** It puts jobs into the queue of the module: `create` and `destroy` of an instance per configured slave, `on_frame` for each frame of such a slave (a copy of at most 31 bytes), and `on_set` for a `set` message of an entity that has no fixed command. The queue is bounded (32 jobs). If it is full, the job is dropped, counted in the statistics, and the next `on_frame` of that slave says that frames were lost.
-2. **One worker thread per module that has functions**, started when its first instance is created. The calls of one module run one after the other in the order of the jobs; modules do not wait for each other, so a slow or hanging module costs only itself. Modules without functions, all built-in ones, cost no thread.
-3. **A function reaches hubusd only through `hubus_module_host_t`.** `host->send()` and the new `host->set_state()` touch neither the bus nor MQTT: they append to an output queue, which the bus thread empties in `hubusd_step()`. There a command is checked like a raw command (module present, `max_command`) and sent with `send_exact()`, so blind times, statistics, and readback apply; a state is cached and published like any other value. The bus thread stays the only owner of the bus, the slave table, and the MQTT state.
-4. **Time limit per call** (`modules.call_timeout_ms`, default 1000 ms). The bus thread compares the start time of the running call with the clock in every step. When it is exceeded the module is marked failed: logged, `"module_failed": true` in the info topic of its slaves, no more jobs. Everything that is data keeps working (decoding the entities, fixed commands, blind times); what needs a function does not. A thread cannot be stopped safely, so it is left alone and the plugin is never closed; only a restart brings the module back.
-5. **Instances** are created when a slave is configured and its module is known, and destroyed when the slave is removed, its module changes, or hubusd stops. `hubusd_shutdown()` queues the `destroy` calls and waits at most 2 s per module.
-6. **A crash in a plugin** still ends the service; systemd restarts it ([§8.9](../spec/08-faults.md#89-master-stops-mid-transaction)).
-
-What the interface needs for this (it has no users outside the repository, so it stays version 1):
-
-- `host->set_state(host, key, text)`: a function publishes the value of one of its entities, for example the state of a light that no frame reports. Without it a light would stay empty.
-- `on_frame(..., bool gap)`: frames were lost before this one, by a `GEN` gap or by a full queue. A module that reassembles fragments needs to know.
-- `on_set` gets a `hubus_value_t` that hubusd parses from the text: a switch takes `ON` or `OFF`, a light `ON`, `OFF`, or `r,g,b`.
-- A light in Home Assistant uses the default schema: `<key>/set` takes `ON` or `OFF`, `<key>/rgb/set` takes `r,g,b`, `<key>/state` reports `ON` or `OFF`. That needs no JSON parser in hubusd.
-
-Alternatives and why they are not proposed:
-
-| Alternative | Why not |
-|---|---|
-| Functions on the bus thread | Simple, no queues. A slave has no timeouts, so a long function only delays the bus, but a function that hangs stops everything. |
-| One worker thread for all modules | A module that hangs would stop the functions of all others. |
-| `pthread_cancel` for a late call | Cancelling a thread in the middle of plugin code can leave locks and memory in any state. |
-| A process per plugin | Isolates crashes, but needs a second interface and a copy of the data; kept for later. |
+- **Status:** one question left. The interface, the selection, the loading of plugins, the entities, and the [functions of a module](../daemon.md#module-functions) are implemented ([§6.10](../spec/06-operation.md#610-master-modules), [decisions](decisions.md#master-modules)); none of it has run on hardware yet.
+- **Open:** a crash in a plugin ends the whole service; systemd restarts it and the startup sequence recovers the bus ([§8.9](../spec/08-faults.md#89-master-stops-mid-transaction)). Running a plugin in a process of its own would isolate crashes too, at the price of a second interface and a copy of the data. Decide once the LED strip module has run for a while.
 
 ## D3: Fairness Strategy
 

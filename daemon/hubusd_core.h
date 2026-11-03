@@ -16,11 +16,13 @@
 
 #include "hubus_master.h"
 #include "hubus_module.h"
+#include "hubus_module_loader.h"
 #include "hubusd_config.h"
+#include "hubusd_worker.h"
 
 #define HUBUSD_VERSION "0.1.0"
 #define HUBUSD_QUEUE_LEN 32
-#define HUBUSD_TEXT_LEN 96
+#define HUBUSD_TEXT_LEN (HUBUS_MODULE_TEXT_MAX + 1u)
 #define HUBUSD_KEY_LEN (HUBUS_ENTITY_KEY_MAX + 1u)
 
 typedef struct {
@@ -62,6 +64,7 @@ typedef struct {
     uint8_t opcode;
     uint8_t n_args;
     uint8_t args[HUBUS_MAX_PAYLOAD];
+    uint8_t rgb;              /* SET: the text is a colour, from `<key>/rgb/set` */
     char key[HUBUSD_KEY_LEN]; /* SET: the entity */
     char text[HUBUSD_TEXT_LEN];
 } hubusd_request_t;
@@ -76,6 +79,7 @@ typedef struct {
     uint32_t commands_executed;
     uint32_t commands_rejected;
     uint32_t queue_full;
+    uint32_t module_jobs_dropped; /* work for a module function that its queue could not take */
     uint32_t publish_errors;
     uint32_t startups;
     uint32_t scans;
@@ -85,6 +89,8 @@ typedef struct {
     uint8_t configured;
     uint8_t cfg_index;
     const hubus_module_t *module;    /* selected by the HWID; NULL: unknown, not taken into operation */
+    const hubus_module_t *inst_module; /* the module whose worker has an instance for this slave (or is to get one) */
+    uint8_t jobs_lost;               /* a frame was not passed to the module: the next one says so */
     int online;                      /* -1 unknown, 0 offline, 1 online */
     unsigned ping_failures;
     uint8_t have_info;
@@ -92,7 +98,7 @@ typedef struct {
     uint64_t last_seen_ms;
     uint64_t next_ping_ms;
     uint64_t next_poll_ms;           /* next periodic state read (slave option poll_interval_s) */
-    char last_state[HUBUS_MODULE_ENTITIES_MAX][32]; /* published value per entity of the module */
+    char last_state[HUBUS_MODULE_ENTITIES_MAX][HUBUSD_TEXT_LEN]; /* published value per entity of the module */
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;
     uint8_t needs_refresh;           /* came online: read its state (REQUEST_STATE, or STATUS_CAPTURE without a state) */
@@ -104,6 +110,9 @@ typedef struct hubusd {
     hubusd_config_t cfg;
     const hubus_module_t *const *modules;
     size_t n_modules;
+    hubusd_worker_t *worker[HUBUS_MODULE_SET_MAX]; /* one per module whose functions have started; free slots are NULL */
+    int stopping;                                  /* the modules are being stopped */
+    int sync_again;                                /* an instance could not be created or destroyed yet: its queue was full */
     hubus_master_t master;
     hubusd_mqtt_t mqtt;
     hubusd_clock_t clock;

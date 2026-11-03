@@ -225,10 +225,10 @@ void ledvm_led(ledvm_t *vm, uint8_t *led, uint16_t i, uint16_t n, uint16_t t)
             o[0] = wrap((unsigned)(uint16_t)o[0] * (uint16_t)o[1]);
             break;
         case LEDVM_DIV: /* a / -1 as a negation: -32768 / -1 does not fit */
-            o[0] = o[1] == 0 ? 0 : o[1] == -1 ? wrap(0u - (uint16_t)o[0]) : (int16_t)(o[0] / o[1]);
+            o[0] = (int16_t)(o[1] == 0 ? 0 : o[1] == -1 ? wrap(0u - (uint16_t)o[0]) : o[0] / o[1]);
             break;
         case LEDVM_MOD:
-            o[0] = (o[1] == 0 || o[1] == -1) ? 0 : (int16_t)(o[0] % o[1]);
+            o[0] = (int16_t)((o[1] == 0 || o[1] == -1) ? 0 : o[0] % o[1]);
             break;
         case LEDVM_AND:
             o[0] = (int16_t)(o[0] & o[1]);

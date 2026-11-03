@@ -21,6 +21,7 @@
 #define HUBUS_MODULE_CMD_MAX_ARGS 8u
 #define HUBUS_MODULE_ENTITIES_MAX 8u /* per module */
 #define HUBUS_ENTITY_KEY_MAX 23u     /* characters; letters, digits, '_' and '-': it is part of an MQTT topic */
+#define HUBUS_MODULE_TEXT_MAX 95u    /* characters of a text value of an entity, in either direction */
 
 /* Number of elements of an array, for the counts in the structures below. */
 #define HUBUS_MODULE_LEN(array) ((uint8_t)(sizeof(array) / sizeof((array)[0])))
@@ -54,6 +55,7 @@ typedef enum {
     HUBUS_COMPONENT_BINARY_SENSOR,
     HUBUS_COMPONENT_SWITCH,
     HUBUS_COMPONENT_LIGHT,
+    HUBUS_COMPONENT_TEXT, /* free text from the user, for on_set */
     HUBUS_COMPONENT_COUNT
 } hubus_component_t;
 
@@ -116,7 +118,8 @@ typedef struct {
 typedef enum {
     HUBUS_VALUE_BOOL = 0,
     HUBUS_VALUE_NUMBER,
-    HUBUS_VALUE_RGB
+    HUBUS_VALUE_RGB,
+    HUBUS_VALUE_TEXT
 } hubus_value_type_t;
 
 /* A value for an entity, from the user. */
@@ -128,6 +131,7 @@ typedef struct {
         struct {
             uint8_t r, g, b;
         } rgb;
+        const char *text; /* at most HUBUS_MODULE_TEXT_MAX characters; valid during the call */
     } as;
 } hubus_value_t;
 
@@ -142,13 +146,25 @@ typedef enum {
     HUBUS_MODULE_FAILED    /* the command could not be queued */
 } hubus_module_status_t;
 
-/* What the master offers a module instance. */
+/*
+ * What the master offers a module instance. It stays valid until destroy() has returned. Its functions only queue their
+ * result; the master checks and executes it later on its bus thread, so they return at once and a refusal that depends on
+ * the bus (a command too long for the slave, a slave that went away) shows only in the log.
+ */
 typedef struct hubus_module_host hubus_module_host_t;
 struct hubus_module_host {
     void *ctx; /* of the master; modules do not touch it */
     uint8_t mcid;
-    /* Queues a command to this slave; the bus thread sends it. args may be NULL with len 0. */
+    /* Queues a command to this slave. The opcode is 0 (STATUS_CAPTURE) or 0x10..0xFF, opcode and arguments are at most 31
+     * bytes together; args may be NULL with len 0. HUBUS_MODULE_REJECTED for an opcode or length that is not allowed,
+     * HUBUS_MODULE_FAILED if the queue is full. */
     hubus_module_status_t (*send)(const hubus_module_host_t *host, uint8_t opcode, const uint8_t *args, uint8_t len);
+    /* Publishes the value of the entity `key` of this slave, for a value that no frame of the slave reports (the state of a
+     * light). `text` has at most HUBUS_MODULE_TEXT_MAX characters. Same return values as send. */
+    hubus_module_status_t (*set_state)(const hubus_module_host_t *host, const char *key, const char *text);
+    /* A line for the log of the master, for example why a value was refused; cut off after HUBUS_MODULE_TEXT_MAX characters.
+     * Same return values as send. */
+    hubus_module_status_t (*log)(const hubus_module_host_t *host, const char *text);
 };
 
 /* The state of a module for one slave. Each module defines this structure for itself; the master never looks inside. */
@@ -174,11 +190,21 @@ typedef struct {
     const hubus_entity_t *entities;
     uint8_t n_entities;
 
-    /* Optional functions, never called in the bus thread. create and destroy come together. */
+    /*
+     * Optional functions. A master calls them on a thread of the module, never on its bus thread: the calls of one module
+     * run one after the other, in the order of the events, and those of different modules run at the same time. A function
+     * has to return within the time limit of the master (hubusd: modules.call_timeout_ms); otherwise the module is
+     * stopped. create and destroy come together.
+     *
+     * create makes the instance for one slave, NULL if it cannot. destroy ends it. on_frame gets a frame of the slave
+     * (`gap`: frames were lost before it); on_set a value for an entity that has no fixed command, parsed from the text of
+     * the user: a bool for a switch or the on/off of a light, RGB for the colour of a light, text for a text entity. It
+     * returns HUBUS_MODULE_REJECTED for a value it does not take.
+     */
     hubus_module_instance_t *(*create)(const hubus_module_host_t *host);
     void (*destroy)(hubus_module_instance_t *self);
     void (*on_frame)(hubus_module_instance_t *self, const hubus_module_host_t *host, hubus_frame_kind_t kind,
-                     const uint8_t *data, uint8_t len);
+                     const uint8_t *data, uint8_t len, bool gap);
     hubus_module_status_t (*on_set)(hubus_module_instance_t *self, const hubus_module_host_t *host,
                                     const hubus_entity_t *entity, const hubus_value_t *value);
 } hubus_module_t;

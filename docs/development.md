@@ -110,7 +110,9 @@ The host tests run the slave core compiled for the host. `test_avr_slave` (label
 ### Daemon Tests
 
 - `test_daemon_config`: YAML tree, configuration (defaults, every error class with line numbers, unknown keys, secrets), the modules directory and the plugins of hubusd, profiles that are no longer supported, JSON writer.
-- `test_daemon_core`: `hubusd` against the bus simulation and a fake MQTT client: startup, discovery, events, commands and their validation, readback, polling, availability, statistics, line faults, reconnect, reload, shutdown, messages from a second thread.
+- `test_daemon_core`: `hubusd` against the bus simulation and a fake MQTT client: startup, discovery, events, commands and their validation, readback, polling, availability, statistics, line faults, reconnect, reload, shutdown, messages from a second thread, the functions of a module (instances, values, a function that hangs), and the module of the LED strip.
+- `test_module_worker`: the thread of a module on its own: the order of the calls, bounded queues, what the host functions accept, the time limit, and stopping a thread that hangs.
+- `test_ledc`: the compiler from formulas to LED bytecode. What it produces runs in the interpreter of the slave.
 - `hubusd_example_config`: `hubusd --check` on `daemon/hubusd.example.yaml`.
 - `hubusd_e2e` (`test/tools/e2e.sh`): a real mosquitto broker, `hubusd_sim` (the daemon on a simulated relay, button, and temperature sensor), and `mosquitto_pub`/`mosquitto_sub` as clients. Skipped if mosquitto is not installed.
 - Still open: an end-to-end test on hardware with Home Assistant ([roadmap](../TODO.md)).

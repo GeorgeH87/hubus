@@ -65,6 +65,7 @@ typedef struct {
 
     struct {
         char dir[200]; /* plugins (*.so) are loaded from here at the start; empty: only the built-in modules */
+        unsigned call_timeout_ms; /* a module function that runs longer stops the module */
     } modules;
 
     hubusd_slave_cfg_t slaves[HUBUSD_MAX_SLAVES];

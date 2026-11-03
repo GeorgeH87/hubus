@@ -104,6 +104,10 @@ if(HUBUSD_LIB_AVAILABLE)
         add_dependencies(test_daemon_config plugin_${plugin})
     endforeach()
     hubus_test(test_daemon_core hubusd_lib)
+    hubus_test(test_module_worker hubusd_lib)
+    hubus_test(test_ledc hubusd_lib)
+    target_include_directories(test_ledc PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+    target_include_directories(test_daemon_core PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
 endif()
 
 # Manual end-to-end tool: hubusd on a simulated bus with a relay, a button, and a temperature sensor.

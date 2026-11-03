@@ -106,6 +106,7 @@ static bool entity_valid(const hubus_module_t *m, const hubus_entity_t *e)
     case HUBUS_COMPONENT_SWITCH:
         return m->on_set != NULL || (e->on.used && e->off.used);
     case HUBUS_COMPONENT_LIGHT:
+    case HUBUS_COMPONENT_TEXT:
         return m->on_set != NULL;
     default:
         return false;
