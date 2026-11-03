@@ -409,6 +409,71 @@ static void test_no_slave(void)
     TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_NO_UPDATER, res.reason);
 }
 
+/* The application of the test device, as a module; its update support is what the tests below change. */
+static const hubus_module_rule_t app_rules[] = {{.pattern = {0xF4, 0x01}, .mask = {0xFF, 0xFF}, .len = 2}};
+#define APP_MODULE(id, update)                                                                              \
+    static const hubus_module_t id = {HUBUS_MODULE_INIT, .name = #id, .rules = app_rules, .n_rules = 1,     \
+                                      .max_command = HUBUS_MAX_PAYLOAD, .has_update = (update)}
+APP_MODULE(app_without_update, false);
+APP_MODULE(app_with_update, true);
+
+static void test_a_module_without_update_support_says_so_before_anything_is_sent(void)
+{
+    static const hubus_module_t *const modules[] = {&app_without_update};
+    hubus_update_image_t a = image(image_a, sizeof image_a);
+    hubus_update_result_t res;
+    hubus_slave_frame_t f;
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res)); /* an application runs now */
+    a.modules = modules;
+    a.n_modules = 1;
+    TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_update(&master, MCID, &a, NULL, NULL, &res));
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_NO_SUPPORT, res.reason);
+    TEST_ASSERT_EQUAL_STRING("the application of this slave has no update support", hubus_update_reason_str(res.reason));
+    TEST_ASSERT_EQUAL_UINT(0, res.pages);
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&master, MCID, &f));
+    TEST_ASSERT_EQUAL_HEX8(0xF4, f.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE]); /* it still runs its application */
+}
+
+static void test_a_module_with_update_support_lets_the_update_run(void)
+{
+    static const hubus_module_t *const modules[] = {&app_with_update};
+    hubus_update_image_t a = image(image_a, sizeof image_a);
+    hubus_update_result_t res;
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res)); /* an application runs now */
+    a.modules = modules;
+    a.n_modules = 1;
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res));
+}
+
+static void test_a_slave_without_a_module_is_tried_as_before(void)
+{
+    static const hubus_module_rule_t other_rule[] = {{.pattern = {0xF5}, .mask = {0xFF}, .len = 1}};
+    hubus_module_t other = app_without_update;
+    const hubus_module_t *const with_other[] = {&other};
+    hubus_update_image_t a = image(image_a, sizeof image_a);
+    hubus_update_result_t res;
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res)); /* an application runs now */
+    other.rules = other_rule;
+    a.modules = with_other;
+    a.n_modules = 1;
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res));
+}
+
+static void test_a_slave_in_its_updater_needs_no_support_of_a_module(void)
+{
+    static const hubus_module_t *const modules[] = {&app_without_update};
+    hubus_update_image_t a = image(image_a, sizeof image_a);
+    hubus_update_result_t res;
+
+    a.modules = modules;
+    a.n_modules = 1;
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res));
+}
+
 static void test_ihex(void)
 {
     static const char hex[] = ":020000020000FC\n"
@@ -441,6 +506,10 @@ int main(void)
     RUN_TEST(test_interrupted_update_leaves_the_updater);
     RUN_TEST(test_updater_refuses_bad_pages);
     RUN_TEST(test_no_slave);
+    RUN_TEST(test_a_module_without_update_support_says_so_before_anything_is_sent);
+    RUN_TEST(test_a_module_with_update_support_lets_the_update_run);
+    RUN_TEST(test_a_slave_without_a_module_is_tried_as_before);
+    RUN_TEST(test_a_slave_in_its_updater_needs_no_support_of_a_module);
     RUN_TEST(test_ihex);
     return UNITY_END();
 }

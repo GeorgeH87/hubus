@@ -33,6 +33,7 @@ const char *hubus_update_reason_str(hubus_update_reason_t r)
     switch (r) {
     case HUBUS_UPD_REASON_NONE: return "ok";
     case HUBUS_UPD_REASON_NO_UPDATER: return "slave did not switch to its updater";
+    case HUBUS_UPD_REASON_NO_SUPPORT: return "the application of this slave has no update support";
     case HUBUS_UPD_REASON_BAD_INFO: return "unusable updater info or state";
     case HUBUS_UPD_REASON_SIGNATURE: return "device signature does not match the image";
     case HUBUS_UPD_REASON_TOO_LARGE: return "image empty or larger than the application area";
@@ -153,6 +154,8 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
     uint8_t attempt;
     unsigned i;
 
+    const hubus_module_t *module;
+
     /* The application answers, or the updater if the slave already runs it (after an interrupted update). Whether an
      * application supports the update is a property of its module; one without support ignores UPDATE_ENTER. */
     for (i = 0; i < u->attempts; i++) {
@@ -165,6 +168,11 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
     }
     if (is_updater(f)) {
         return HUBUS_OK;
+    }
+    if (u->img->modules &&
+        hubus_module_select_info(u->img->modules, u->img->n_modules, f->payload, f->len, &module) == HUBUS_MODULE_FOUND &&
+        !module->has_update) {
+        return fail(u, HUBUS_UPD_REASON_NO_SUPPORT);
     }
     /* UPDATE_ENTER is fire-and-forget: if the application still answers, it was lost and is repeated. */
     for (attempt = 0; attempt < u->attempts; attempt++) {

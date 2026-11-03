@@ -127,13 +127,14 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 | `hubus_ihex_parse(text, len, out, size, &img_len)` | Reads an Intel HEX file (`avr-objcopy -O ihex`) into `out`, filled with `FF` where the file has no data; `img_len` is one past the highest address with data. Returns 0, or -1 for a malformed file or a bad checksum. |
 | `hubus_update_reason_str(reason)` | Text of a failure reason. |
 
-`hubus_update_image_t` holds `data` and `len` (the image from the start of the application area; for the ATtiny85 the HEX file of the application as built) and `signature` (three bytes such as `1E 93 0B`; all zero skips the check). `progress(ctx, done, total)` is called after every page and may be `NULL`.
+`hubus_update_image_t` holds `data` and `len` (the image from the start of the application area; for the ATtiny85 the HEX file of the application as built), `signature` (three bytes such as `1E 93 0B`; all zero skips the check), and optionally `modules` and `n_modules`, the modules of the master. `progress(ctx, done, total)` is called after every page and may be `NULL`.
 
 `hubus_update_result_t` tells what happened: `reason` (below), `page` (the page that failed), `last_result` (the updater's last write result), `pages` (pages written, including the invalidated and the final info page), and `retries` (repeated pages). A page is tried `retry_budget + 1` times, at least three.
 
 | `reason` | Meaning |
 |---|---|
-| `HUBUS_UPD_REASON_NO_UPDATER` | No answer from the updater after `UPDATE_ENTER`: no updater installed, an application without update support (its module says so), or no slave at this MCID. |
+| `HUBUS_UPD_REASON_NO_UPDATER` | No answer from the updater after `UPDATE_ENTER`: no updater installed, an application without update support whose module the master does not know, or no slave at this MCID. |
+| `HUBUS_UPD_REASON_NO_SUPPORT` | With `img.modules`: the module of the slave states no update support, so nothing was sent. |
 | `HUBUS_UPD_REASON_BAD_INFO` | The updater information or state is not usable. |
 | `HUBUS_UPD_REASON_SIGNATURE` | The device signature differs from `img.signature`. |
 | `HUBUS_UPD_REASON_TOO_LARGE` | The image is empty or does not fit in front of the info page. |
@@ -141,7 +142,7 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 | `HUBUS_UPD_REASON_WRITE` | A page failed every attempt. The slave stays in its updater; the update can be repeated. |
 | `HUBUS_UPD_REASON_NOT_STARTED` | After `UPDATE_LEAVE` the updater answered again: the application did not check out. |
 
-These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are. The command line example has `hubus_master_example update <mcid> <file.hex>`.
+These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are. The command line example has `hubus_master_example update <mcid> <file.hex>`; with `--modules <dir>` it loads the plugins of that directory, prints the module of a slave for `scan` and `info`, and hands the modules to the update.
 
 ## Master Modules
 
@@ -182,7 +183,7 @@ static const hubus_module_t module = {
 const hubus_module_t *hubus_module_entry(void) { return &module; }
 ```
 
-Built as a plugin with `gcc -shared -fPIC -I master -o temperature.so temperature.c`. The keys of the entities are part of MQTT topics, so they have only letters, digits, `_` and `-` (at most 23), and a module has at most 8 entities. A device that needs code adds functions to the structure:
+Built as a plugin with `gcc -shared -fPIC -I master -I core -o temperature.so temperature.c`. The keys of the entities are part of MQTT topics, so they have only letters, digits, `_` and `-` (at most 23), and a module has at most 8 entities. A device that needs code adds functions to the structure:
 
 | Function | Purpose |
 |---|---|
@@ -230,7 +231,9 @@ Every module is checked before it joins the set, and a plugin that fails is clos
 
 `hubus_module_set_load_dir()` reads the files ending in `.so` in the order of their names, so that the module that loses a conflict is always the same, and calls `report` for each file. `hubus_module_set_unload()` closes the plugins; do it after the last use of a module. `hubus_module_set_load_file()` goes by the file itself, not by its name: a file that is loaded gives the same module in a second set, and a file that was replaced gives a new one next to the old, so that a master can load a new set before it gives up the old one. `hubus_module_set_keep()` keeps a plugin in memory for good, for a module whose code a thread that cannot be stopped may still run. `set.trust_all` skips the permission check, for tests on file systems that have no permissions.
 
-A plugin is built with `gcc -shared -fPIC -I master -o temperature.so temperature.c`; `test/plugins/a_good.c` is a complete one.
+A plugin is built with `gcc -shared -fPIC -I master -I core -o temperature.so temperature.c`. `examples/plugin-dimmer/dimmer_plugin.c` is a complete one with functions, a light for a dimmer; the build makes it, and `cmake --install` puts it into `lib/hubus/modules`, the directory in the example of [`modules.dir`](daemon.md#configuration). `test/plugins/a_good.c` is one with data only.
+
+A plugin is machine code, so it is built per architecture: for 32-bit Raspberry Pi OS (`armhf`), for 64-bit Raspberry Pi OS (`arm64`), each with the compiler of that system or a matching cross compiler such as `arm-linux-gnueabihf-gcc` or `aarch64-linux-gnu-gcc`. The kernel can be 64-bit under a 32-bit system, so what counts is the architecture of hubusd (`file $(which hubusd)`). A plugin of the wrong architecture is refused at load time with `HUBUS_LOAD_OPEN`, and `detail` says so. Build it against the headers of the same version as hubusd; `hubus_module_validate()` refuses another interface version.
 
 ## Protocol Helpers
 

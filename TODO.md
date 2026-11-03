@@ -140,9 +140,9 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 - [x] Entities of the kind `light` and `text`, and switches without fixed commands, through `on_set`, with discovery.
 - [x] LED strip as a module: lamp, button, and animation formulas compiled to bytecode, sent as `PROG_WRITE` / `PROG_RUN` ([LED strip](docs/example-ledstrip.md#master-side)).
 - [x] Reload modules on `SIGHUP`: an unchanged plugin stays with its thread and instances, a replaced one becomes a new module once no function of the old one runs, and a reload that would leave a slave without a module changes nothing.
+- [x] Master example with modules (`--modules`): it names the module of a slave, and `hubus_master_update()` tells an application without update support (`HUBUS_UPD_REASON_NO_SUPPORT`) from a missing updater.
+- [x] Example plugin in the build (`examples/plugin-dimmer`), installed to `lib/hubus/modules`, with notes for 32 and 64 bit Raspberry Pi OS.
 
 Open:
 
-- [ ] **Master example and update**: `examples/master/master_example.c` prints the hardware identifier but knows no modules; `hubus_master_update()` cannot tell an application without update support from a missing updater (both show as `HUBUS_UPD_REASON_NO_UPDATER`) because the support is stated in the module.
-- [ ] **Example plugin in the build**: only the test plugins in `test/plugins/` exist. A documented example that CMake builds and installs, and notes for 32 and 64 bit Raspberry Pi OS (a plugin is built per architecture).
 - [ ] **Hardware test**: plugins, entities, and discovery on a Raspberry Pi with Home Assistant (together with the end-to-end test in section 10).

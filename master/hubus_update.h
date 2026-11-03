@@ -16,16 +16,22 @@
 #include <stdint.h>
 
 #include "hubus_master.h"
+#include "hubus_module.h"
 
 typedef struct {
     const uint8_t *data; /* application image, from the start of the application area (address 0 on classic tinyAVR) */
     uint32_t len;
     uint8_t signature[3]; /* expected device signature; all zero: not checked */
+    /* The modules of the master; may be NULL. With them an application whose module has no update support is told apart from
+     * a slave without an updater, and gets no UPDATE_ENTER. */
+    const hubus_module_t *const *modules;
+    size_t n_modules;
 } hubus_update_image_t;
 
 typedef enum {
     HUBUS_UPD_REASON_NONE = 0,
     HUBUS_UPD_REASON_NO_UPDATER,    /* the slave did not switch to its updater: none installed, or no update support */
+    HUBUS_UPD_REASON_NO_SUPPORT,    /* its module says that this application has no update support; nothing was sent */
     HUBUS_UPD_REASON_BAD_INFO,      /* the updater's SLAVE_INFO or state is not usable */
     HUBUS_UPD_REASON_SIGNATURE,     /* the device signature differs from the image's */
     HUBUS_UPD_REASON_TOO_LARGE,     /* empty image, or larger than the application area without the info page */

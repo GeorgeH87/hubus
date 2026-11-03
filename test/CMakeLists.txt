@@ -43,7 +43,9 @@ foreach(plugin ${HUBUS_TEST_PLUGINS})
     target_compile_options(plugin_${plugin} PRIVATE ${HUBUS_TEST_WARNINGS})
 endforeach()
 hubus_test(test_module_loader)
-target_compile_definitions(test_module_loader PRIVATE HUBUS_TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins")
+target_compile_definitions(test_module_loader PRIVATE HUBUS_TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins"
+    HUBUS_EXAMPLE_PLUGIN="$<TARGET_FILE:hubus_plugin_dimmer>")
+add_dependencies(test_module_loader hubus_plugin_dimmer)
 foreach(plugin ${HUBUS_TEST_PLUGINS})
     add_dependencies(test_module_loader plugin_${plugin})
 endforeach()
@@ -84,7 +86,8 @@ hubus_core_variant_test(test_slave_serial test_slave_serial.c HUBUS_ENABLE_SERIA
 # simulated bus. The core and the master are compiled again for the updater configuration.
 add_executable(test_update test_update.c support/update_app_core.c sim/hubus_sim.c
     ${HUBUS_CORE_SOURCES_ABS} ${PROJECT_SOURCE_DIR}/updater/hubus_updater.c
-    ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c)
+    ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c
+    ${PROJECT_SOURCE_DIR}/master/hubus_module.c)
 target_include_directories(test_update PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
     ${PROJECT_SOURCE_DIR}/updater sim support)
 target_compile_definitions(test_update PRIVATE

@@ -9,6 +9,7 @@
  *   --data N       GPIO offset of DATA (default 27)
  *   --rt PRIO      real-time priority (SCHED_FIFO, needs root)
  *   --pullup       enable the SoC pull-up on DATA (bench tests only)
+ *   --modules DIR  module plugins (docs/master-library.md): names the module of a slave, and tells the update about it
  *
  * Commands:
  *   scan                       group REQUEST_INFO scan (one transaction per slave)
@@ -26,7 +27,37 @@
 #include <time.h>
 
 #include "hubus_master_gpiod.h"
+#include "hubus_module_loader.h"
 #include "hubus_update.h"
+
+static hubus_module_set_t modules;
+
+static void print_load_report(void *ctx, const char *path, const hubus_load_result_t *r)
+{
+    (void)ctx;
+    if (r->status != HUBUS_LOAD_OK) {
+        fprintf(stderr, "%s: %s%s%s\n", path, hubus_load_status_str(r->status), r->detail[0] ? ": " : "", r->detail);
+    }
+}
+
+/* What a SLAVE_INFO says: version, speed class, hardware identifier, and the module for it, if plugins were loaded. */
+static void print_info(const hubus_slave_frame_t *f)
+{
+    const hubus_module_t *module;
+    unsigned k;
+
+    printf("mcid %2u: version %u speed class %u hwid:", f->mcid, HUBUS_INFO_VERSION(f->payload[HUBUS_INFO_BYTE0]),
+           HUBUS_INFO_SPEED_CLASS(f->payload[HUBUS_INFO_BYTE0]));
+    for (k = HUBUS_INFO_HWID; k < f->len; k++) {
+        printf(" %02X", f->payload[k]);
+    }
+    if (modules.n) {
+        hubus_module_match_t match = hubus_module_select_info(modules.module, modules.n, f->payload, f->len, &module);
+
+        printf(" module: %s", match == HUBUS_MODULE_FOUND ? module->name : match == HUBUS_MODULE_CONFLICT ? "(conflict)" : "(none)");
+    }
+    putchar('\n');
+}
 
 static void print_state(void *ctx, const hubus_slave_frame_t *f)
 {
@@ -100,6 +131,7 @@ int main(int argc, char **argv)
     int i = 1;
     int rc = 0;
 
+    hubus_module_set_init(&modules);
     while (i < argc && strncmp(argv[i], "--", 2) == 0) {
         if (strcmp(argv[i], "--pullup") == 0) {
             gcfg.internal_pullup = 1;
@@ -115,6 +147,9 @@ int main(int argc, char **argv)
             i += 2;
         } else if (i + 1 < argc && strcmp(argv[i], "--rt") == 0) {
             rt = (int)number(argv[i + 1]);
+            i += 2;
+        } else if (i + 1 < argc && strcmp(argv[i], "--modules") == 0) {
+            (void)hubus_module_set_load_dir(&modules, argv[i + 1], print_load_report, NULL);
             i += 2;
         } else {
             fprintf(stderr, "unknown option %s\n", argv[i]);
@@ -155,15 +190,7 @@ int main(int argc, char **argv)
         }
         for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
             if (scan.state[mcid] == HUBUS_SCAN_PRESENT) {
-                const hubus_slave_frame_t *f = &scan.info[mcid];
-                unsigned k;
-
-                printf("mcid %2u: version %u speed class %u hwid:", mcid, HUBUS_INFO_VERSION(f->payload[HUBUS_INFO_BYTE0]),
-                       HUBUS_INFO_SPEED_CLASS(f->payload[HUBUS_INFO_BYTE0]));
-                for (k = HUBUS_INFO_HWID; k < f->len; k++) {
-                    printf(" %02X", f->payload[k]);
-                }
-                printf("\n");
+                print_info(&scan.info[mcid]);
             } else if (scan.state[mcid] == HUBUS_SCAN_SUSPECT) {
                 printf("mcid %2u: suspected duplicate MCID or line problem\n", mcid);
             }
@@ -211,16 +238,10 @@ int main(int argc, char **argv)
         rc = s == HUBUS_OK ? 0 : fail("state", s);
     } else if (strcmp(argv[i], "info") == 0 && i + 1 < argc) {
         hubus_slave_frame_t f;
-        unsigned k;
 
         s = hubus_master_request_info(&master, (uint8_t)number(argv[i + 1]), &f);
         if (s == HUBUS_OK) {
-            printf("mcid %2u: version %u speed class %u hwid:", f.mcid, HUBUS_INFO_VERSION(f.payload[HUBUS_INFO_BYTE0]),
-                   HUBUS_INFO_SPEED_CLASS(f.payload[HUBUS_INFO_BYTE0]));
-            for (k = HUBUS_INFO_HWID; k < f.len; k++) {
-                printf(" %02X", f.payload[k]);
-            }
-            putchar('\n');
+            print_info(&f);
         }
         rc = s == HUBUS_OK ? 0 : fail("info", s);
     } else if (strcmp(argv[i], "send") == 0 && i + 2 < argc) {
@@ -256,6 +277,8 @@ int main(int argc, char **argv)
         memset(&img, 0, sizeof img);
         img.data = image;
         img.len = len;
+        img.modules = modules.module;
+        img.n_modules = modules.n;
         s = hubus_master_update(&master, (uint8_t)number(argv[i + 1]), &img, print_progress, NULL, &res);
         putchar('\n');
         if (s == HUBUS_ERR_UPDATE) {
@@ -274,5 +297,6 @@ int main(int argc, char **argv)
 done:
     (void)hubus_master_shutdown(&master);
     hubus_gpiod_close(gpio);
+    hubus_module_set_unload(&modules);
     return rc;
 }

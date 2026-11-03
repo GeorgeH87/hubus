@@ -58,6 +58,7 @@ target_compile_options(hubus_master PRIVATE ${HUBUS_WARNINGS})
 
 add_subdirectory(master)
 add_subdirectory(daemon)
+add_subdirectory(examples/plugin-dimmer)
 
 # ---------------------------------------------------------------------------
 # slave/ on the host (host HAL): lets tests exercise the public slave API
