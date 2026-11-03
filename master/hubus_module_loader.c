@@ -49,6 +49,7 @@ const char *hubus_module_error_str(hubus_module_error_t error)
     case HUBUS_MODULE_ERR_BLIND: return "bad blind times";
     case HUBUS_MODULE_ERR_ENTITY: return "bad entity";
     case HUBUS_MODULE_ERR_FUNCTIONS: return "bad functions";
+    case HUBUS_MODULE_ERR_FIRMWARE: return "bad firmware image";
     }
     return "unknown";
 }

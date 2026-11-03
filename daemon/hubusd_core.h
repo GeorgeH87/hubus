@@ -52,6 +52,7 @@ typedef enum {
     HUBUSD_REQ_CAPTURE,  /* STATUS_CAPTURE */
     HUBUSD_REQ_READ,     /* REQUEST_STATE: read the live state of one slave */
     HUBUSD_REQ_PROBE,    /* REQUEST_INFO to one MCID (prefix), configured or not */
+    HUBUSD_REQ_UPDATE,   /* firmware update of one slave (prefix) from a module; text: its name, or empty */
     HUBUSD_REQ_SCAN,
     HUBUSD_REQ_STATS,
     HUBUSD_REQ_REJECT    /* message that was invalid in the MQTT thread; reported by the bus thread */
@@ -91,6 +92,8 @@ typedef struct {
     const hubus_module_t *module;    /* selected by the HWID; NULL: unknown, not taken into operation */
     const hubus_module_t *inst_module; /* the module whose worker has an instance for this slave (or is to get one) */
     uint8_t jobs_lost;               /* a frame was not passed to the module: the next one says so */
+    uint8_t updating;                /* its firmware is being updated: no instance */
+    const hubus_module_t *update_module; /* the last update that did not finish came from this module; NULL: none */
     int online;                      /* -1 unknown, 0 offline, 1 online */
     unsigned ping_failures;
     uint8_t have_info;

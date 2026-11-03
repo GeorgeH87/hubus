@@ -163,6 +163,9 @@ hubus_module_error_t hubus_module_validate(const hubus_module_t *m)
     if (!entities_valid(m)) {
         return HUBUS_MODULE_ERR_ENTITY;
     }
+    if ((m->firmware == NULL) != (m->firmware_len == 0u) || (m->firmware != NULL && !m->has_update)) {
+        return HUBUS_MODULE_ERR_FIRMWARE;
+    }
     return HUBUS_MODULE_VALID;
 }
 

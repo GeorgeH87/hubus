@@ -111,6 +111,7 @@ The host tests run the slave core compiled for the host. `test_avr_slave` (label
 
 - `test_daemon_config`: YAML tree, configuration (defaults, every error class with line numbers, unknown keys, secrets), the modules directory and the plugins of hubusd, profiles that are no longer supported, JSON writer.
 - `test_daemon_core`: `hubusd` against the bus simulation and a fake MQTT client: startup, discovery, events, commands and their validation, readback, polling, availability, statistics, line faults, reconnect, reload, shutdown, messages from a second thread, the functions of a module (instances, values, a function that hangs), and the module of the LED strip.
+- `test_daemon_update`: firmware updates from a module, with `hubusd` against the real updater logic on the bus simulation: the trigger, progress, versions, a slave in its updater, a failed update that is repeated.
 - `test_module_worker`: the thread of a module on its own: the order of the calls, bounded queues, what the host functions accept, the time limit, and stopping a thread that hangs.
 - `test_ledc`: the compiler from formulas to LED bytecode. What it produces runs in the interpreter of the slave.
 - `hubusd_example_config`: `hubusd --check` on `daemon/hubusd.example.yaml`.

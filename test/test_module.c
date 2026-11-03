@@ -426,6 +426,21 @@ static void test_create_and_destroy_come_together(void)
     TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_FUNCTIONS, hubus_module_validate(&m));
 }
 
+static void test_a_firmware_image_needs_a_length_and_update_support(void)
+{
+    static const uint8_t image[4] = {1, 2, 3, 4};
+    hubus_module_t m = temperature_module;
+
+    m.firmware = image;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_FIRMWARE, hubus_module_validate(&m)); /* no length */
+    m.firmware_len = sizeof image;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_FIRMWARE, hubus_module_validate(&m)); /* no update support */
+    m.has_update = true;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, hubus_module_validate(&m));
+    m.firmware = NULL;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_FIRMWARE, hubus_module_validate(&m)); /* a length without an image */
+}
+
 /* ---- blind times ------------------------------------------------------------------------------------------------------ */
 
 static void test_blind_time_per_opcode_with_the_general_value_as_fallback(void)
@@ -636,6 +651,7 @@ int main(void)
     RUN_TEST(test_properties_and_blind_times_are_checked);
     RUN_TEST(test_entities_are_checked);
     RUN_TEST(test_create_and_destroy_come_together);
+    RUN_TEST(test_a_firmware_image_needs_a_length_and_update_support);
     RUN_TEST(test_blind_time_per_opcode_with_the_general_value_as_fallback);
     RUN_TEST(test_a_blind_time_only_for_one_opcode_counts_as_a_blind_time);
     RUN_TEST(test_entities_are_found_by_key);

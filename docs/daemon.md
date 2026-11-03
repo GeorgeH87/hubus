@@ -94,6 +94,7 @@ A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](sp
 | `hubus/slave/<n>/cmd` | `0x10 1 2` | Raw command: opcode, then argument bytes (numbers, separated by spaces or commas). Opcode `0x00` (status capture) or `0x10..0xFF`. |
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon collects and publishes it. |
 | `hubus/slave/<n>/read` | any | `REQUEST_STATE`: reads the live state of a slave that has one in one transaction and publishes it. Rejected for slaves without a state. |
+| `hubus/slave/<n>/update` | empty, or the name of a module | Starts a [firmware update](#firmware-updates) from the image of the module. Only a trigger: the image never comes over MQTT. |
 | `hubus/group/<prefix>/<len>/cmd` | as `cmd` | Group (`len` 0..5) or broadcast (`0/0`) command. Slaves never answer group commands; opcode `0` makes a group capture its states, which a burst then collects. |
 | `hubus/master/cmd/scan` | any | Commissioning scan ([§6.4](spec/06-operation.md#64-commissioning-scan-and-duplicate-mcids)); result on `hubus/master/scan`. |
 | `hubus/master/cmd/probe` | MCID `1..63` | One `REQUEST_INFO` to a single MCID, configured or not; result on `hubus/master/probe`. There is no function that polls all 63 MCIDs. |
@@ -110,6 +111,7 @@ Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, pa
 | `hubus/master/stats` | no | statistics (below), every `mqtt.stats_interval_s` and on request |
 | `hubus/master/diagnosis` | yes | `ok`, `suspected_duplicate_mcid` with the MCIDs, or `line_problem` |
 | `hubus/master/scan` | no | result of the last scan |
+| `hubus/slave/<n>/firmware` | yes | for a module with a firmware image, in the form of the update entity of Home Assistant: `installed_version`, `latest_version`, `in_progress`, `update_percentage` |
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `module`, `state_capable` |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
@@ -175,6 +177,7 @@ A slave without an event buffer, for example a sensor that is only read, never a
 With `mqtt.discovery: true` (default) the daemon publishes retained discovery messages under `<discovery prefix>/<component>/<object>/config` (prefix `homeassistant` by default):
 
 - one entity per entity of the module, of the kind it states: `switch`, `binary_sensor`, `sensor`, `light` (the default schema with `rgb_command_topic`), or `text`, with unit and device class where it has them. Its object id is `hubus_<n>_<key>`; a module with one entity gives it the name of the device, one with several gives each its own name;
+- an `update` entity for a slave whose module has a [firmware image](#firmware-updates), with version, progress, and an install button;
 - each slave is a device with MCID, firmware version, and serial number, grouped under the **HUBUS master** device and available only while master and slave are online;
 - the master device has diagnostic sensors: uptime, bus errors, retries, duplicate frames, lost buffer contents, rejected commands, bus state. The diagnosis is on `hubus/master/diagnosis`.
 
@@ -207,6 +210,16 @@ What cannot be described as data is code: a module may have the functions `creat
 - **Each module has a queue of 32 jobs.** When it is full, a frame is dropped, counted in `module_jobs_dropped`, and the next frame of that slave has `gap` set; a `set` is rejected. `create` and `destroy` wait for room and are never dropped.
 - **A function that does not return within `modules.call_timeout_ms`** stops its module: it is logged, and `module_failed` in `hubus/slave/<n>/info` becomes `true` for all its slaves. The module gets no more calls, so `set` for an entity that needs a function is rejected. What is data keeps working: decoding the entities, fixed commands, blind times. A thread cannot be stopped safely, so it is left alone; only a new plugin file with `SIGHUP` or a restart brings the module back.
 - **A crash in a function** ends the service, since plugins run in its process; systemd restarts it, and the startup sequence recovers the bus ([§8.9](spec/08-faults.md#89-master-stops-mid-transaction)).
+
+## Firmware Updates
+
+The firmware of a slave comes with its module: a plugin holds the application image ([master library](master-library.md#firmware-image-in-a-module)), so that module and firmware always fit, and MQTT only triggers the update. Whoever can reach the broker can start an update, but cannot bring in other firmware. Nothing happens by itself. The built-in modules have no image; a slave without one stays with `hubus_master_example update` ([master library](master-library.md#firmware-update)).
+
+- **Trigger:** `hubus/slave/<n>/update`, or the install button in Home Assistant, which sends the name of the module. An empty payload means the module of the slave. A slave that runs an application takes only the image of its own module, and an image of the version it already runs is rejected; another version, also an older one, is loaded. Home Assistant offers an update only if the image is newer.
+- **The bus stands still** during an update, about 10 s for 6 KB with the default timing ([§6.8](spec/06-operation.md#68-firmware-update)). Other slaves wait, and their events stay in their buffers. Commands wait in the command queue; what does not fit is dropped and counted in `queue_full`. The progress appears on `hubus/slave/<n>/firmware`.
+- **The instance of the module** is destroyed before the update and created anew afterwards, for what the slave then says it is. The entities stay as they are if it keeps its module.
+- **If an update fails,** the reason is on `hubus/master/log`, and the slave usually waits in its updater (`updater` in its `info`). Until hubusd restarts, an empty trigger repeats the update.
+- **A slave in its updater** no longer says what it is: its hardware identifier is only `0xFF`. After a restart of hubusd the trigger has to name the module: `mosquitto_pub -t hubus/slave/5/update -m my-module`. The updater checks the device signature, if the module states one, but not whether this is the right firmware for the device: choosing the module is up to you.
 
 ## How It Works
 
@@ -249,5 +262,5 @@ flowchart LR
 - The daemon reports only what the protocol carries: `SLAVE_INFO`, states, and event data. Counters inside a slave appear only if its firmware writes them into its event buffer or state.
 - The timing defaults are conservative placeholders until measured on hardware ([open issues](project/open-issues.md)).
 - Only the libgpiod v2 API is supported.
-- Firmware updates ([§6.8](spec/06-operation.md#68-firmware-update)) are not run by the daemon: it shows which slaves can be updated (`update` in `info`) and which wait in their updater (`updater`), and the raw `cmd` topic refuses the update opcodes. To update, stop the service and run `hubus_master_example update <mcid> <file.hex>` ([master library](master-library.md#firmware-update)).
+- Firmware updates ([§6.8](spec/06-operation.md#68-firmware-update)) run only from a [module with an image](#firmware-updates), and the bus stands still meanwhile. For a module without one: stop the service and run `hubus_master_example update <mcid> <file.hex>` ([master library](master-library.md#firmware-update)). The raw `cmd` topic refuses the update opcodes.
 - Not yet run on a Raspberry Pi with real slaves; tested against the bus simulation, with a fake MQTT client and end to end with a real broker ([development](development.md#daemon-tests)).

@@ -120,7 +120,7 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of the master example.
 - [x] Bus simulation test with bit errors and an interrupted update.
 - [ ] Updater for the tinyAVR 0/1/2-series (protected boot section).
-- [ ] Updates from hubusd over MQTT.
+- [x] Updates from hubusd: the image comes with the module, MQTT only triggers it ([hubusd](docs/daemon.md#firmware-updates)). The bus stands still meanwhile; a version in steps, so that other slaves are served, is open.
 
 ## 12. Master Modules and Hardware Identifier
 

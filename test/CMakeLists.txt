@@ -97,6 +97,22 @@ target_compile_options(test_update PRIVATE ${HUBUS_TEST_WARNINGS})
 add_test(NAME test_update COMMAND test_update)
 set_tests_properties(test_update PROPERTIES TIMEOUT 120)
 
+# Firmware updates from a module through hubusd: like test_update, with the daemon on top. Its own core and master come
+# before the libraries, so that the updater configuration is the one that counts.
+if(HUBUSD_LIB_AVAILABLE)
+    add_executable(test_daemon_update test_daemon_update.c support/update_app_core.c sim/hubus_sim.c
+        ${HUBUS_CORE_SOURCES_ABS} ${PROJECT_SOURCE_DIR}/updater/hubus_updater.c
+        ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c)
+    target_include_directories(test_daemon_update PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
+        ${PROJECT_SOURCE_DIR}/updater sim support)
+    target_compile_definitions(test_daemon_update PRIVATE
+        HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800)
+    target_link_libraries(test_daemon_update PRIVATE unity hubusd_lib)
+    target_compile_options(test_daemon_update PRIVATE ${HUBUS_TEST_WARNINGS})
+    add_test(NAME test_daemon_update COMMAND test_daemon_update)
+    set_tests_properties(test_daemon_update PROPERTIES TIMEOUT 120)
+endif()
+
 # The slave firmware on simulated AVR devices (simavr).
 add_subdirectory(avr)
 

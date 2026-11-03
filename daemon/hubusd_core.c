@@ -11,6 +11,7 @@
 #include <strings.h>
 
 #include "hubus_frame.h"
+#include "hubus_update.h"
 #include "hubusd_json.h"
 
 #define PAYLOAD_MAX 1024
@@ -517,6 +518,45 @@ static void publish_slave_stats(hubusd_t *d, unsigned mcid)
     pub_json(d, &w, 0, t);
 }
 
+/* The module whose image this slave could get: its own, or for a slave in its updater the one its last update came from. */
+static const hubus_module_t *firmware_module(const hubusd_slave_t *s)
+{
+    return (s->module && s->module->firmware) ? s->module : s->update_module;
+}
+
+/* What is installed and what the module brings, in the form of the update entity of Home Assistant. `percent` < 0: no progress. */
+static void publish_firmware(hubusd_t *d, unsigned mcid, int in_progress, int percent)
+{
+    const hubusd_slave_t *s = &d->slave[mcid];
+    const hubus_module_t *m = firmware_module(s);
+    char buf[200], t[160], version[12];
+    int installed = info_field(s, HUBUS_HWID_VERSION);
+    jw_t w;
+
+    if (!m) {
+        return;
+    }
+    jw_init(&w, buf, sizeof buf);
+    jw_obj_begin(&w, NULL);
+    if (installed >= 0) {
+        snprintf(version, sizeof version, "%d", installed);
+        jw_str(&w, "installed_version", version);
+    } else {
+        jw_null(&w, "installed_version");
+    }
+    snprintf(version, sizeof version, "%u", (unsigned)m->firmware_version);
+    jw_str(&w, "latest_version", version);
+    jw_bool(&w, "in_progress", in_progress);
+    if (percent >= 0) {
+        jw_uint(&w, "update_percentage", (uint64_t)percent);
+    } else {
+        jw_null(&w, "update_percentage");
+    }
+    jw_obj_end(&w);
+    topic(d, t, sizeof t, "slave/%u/firmware", mcid);
+    pub_json(d, &w, 1, t);
+}
+
 static void publish_slave_info(hubusd_t *d, unsigned mcid)
 {
     char buf[640];
@@ -569,6 +609,7 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
     jw_obj_end(&w);
     topic(d, t, sizeof t, "slave/%u/info", mcid);
     pub_json(d, &w, 1, t);
+    publish_firmware(d, mcid, 0, -1);
 }
 
 /* ---- Home Assistant discovery -------------------------------------------------------------- */
@@ -596,17 +637,53 @@ static void entity_object(unsigned mcid, const hubus_entity_t *e, char *out, siz
     snprintf(out, size, "hubus_%u_%s", mcid, e->key);
 }
 
+/* What every discovery message of a slave ends with, in an open object: when it is available, and the device it belongs to. */
+static void jw_slave_device(hubusd_t *d, jw_t *w, unsigned mcid)
+{
+    char t[160], master[96], serial[2 * HUBUS_MAX_PAYLOAD + 1], fw[16], dev[48];
+    const hubusd_slave_t *s = &d->slave[mcid];
+
+    snprintf(dev, sizeof dev, "hubus_%u", mcid);
+    master_identifier(d, master, sizeof master);
+
+    jw_arr_begin(w, "availability");
+    jw_obj_begin(w, NULL);
+    topic(d, t, sizeof t, "master/status");
+    jw_str(w, "topic", t);
+    jw_obj_end(w);
+    jw_obj_begin(w, NULL);
+    topic(d, t, sizeof t, "slave/%u/availability", mcid);
+    jw_str(w, "topic", t);
+    jw_obj_end(w);
+    jw_arr_end(w);
+    jw_str(w, "availability_mode", "all");
+    jw_obj_begin(w, "device");
+    jw_arr_begin(w, "identifiers");
+    jw_str(w, NULL, dev);
+    jw_arr_end(w);
+    jw_str(w, "name", slave_name(d, mcid));
+    jw_str(w, "manufacturer", "HUBUS");
+    jw_str(w, "model", s->module->name);
+    if (info_field(s, HUBUS_HWID_VERSION) >= 0) {
+        snprintf(fw, sizeof fw, "%d", info_field(s, HUBUS_HWID_VERSION));
+        jw_str(w, "sw_version", fw);
+    }
+    if (info_serial(s, serial)) {
+        jw_str(w, "serial_number", serial);
+    }
+    jw_str(w, "via_device", master);
+    jw_obj_end(w);
+}
+
 static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_entity_t *e)
 {
     char buf[1400];
-    char t[160], tt[160], object[64], master[96], serial[2 * HUBUS_MAX_PAYLOAD + 1], fw[16], dev[48];
+    char t[160], tt[160], object[64];
     const hubusd_slave_t *s = &d->slave[mcid];
     const char *text;
     jw_t w;
 
     entity_object(mcid, e, object, sizeof object);
-    snprintf(dev, sizeof dev, "hubus_%u", mcid);
-    master_identifier(d, master, sizeof master);
 
     jw_init(&w, buf, sizeof buf);
     jw_obj_begin(&w, NULL);
@@ -646,35 +723,34 @@ static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_ent
             jw_str(&w, "state_off", "OFF");
         }
     }
-    jw_arr_begin(&w, "availability");
-    jw_obj_begin(&w, NULL);
-    topic(d, t, sizeof t, "master/status");
-    jw_str(&w, "topic", t);
-    jw_obj_end(&w);
-    jw_obj_begin(&w, NULL);
-    topic(d, t, sizeof t, "slave/%u/availability", mcid);
-    jw_str(&w, "topic", t);
-    jw_obj_end(&w);
-    jw_arr_end(&w);
-    jw_str(&w, "availability_mode", "all");
-    jw_obj_begin(&w, "device");
-    jw_arr_begin(&w, "identifiers");
-    jw_str(&w, NULL, dev);
-    jw_arr_end(&w);
-    jw_str(&w, "name", slave_name(d, mcid));
-    jw_str(&w, "manufacturer", "HUBUS");
-    jw_str(&w, "model", s->module->name);
-    if (info_field(s, HUBUS_HWID_VERSION) >= 0) {
-        snprintf(fw, sizeof fw, "%d", info_field(s, HUBUS_HWID_VERSION));
-        jw_str(&w, "sw_version", fw);
-    }
-    if (info_serial(s, serial)) {
-        jw_str(&w, "serial_number", serial);
-    }
-    jw_str(&w, "via_device", master);
-    jw_obj_end(&w);
+    jw_slave_device(d, &w, mcid);
     jw_obj_end(&w);
     discovery_topic(d, tt, sizeof tt, hubusd_component_name(e->component), object);
+    pub_json(d, &w, 1, tt);
+}
+
+/* The update entity of Home Assistant: its install command sends the name of the module to the trigger. */
+static void publish_firmware_discovery(hubusd_t *d, unsigned mcid)
+{
+    char buf[1400];
+    char t[160], tt[160], object[48];
+    jw_t w;
+
+    snprintf(object, sizeof object, "hubus_%u_firmware", mcid);
+    jw_init(&w, buf, sizeof buf);
+    jw_obj_begin(&w, NULL);
+    jw_str(&w, "name", "Firmware");
+    jw_bool(&w, "has_entity_name", 1);
+    jw_str(&w, "unique_id", object);
+    jw_str(&w, "device_class", "firmware");
+    topic(d, t, sizeof t, "slave/%u/firmware", mcid);
+    jw_str(&w, "state_topic", t);
+    topic(d, t, sizeof t, "slave/%u/update", mcid);
+    jw_str(&w, "command_topic", t);
+    jw_str(&w, "payload_install", d->slave[mcid].module->name);
+    jw_slave_device(d, &w, mcid);
+    jw_obj_end(&w);
+    discovery_topic(d, tt, sizeof tt, "update", object);
     pub_json(d, &w, 1, tt);
 }
 
@@ -691,6 +767,18 @@ static void publish_slave_discovery(hubusd_t *d, unsigned mcid)
             publish_entity_discovery(d, mcid, &s->module->entities[i]);
         }
     }
+    if (s->module->firmware) {
+        publish_firmware_discovery(d, mcid);
+    }
+}
+
+static void remove_firmware_discovery(hubusd_t *d, unsigned mcid)
+{
+    char tt[160], object[48];
+
+    snprintf(object, sizeof object, "hubus_%u_firmware", mcid);
+    discovery_topic(d, tt, sizeof tt, "update", object);
+    pub(d, tt, "", 1);
 }
 
 static void remove_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_entity_t *e)
@@ -737,8 +825,12 @@ static void remove_slave_discovery(hubusd_t *d, unsigned mcid, const hubus_modul
         for (i = 0; i < m->n_entities; i++) {
             remove_entity_discovery(d, mcid, &m->entities[i]);
         }
+        if (m->firmware) {
+            remove_firmware_discovery(d, mcid);
+        }
         return;
     }
+    remove_firmware_discovery(d, mcid);
     for (k = 0; k < d->n_modules; k++) {
         for (i = 0; i < d->modules[k]->n_entities; i++) {
             if (!entity_listed_before(d, k, i)) {
@@ -894,7 +986,7 @@ static void sync_instances(hubusd_t *d)
     d->sync_again = 0;
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
         hubusd_slave_t *s = &d->slave[mcid];
-        const hubus_module_t *want = (!d->stopping && s->configured && s->module && module_has_functions(s->module)) ? s->module : NULL;
+        const hubus_module_t *want = (!d->stopping && !s->updating && s->configured && s->module && module_has_functions(s->module)) ? s->module : NULL;
         hubusd_worker_t *w;
 
         if (want == s->inst_module) {
@@ -1087,6 +1179,11 @@ void hubusd_replace_modules(hubusd_t *d, const hubus_module_t *const *modules, s
 
     d->modules = modules;
     d->n_modules = n_modules;
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        if (d->slave[mcid].update_module && !module_listed(d->slave[mcid].update_module, modules, n_modules)) {
+            d->slave[mcid].update_module = NULL;
+        }
+    }
     for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
         if (d->worker[k] && !module_listed(hubusd_worker_module(d->worker[k]), modules, n_modules)) {
             const hubus_module_t *gone = hubusd_worker_module(d->worker[k]);
@@ -1114,6 +1211,9 @@ void hubusd_replace_modules(hubusd_t *d, const hubus_module_t *const *modules, s
                 remove_slave_discovery(d, mcid, before);
                 for (e = 0; e < before->n_entities; e++) {
                     pub_topic(d, 1, "", "slave/%u/%s/state", mcid, before->entities[e].key);
+                }
+                if (before->firmware && !(s->module && s->module->firmware)) {
+                    pub_topic(d, 1, "", "slave/%u/firmware", mcid);
                 }
             }
             memset(s->last_state, 0, sizeof s->last_state);
@@ -1347,6 +1447,9 @@ static void store_info(hubusd_t *d, unsigned mcid, const hubus_slave_frame_t *in
         resolve_module(d, mcid);
         if (before && before != s->module) {
             remove_slave_discovery(d, mcid, before); /* the entities of the module it had */
+            if (before->firmware && !firmware_module(s)) {
+                pub_topic(d, 1, "", "slave/%u/firmware", mcid);
+            }
         }
         sync_instances(d);
         publish_slave_info(d, mcid);
@@ -1767,6 +1870,7 @@ static int request_waits(const hubusd_t *d, const hubusd_request_t *q)
     case HUBUSD_REQ_CAPTURE:
     case HUBUSD_REQ_READ:
     case HUBUSD_REQ_PROBE:
+    case HUBUSD_REQ_UPDATE:
         return is_blind(d, q->prefix);
     case HUBUSD_REQ_RAW:
         return target_blind(d, q->target_len, q->prefix);
@@ -1837,6 +1941,124 @@ static void dispatch_set(hubusd_t *d, unsigned mcid, int entity, const hubus_val
     }
 }
 
+/* ---- firmware update from a module -------------------------------------------------------------------------------- */
+
+static void update_progress(void *ctx, uint16_t done, uint16_t total)
+{
+    const hubusd_request_t *q = ((void **)ctx)[1];
+
+    publish_firmware(((void **)ctx)[0], q->prefix, 1, total ? (int)((unsigned)done * 100u / total) : 0);
+}
+
+/* The module a trigger means. NULL if it cannot be used: reported. A slave that runs an application takes only its own module:
+ * in its updater it no longer says what it is, so the name decides; the signature only protects against the wrong device. */
+static const hubus_module_t *update_source(hubusd_t *d, const hubusd_slave_t *s, unsigned mcid, const char *name)
+{
+    int in_updater = info_device_type(s) == HUBUS_HWID_TYPE_UPDATER;
+    const hubus_module_t *m = NULL;
+    size_t k;
+
+    if (!s->configured) {
+        reject(d, "slave %u is not configured", mcid);
+        return NULL;
+    }
+    if (!s->have_info) {
+        reject(d, "slave %u has not answered yet", mcid);
+        return NULL;
+    }
+    if (name[0]) {
+        for (k = 0; k < d->n_modules && !m; k++) {
+            m = strcmp(d->modules[k]->name, name) == 0 ? d->modules[k] : NULL;
+        }
+        if (!m) {
+            reject(d, "there is no module '%s' to update slave %u from", name, mcid);
+            return NULL;
+        }
+        if (!in_updater && s->module != m) {
+            reject(d, "slave %u uses module %s, not %s", mcid, s->module ? s->module->name : "(none)", name);
+            return NULL;
+        }
+    } else {
+        m = in_updater ? s->update_module : s->module;
+        if (!m) {
+            reject(d, in_updater ? "slave %u waits in its updater: name the module in the payload" : "slave %u has no module", mcid);
+            return NULL;
+        }
+    }
+    if (!m->firmware) {
+        reject(d, "module %s has no firmware image", m->name);
+        return NULL;
+    }
+    if (!in_updater && info_field(s, HUBUS_HWID_VERSION) == (int)m->firmware_version) {
+        reject(d, "slave %u already runs version %u of module %s", mcid, (unsigned)m->firmware_version, m->name);
+        return NULL;
+    }
+    return m;
+}
+
+/* Runs on the bus thread and keeps the bus until it is done. The instance of the module goes away first, since the slave
+ * restarts, and comes back with what the slave says it is afterwards. */
+static void run_update(hubusd_t *d, const hubusd_request_t *q)
+{
+    unsigned mcid = q->prefix;
+    hubusd_slave_t *s = &d->slave[mcid];
+    const hubus_module_t *m = update_source(d, s, mcid, q->text);
+    hubus_update_image_t img;
+    hubus_update_result_t res;
+    hubus_slave_frame_t info;
+    void *ctx[2];
+    hubus_status_t r;
+
+    if (!m) {
+        return;
+    }
+    memset(&img, 0, sizeof img);
+    memset(&res, 0, sizeof res);
+    img.data = m->firmware;
+    img.len = m->firmware_len;
+    memcpy(img.signature, m->firmware_signature, sizeof img.signature);
+    img.modules = d->modules;
+    img.n_modules = d->n_modules;
+
+    log_event(d, 0, "firmware update of slave %u from module %s: version %u, %u bytes", mcid, m->name,
+              (unsigned)m->firmware_version, (unsigned)m->firmware_len);
+    s->update_module = m;
+    s->updating = 1;
+    sync_instances(d);
+    publish_firmware(d, mcid, 1, 0);
+
+    ctx[0] = d;
+    ctx[1] = (void *)q;
+    r = hubus_master_update(&d->master, (uint8_t)mcid, &img, update_progress, ctx, &res);
+
+    s->updating = 0;
+    if (r == HUBUS_OK) {
+        s->update_module = NULL;
+        d->stats.commands_executed++;
+        log_event(d, 0, "firmware update of slave %u done: %u pages, %u repeated", mcid, res.pages, res.retries);
+    } else if (r == HUBUS_ERR_UPDATE) {
+        log_event(d, 2, "firmware update of slave %u failed: %s", mcid, hubus_update_reason_str(res.reason));
+        if (res.reason == HUBUS_UPD_REASON_NO_SUPPORT) {
+            s->update_module = NULL; /* it still runs its application */
+        }
+    } else {
+        log_event(d, 2, "firmware update of slave %u failed: %s", mcid, hubus_status_str(r));
+    }
+    if (r == HUBUS_ERR_LINE_FAULT) {
+        sync_instances(d);
+        publish_firmware(d, mcid, 0, -1);
+        bus_fault(d, r);
+        return;
+    }
+    if (hubus_master_request_info(&d->master, (uint8_t)mcid, &info) == HUBUS_OK) {
+        store_info(d, mcid, &info);
+        s->last_seen_ms = now_ms(d);
+        s->needs_refresh = 1;
+    }
+    sync_instances(d);
+    publish_firmware(d, mcid, 0, -1);
+}
+
 static void exec_request(hubusd_t *d, const hubusd_request_t *q)
 {
     hubus_status_t r;
@@ -1870,6 +2092,9 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
         break;
     case HUBUSD_REQ_PROBE:
         do_probe(d, q->prefix);
+        break;
+    case HUBUSD_REQ_UPDATE:
+        run_update(d, q);
         break;
     case HUBUSD_REQ_SET: {
         const hubusd_slave_t *s = &d->slave[q->prefix];
@@ -2075,6 +2300,13 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
             r.kind = HUBUSD_REQ_CAPTURE;
         } else if (strcmp(end, "read") == 0) {
             r.kind = HUBUSD_REQ_READ;
+        } else if (strcmp(end, "update") == 0) {
+            r.kind = HUBUSD_REQ_UPDATE;
+            if (strlen(text) >= sizeof r.text) {
+                enqueue_reject(d, "update payload for slave %u is too long", a);
+                return;
+            }
+            memcpy(r.text, text, strlen(text) + 1u);
         } else if (strcmp(end, "cmd") == 0) {
             r.kind = HUBUSD_REQ_RAW;
             if (parse_raw(text, &r) != 0 || (r.opcode != HUBUS_OP_STATUS_CAPTURE && r.opcode < HUBUS_OP_APP_MIN) ||
@@ -2125,7 +2357,7 @@ void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg)
 void hubusd_subscriptions(const hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx)
 {
     static const char *const filters[] = {"master/cmd/+", "slave/+/+/set", "slave/+/+/rgb/set", "slave/+/cmd", "slave/+/capture", "slave/+/read",
-                                          "group/+/+/cmd"};
+                                          "slave/+/update", "group/+/+/cmd"};
     char t[160];
     unsigned i;
 
@@ -2164,6 +2396,9 @@ static void apply_reload(hubusd_t *d, hubusd_config_t *nc)
                 uint8_t k;
 
                 pub_topic(d, 1, "", "slave/%u/availability", mcid);
+                if (m->firmware) {
+                    pub_topic(d, 1, "", "slave/%u/firmware", mcid);
+                }
                 for (k = 0; k < m->n_entities; k++) {
                     pub_topic(d, 1, "", "slave/%u/%s/state", mcid, m->entities[k].key);
                 }

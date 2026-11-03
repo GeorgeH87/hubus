@@ -191,6 +191,16 @@ typedef struct {
     uint8_t n_entities;
 
     /*
+     * Optional: the application image this module comes with, from the start of the application area. A module with an
+     * image needs has_update. firmware_version is the version byte of the HWID that the image reports once it runs;
+     * firmware_signature the device signature it is built for, all zero: not checked.
+     */
+    const uint8_t *firmware;
+    uint32_t firmware_len;
+    uint8_t firmware_version;
+    uint8_t firmware_signature[3];
+
+    /*
      * Optional functions. A master calls them on a thread of the module, never on its bus thread: the calls of one module
      * run one after the other, in the order of the events, and those of different modules run at the same time. A function
      * has to return within the time limit of the master (hubusd: modules.call_timeout_ms); otherwise the module is
@@ -217,7 +227,8 @@ typedef enum {
     HUBUS_MODULE_ERR_PROPERTIES, /* command size, or STATUS_CAPTURE without an event buffer */
     HUBUS_MODULE_ERR_BLIND,
     HUBUS_MODULE_ERR_ENTITY,
-    HUBUS_MODULE_ERR_FUNCTIONS
+    HUBUS_MODULE_ERR_FUNCTIONS,
+    HUBUS_MODULE_ERR_FIRMWARE  /* an image without a length or the other way round, or without has_update */
 } hubus_module_error_t;
 
 typedef enum {

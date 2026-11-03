@@ -1589,12 +1589,13 @@ static void test_subscriptions_and_status_topic(void)
     standard_setup(base_yaml);
     sub_n = 0;
     hubusd_subscriptions(dmn, collect_sub, NULL);
-    TEST_ASSERT_EQUAL_UINT(7, sub_n);
+    TEST_ASSERT_EQUAL_UINT(8, sub_n);
     TEST_ASSERT_EQUAL_STRING("hubus/master/cmd/+", sub_topics[0]);
     TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/set", sub_topics[1]);
     TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/rgb/set", sub_topics[2]);
     TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[5]);
-    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[6]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/update", sub_topics[6]);
+    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[7]);
     TEST_ASSERT_EQUAL_UINT(strlen("hubus/master/status"), hubusd_status_topic(dmn, status, sizeof status));
     TEST_ASSERT_EQUAL_STRING("hubus/master/status", status);
 }

@@ -213,6 +213,30 @@ They only queue, so they return at once, with `HUBUS_MODULE_REJECTED` for what i
 | `hubus_module_has_blind_time(module)` | Whether the slave can be blind after any command; it then keeps quiet until the master ends that phase. |
 | `hubus_module_blind_ms(module, opcode)` | The blind time after a command: the value for the opcode, otherwise the general one ([§7.8](spec/07-slave.md#78-blind-sections)). |
 
+### Firmware Image in a Module
+
+A module can bring the application it belongs to, so that hubusd can [update a slave](daemon.md#firmware-updates) on a trigger. The image is part of the plugin, so module and firmware cannot be mixed up, and the checks on a plugin file also cover the image:
+
+```sh
+avr-objcopy -O binary --gap-fill 0xFF app.elf app.bin
+xxd -i app.bin > app_image.h
+```
+
+```c
+#include "app_image.h"
+
+static const hubus_module_t module = {
+    /* ... */
+    .has_update = true,
+    .firmware = app_bin,
+    .firmware_len = sizeof app_bin,
+    .firmware_version = 3,                      /* the version byte in the HWID of this firmware */
+    .firmware_signature = {0x1E, 0x93, 0x0B},   /* of the device; all zero: not checked */
+};
+```
+
+The image starts at the start of the application area, like the one of `hubus_master_update()` ([firmware update](#firmware-update)). `hubus_module_validate()` refuses an image without a length, or one without `has_update`, with `HUBUS_MODULE_ERR_FIRMWARE`. A slave with the short form of the HWID reports no version, so hubusd cannot compare it and shows no installed version.
+
 ### Loading Plugins
 
 `master/hubus_module_loader.h` keeps the modules of a master in a `hubus_module_set_t`: modules that are linked in (`hubus_module_set_add()`) and plugins, shared libraries that export `hubus_module_entry()` (`hubus_module_set_load_file()`, `hubus_module_set_load_dir()`). The set is what `hubus_module_select()` takes (`set.module`, `set.n`). Link with `-ldl`; the CMake target `hubus_master` does.

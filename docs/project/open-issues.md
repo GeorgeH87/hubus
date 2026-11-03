@@ -30,7 +30,7 @@ What is still open. The specification is complete except for values that can onl
 ## Firmware Update
 
 - **Status:** implemented for classic tinyAVR, tested in the bus simulation ([§6.8](../spec/06-operation.md#68-firmware-update)); not yet run on an ATtiny85.
-- **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule); updates from hubusd, so that the service does not have to be stopped.
+- **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule).
 
 ## D3: Fairness Strategy
 
