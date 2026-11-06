@@ -9,6 +9,9 @@
  * each delay, and the line is settled after every DATA change of a device. A device that answers too slowly therefore
  * shows up as a protocol violation of the simulation, or as a failed transaction.
  *
+ * Beyond simavr 1.6: self-programming (SPM) on the ATtiny25/45/85, and SLEEP handled by the harness, so that a
+ * sleeping device wakes up at the pin change instead of at simavr's next cycle timer.
+ *
  * Measurements per device: the longest ISR (cycles from the vector to the end of RETI), the longest response (cycles
  * from a pin change to the end of the ISR that handled it, including the interrupt latency and the wait for an ISR
  * already running), and the deepest stack.
@@ -30,10 +33,12 @@ typedef struct {
     struct avr_t *avr;
     struct avr_irq_t *clk_irq;
     struct avr_irq_t *data_irq;
+    void *selfprog;  /* self-programming that simavr lacks for the device (avr_flash_t) */
     uint8_t data_pin;
     uint8_t clk_in;  /* CLK level last presented to the device */
     uint8_t data_in; /* DATA level last presented to the device */
     uint32_t isr_vector; /* byte address of the pin change vector */
+    uint16_t mcucr;      /* data address of MCUCR */
     unsigned idx;        /* index in the bus simulation */
     uint64_t t0_ns;      /* simulation time of cycle 0 */
 
@@ -66,6 +71,18 @@ void avr_bus_init(avr_bus_t *bus, hubus_sim_t *sim);
 /* Loads `elf` on a new simulated `mcu` at `freq` Hz (ATtiny85: CLK = PB2, DATA = PB3) and adds it to the bus. The
  * device starts at the current simulation time. Fails the test if the firmware cannot be loaded. */
 avr_slave_t *avr_bus_add(avr_bus_t *bus, const char *elf, const char *mcu, uint32_t freq);
+
+/* Like avr_bus_add(), with the flash content given as an image of `len` bytes from address 0: for firmware that an ELF
+ * file does not describe completely, such as the updater with its reset vector in a section of its own. The rest of
+ * the flash is erased (0xFF). */
+avr_slave_t *avr_bus_add_flash(avr_bus_t *bus, const uint8_t *flash, uint32_t len, const char *mcu, uint32_t freq);
+
+/* Reads an Intel HEX file into `flash` (`size` bytes, filled with 0xFF where the file has no data). Fails the test if
+ * the file cannot be read or does not fit. Returns one past the highest address with data. */
+uint32_t avr_read_hex(const char *path, uint8_t *flash, uint32_t size);
+
+/* Resets the device as a power cycle does: registers and I/O to their reset values, flash and EEPROM kept. */
+void avr_slave_power_cycle(avr_slave_t *dev);
 
 /* Lets the bus idle for `ns`: the devices run, the master does nothing. */
 void avr_bus_idle(avr_bus_t *bus, uint64_t ns);

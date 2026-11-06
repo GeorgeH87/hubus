@@ -55,7 +55,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Blind sections after a command: `has_blind_time`, `hubus_slave_blind_begin()`/`hubus_slave_blind_end()` with resynchronization, waiting and deferred readback in hubusd ([§7.8](docs/spec/07-slave.md#78-blind-sections), [§6.9](docs/spec/06-operation.md#69-blind-time-after-a-command)).
 - [x] Flash/RAM budget for the ATtiny85 reference build, checked with `avr-size` ([slave library](docs/slave-library.md#optional-parts)).
 - [x] Run in simavr against the real master and measure ISR cycles, edge response, and stack depth (`test/avr/`, [AVR tests](docs/development.md#avr-tests); input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, and the buffer sizes of 128 B RAM devices, [open issues](docs/project/open-issues.md)).
-- [ ] Run the examples in simavr as well (they sleep in the main loop) and the updater (`SPM`).
+- [x] Run the examples in simavr as well (`test_avr_examples`: sleep in the main loop, button, ADC) and the updater (`test_avr_update`: `SPM`, EEPROM, watchdog reset), [AVR tests](docs/development.md#avr-tests).
 - [x] Remove the old ATtiny85-only implementation.
 
 ## 6. Master (`master/`)
@@ -74,7 +74,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 
 ## 7. Examples
 
-- [x] Slave examples for every combination of event buffer and state: switch, relay, sensor, passive sensor, relay without feedback. Compile-tested for the ATtiny85, not run on hardware.
+- [x] Slave examples for every combination of event buffer and state: switch, relay, sensor, passive sensor, relay without feedback. Run on simulated ATtiny85 devices (`test_avr_examples`); not run on hardware.
 - [x] Master example application (scan, burst, state, info, commands). Compiles; not run on a Raspberry Pi yet.
 - [x] LED strip: fixed frames in a blind section, and animations from bytecode the master sends, shown in an interruptible section. Run on simulated ATtiny85 devices with the WS2812B signal decoded; not run on hardware.
 - [x] LED strip on the master: formulas compiled to bytecode and sent by its module ([section 12](#12-master-modules-and-hardware-identifier)).

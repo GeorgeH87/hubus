@@ -161,7 +161,7 @@ avrdude -c usbasp -p t85 -U lfuse:w:0xE2:m -U hfuse:w:0xDD:m -U efuse:w:0xFE:m
 avrdude -c usbasp -p t85 -U flash:w:build/avr-attiny85/updater/hubus_updater.hex
 ```
 
-The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master, which loads the application with `hubus_master_update()`, for example with `hubus_master_example update 5 example_switch_update.hex` ([master library](master-library.md#firmware-update)). Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
+The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master under `HUBUS_UPDATER_MCID`, which loads the application with `hubus_master_update()`. Build the updater with the MCID of the application (`-DHUBUS_UPDATER_MCID=5` for the switch), then `hubus_master_example update 5 example_switch_update.hex` loads it ([master library](master-library.md#firmware-update)). With the default 63, `update 63` loads the application as well, but reports `HUBUS_UPD_REASON_NOT_STARTED`: the application starts under its own MCID, where the master does not look for it. Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
 
 ## Supported Devices
 
