@@ -697,7 +697,7 @@ static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_ent
     topic(d, t, sizeof t, "slave/%u/%s/state", mcid, e->key);
     jw_str(&w, "state_topic", t);
     if (e->component == HUBUS_COMPONENT_SWITCH || e->component == HUBUS_COMPONENT_LIGHT ||
-        e->component == HUBUS_COMPONENT_TEXT) {
+        e->component == HUBUS_COMPONENT_TEXT || e->component == HUBUS_COMPONENT_NUMBER) {
         topic(d, t, sizeof t, "slave/%u/%s/set", mcid, e->key);
         jw_str(&w, "command_topic", t);
     }
@@ -715,6 +715,11 @@ static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_ent
         jw_str(&w, "state_class", "measurement");
     } else if (e->component == HUBUS_COMPONENT_TEXT) {
         jw_uint(&w, "max", HUBUS_MODULE_TEXT_MAX);
+    } else if (e->component == HUBUS_COMPONENT_NUMBER) {
+        jw_double(&w, "min", e->min, 3);
+        jw_double(&w, "max", e->max, 3);
+        jw_double(&w, "step", e->step > 0.0 ? e->step : 1.0, 3);
+        jw_str(&w, "mode", "box");
     } else {
         jw_str(&w, "payload_on", "ON");
         jw_str(&w, "payload_off", "OFF");
@@ -2213,6 +2218,18 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
         } else if ((e = &s->module->entities[idx])->component == HUBUS_COMPONENT_TEXT) {
             v.type = HUBUS_VALUE_TEXT;
             dispatch_set(d, q->prefix, idx, &v, q->text);
+        } else if (e->component == HUBUS_COMPONENT_NUMBER) {
+            char *end;
+            double num = strtod(q->text, &end);
+
+            if (end == q->text || *end != '\0' || !(num >= e->min && num <= e->max)) {
+                reject(d, "'%s' is not a number for entity '%s' of slave %u (%g..%g)", q->text, q->key, q->prefix, e->min,
+                       e->max);
+            } else {
+                v.type = HUBUS_VALUE_NUMBER;
+                v.as.number = num;
+                dispatch_set(d, q->prefix, idx, &v, NULL);
+            }
         } else if (e->component != HUBUS_COMPONENT_SWITCH && e->component != HUBUS_COMPONENT_LIGHT) {
             reject(d, "entity '%s' of slave %u takes no commands", q->key, q->prefix);
         } else if (!parse_on_off(q->text, &on)) {

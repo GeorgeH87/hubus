@@ -403,6 +403,20 @@ static void test_entities_are_checked(void)
     TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, false));
     TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, validate_entity(e, true));
 
+    /* a number needs a function and a range */
+    e = (hubus_entity_t){.key = "limit", .name = "Limit", .component = HUBUS_COMPONENT_NUMBER, .min = 1, .max = 9};
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, false));
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, validate_entity(e, true));
+    e.step = 2;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, validate_entity(e, true));
+    e.step = 10; /* larger than the range */
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, true));
+    e.step = -1;
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, true));
+    e.step = 0;
+    e.max = 1; /* empty range */
+    TEST_ASSERT_EQUAL(HUBUS_MODULE_ERR_ENTITY, validate_entity(e, true));
+
     /* keys become MQTT topics */
     m.entities = twice;
     m.n_entities = HUBUS_MODULE_LEN(twice);

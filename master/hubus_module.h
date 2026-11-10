@@ -15,7 +15,7 @@
 
 #include "hubus_proto.h"
 
-#define HUBUS_MODULE_API_VERSION 1u
+#define HUBUS_MODULE_API_VERSION 2u
 
 #define HUBUS_RULE_MAX_LEN HUBUS_HWID_FULL_MIN_LEN /* rules never cover the serial number */
 #define HUBUS_MODULE_CMD_MAX_ARGS 8u
@@ -56,6 +56,7 @@ typedef enum {
     HUBUS_COMPONENT_SWITCH,
     HUBUS_COMPONENT_LIGHT,
     HUBUS_COMPONENT_TEXT, /* free text from the user, for on_set */
+    HUBUS_COMPONENT_NUMBER, /* a number from the user within min..max, for on_set */
     HUBUS_COMPONENT_COUNT
 } hubus_component_t;
 
@@ -70,6 +71,7 @@ typedef enum {
     HUBUS_DEVICE_CLASS_CURRENT,
     HUBUS_DEVICE_CLASS_MOTION,
     HUBUS_DEVICE_CLASS_DOOR,
+    HUBUS_DEVICE_CLASS_DISTANCE,
     HUBUS_DEVICE_CLASS_COUNT
 } hubus_device_class_t;
 
@@ -82,6 +84,7 @@ typedef enum {
     HUBUS_UNIT_WATT,
     HUBUS_UNIT_VOLT,
     HUBUS_UNIT_AMPERE,
+    HUBUS_UNIT_CENTIMETER,
     HUBUS_UNIT_COUNT
 } hubus_unit_t;
 
@@ -113,6 +116,10 @@ typedef struct {
     hubus_module_decode_t decode;
     hubus_module_command_t on;  /* switch: without on_set */
     hubus_module_command_t off;
+    /* number: the range the user may set, in the unit of the entity; step 0 means 1. The module publishes the state (set_state). */
+    double min;
+    double max;
+    double step;
 } hubus_entity_t;
 
 typedef enum {
@@ -208,7 +215,7 @@ typedef struct {
      *
      * create makes the instance for one slave, NULL if it cannot. destroy ends it. on_frame gets a frame of the slave
      * (`gap`: frames were lost before it); on_set a value for an entity that has no fixed command, parsed from the text of
-     * the user: a bool for a switch or the on/off of a light, RGB for the colour of a light, text for a text entity. It
+     * the user: a bool for a switch or the on/off of a light, RGB for the colour of a light, text for a text entity, a number within min..max for a number entity. It
      * returns HUBUS_MODULE_REJECTED for a value it does not take.
      */
     hubus_module_instance_t *(*create)(const hubus_module_host_t *host);

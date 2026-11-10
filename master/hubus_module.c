@@ -108,6 +108,8 @@ static bool entity_valid(const hubus_module_t *m, const hubus_entity_t *e)
     case HUBUS_COMPONENT_LIGHT:
     case HUBUS_COMPONENT_TEXT:
         return m->on_set != NULL;
+    case HUBUS_COMPONENT_NUMBER:
+        return m->on_set != NULL && e->min < e->max && e->step >= 0.0 && e->step <= e->max - e->min;
     default:
         return false;
     }

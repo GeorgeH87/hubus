@@ -194,7 +194,7 @@ Built as a plugin with `gcc -shared -fPIC -I master -I core -o temperature.so te
 |---|---|
 | `create(host)`, `destroy(self)` | The state of the module for one slave, `hubus_module_instance_t`. Optional, but they come together. `create` returns `NULL` if it cannot. |
 | `on_frame(self, host, kind, data, len, gap)` | A frame of the slave. `gap`: frames were lost before it. |
-| `on_set(self, host, entity, value)` | A value for an entity without fixed commands, as a typed `hubus_value_t`: a bool, RGB, or text. Returns `HUBUS_MODULE_REJECTED` for a value it does not take. |
+| `on_set(self, host, entity, value)` | A value for an entity without fixed commands, as a typed `hubus_value_t`: a bool, RGB, text, or a number within the range of the entity. Returns `HUBUS_MODULE_REJECTED` for a value it does not take. |
 
 A master calls them on a thread of the module, never on its bus thread, and one after the other for one module. A function has to return in a short time: in hubusd a call that takes longer than `modules.call_timeout_ms` stops the module ([hubusd](daemon.md#module-functions)). A function reaches the master only through `hubus_module_host_t`, which it may also keep until `destroy` has returned:
 
