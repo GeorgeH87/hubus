@@ -60,8 +60,8 @@ The first payload byte of `SEND_COMMAND` is the opcode; the remaining bytes are 
 | Opcode | Meaning |
 |---|---|
 | `0x00` | `STATUS_CAPTURE`: the application writes its current status into the event buffer, which sets the pending flag ([§4.8](#48-event-buffer)). Ignored by a slave without event buffer. |
-| `0x01..0x04` | Firmware update: `UPDATE_ENTER` for an application with update support; `UPDATE_LOAD`, `UPDATE_WRITE`, and `UPDATE_LEAVE` for the updater ([§6.8](06-operation.md#68-firmware-update)). |
-| `0x05..0x0F` | Reserved for protocol use. |
+| `0x01..0x05` | Firmware update: `UPDATE_ENTER` for an application with update support; `UPDATE_LOAD`, `UPDATE_WRITE`, `UPDATE_LEAVE`, and the optional `UPDATE_SET_MCID` for the updater ([§6.8](06-operation.md#68-firmware-update)). |
+| `0x06..0x0F` | Reserved for protocol use. |
 | `0x10..0xFF` | Application-defined, for example relay on/off. |
 
 Slaves ignore unknown reserved opcodes, including the update opcodes they do not take.

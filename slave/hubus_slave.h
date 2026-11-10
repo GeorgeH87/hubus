@@ -112,4 +112,35 @@ void hubus_slave_short_end(void);
 /* Pin change handler; called by the HAL vectors (and by host tests). */
 void hubus_slave_isr(void);
 
+/*
+ * Where the MCID comes from is up to the application (EEPROM, pins, a constant); the library only takes cfg.mcid.
+ * The recommended way is one image for all devices and one EEPROM byte per device, written when flashing
+ * (tools/flash-avr.sh): the last byte of the EEPROM, where the updater keeps the MCID as well.
+ *
+ *   cfg.mcid = hubus_slave_mcid_from_eeprom(5);  // the stored MCID, or 5 for an erased or invalid byte
+ *
+ * hubus_slave_mcid_or() is the range check alone, for MCIDs from elsewhere.
+ */
+static inline uint8_t hubus_slave_mcid_or(uint8_t mcid, uint8_t fallback)
+{
+    return (uint8_t)(mcid - HUBUS_MCID_MIN) <= HUBUS_MCID_MAX - HUBUS_MCID_MIN ? mcid : fallback;
+}
+
+#ifdef __AVR__
+#include <avr/eeprom.h>
+
+/* Offset of the last EEPROM byte, as the eeprom_*() functions and avrdude count it. On the tinyAVR 0/1/2-series E2END
+ * is its address in the data space, where the EEPROM is mapped; the functions add that start themselves. */
+#ifdef MAPPED_EEPROM_START
+#define HUBUS_MCID_EEPROM_ADDR (EEPROM_SIZE - 1u)
+#else
+#define HUBUS_MCID_EEPROM_ADDR E2END
+#endif
+
+static inline uint8_t hubus_slave_mcid_from_eeprom(uint8_t fallback)
+{
+    return hubus_slave_mcid_or(eeprom_read_byte((const uint8_t *)HUBUS_MCID_EEPROM_ADDR), fallback);
+}
+#endif
+
 #endif /* HUBUS_SLAVE_H */

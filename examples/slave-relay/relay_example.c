@@ -65,8 +65,7 @@ static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t l
 
 int main(void)
 {
-    static const hubus_slave_config_t cfg = {
-        .mcid = 0x03,
+    static hubus_slave_config_t cfg = {
         .hwid = hwid,
         .hwid_len = sizeof hwid,
         .state = &relay_state,
@@ -77,6 +76,7 @@ int main(void)
     };
 
     DDRB |= _BV(RELAY_BIT);
+    cfg.mcid = hubus_slave_mcid_from_eeprom(0x03); /* written when flashing (tools/flash-avr.sh), else 3 */
     hubus_slave_init(&cfg);
     sei();
 

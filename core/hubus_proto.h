@@ -66,6 +66,7 @@
 #define HUBUS_OP_UPDATE_LOAD 0x02u  /* offset, data: into the page buffer */
 #define HUBUS_OP_UPDATE_WRITE 0x03u /* addr_hi addr_lo crc_hi crc_lo: page buffer to flash after the STOP */
 #define HUBUS_OP_UPDATE_LEAVE 0x04u /* reset after the STOP; the updater starts a valid application */
+#define HUBUS_OP_UPDATE_SET_MCID 0x05u /* mcid ~mcid, exact addressing only: new MCID after the STOP (optional) */
 #define HUBUS_UPDATE_KEY0 0x55u     /* 'U' */
 #define HUBUS_UPDATE_KEY1 0x50u     /* 'P' */
 
@@ -83,6 +84,7 @@
 #define HUBUS_UPD_INFO_LEN 14u
 #define HUBUS_HWID_UPDATER_LEN (1u + HUBUS_UPD_INFO_LEN)
 #define HUBUS_UPD_FLAG_RESET_VECTOR 0x01u /* word 0 of the application area is RJMP to the updater */
+#define HUBUS_UPD_FLAG_SET_MCID 0x02u     /* the updater takes UPDATE_SET_MCID */
 
 /* State of the updater: result of the last UPDATE_WRITE, its address, and a counter of executed writes. */
 #define HUBUS_UPD_STATE_RESULT 0u

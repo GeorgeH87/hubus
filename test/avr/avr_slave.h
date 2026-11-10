@@ -84,6 +84,11 @@ uint32_t avr_read_hex(const char *path, uint8_t *flash, uint32_t size);
 /* Resets the device as a power cycle does: registers and I/O to their reset values, flash and EEPROM kept. */
 void avr_slave_power_cycle(avr_slave_t *dev);
 
+/* The EEPROM of the device. A write before the device runs is what a programmer left there; `addr` < 0 counts from the
+ * end (-1: the last byte, where the MCID is kept). Fail the test for a device without EEPROM. */
+uint8_t avr_slave_eeprom_read(const avr_slave_t *dev, int addr);
+void avr_slave_eeprom_write(avr_slave_t *dev, int addr, uint8_t value);
+
 /* Lets the bus idle for `ns`: the devices run, the master does nothing. */
 void avr_bus_idle(avr_bus_t *bus, uint64_t ns);
 

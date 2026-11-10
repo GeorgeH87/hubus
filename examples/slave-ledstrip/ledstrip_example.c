@@ -336,8 +336,7 @@ static void render(void)
 
 int main(void)
 {
-    static const hubus_slave_config_t cfg = {
-        .mcid = 0x0B,
+    static hubus_slave_config_t cfg = {
         .hwid = hwid,
         .hwid_len = sizeof hwid,
         .state = state,
@@ -357,6 +356,7 @@ int main(void)
     PORTB |= _BV(BUTTON_BIT); /* pull-up */
     TCCR0B = _BV(CS02) | _BV(CS00); /* timer 0: F_CPU / 1024, free running, polled (tick()) */
     (void)ws2812_send(0); /* dark strip; the bus is not running yet */
+    cfg.mcid = hubus_slave_mcid_from_eeprom(0x0B); /* written when flashing (tools/flash-avr.sh), else 11 */
     hubus_slave_init(&cfg);
     sei();
 

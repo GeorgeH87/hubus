@@ -21,7 +21,8 @@ A compliant slave:
 
 ## 7.2 MCID
 
-- Every slave has an MCID `1..63`, unique on the bus and fixed at runtime. MCID `0` is reserved ([§4.5](04-frames.md#45-addressing)).
+- Every slave has an MCID `1..63`, unique on the bus and fixed at runtime. MCID `0` is reserved ([§4.5](04-frames.md#45-addressing)). The only exception is the optional change in the updater (`UPDATE_SET_MCID`, [§6.8](06-operation.md#mcid)).
+- Where the MCID comes from is the choice of the firmware (a value written per device when it is programmed, pins, a constant); the specification prescribes none. Without a value per device, identical devices share the default of their firmware, and the commissioning scan reports them as duplicates.
 - A duplicate MCID is a configuration fault that only the master detects ([§6.4](06-operation.md#64-commissioning-scan-and-duplicate-mcids)). A slave with the memory for it SHOULD send a serial number in its hardware identifier, which lets the commissioning scan detect duplicates reliably ([§4.7](04-frames.md#hardware-identifier-hwid)).
 
 ## 7.3 State Machine

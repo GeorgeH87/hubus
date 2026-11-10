@@ -6,12 +6,12 @@
  *
  * Covers what test_update cannot: the reset vector rule and the jump to the updater in the generated code, the page
  * writes with SPM, the CRC check of the info page at boot, the hand-over from the application (UPDATE_ENTER inside its
- * interrupt handler), the MCID in EEPROM, and UPDATE_LEAVE by the watchdog.
+ * interrupt handler), the MCID in EEPROM, and UPDATE_LEAVE by the watchdog. The MCID in the last EEPROM byte as
+ * the programmer writes it, and its change over the bus (UPDATE_SET_MCID), with the switch taking it from there.
  */
 #include <stdio.h>
 #include <string.h>
 
-#include "avr_eeprom.h"
 #include "avr_ioport.h"
 #include "avr_slave.h"
 #include "fixture.h"
@@ -119,22 +119,6 @@ static void expect_flash(const avr_slave_t *d)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(&updater[UPDATER_ADDR], &d->avr->flash[UPDATER_ADDR], FLASH_SIZE - UPDATER_ADDR);
 }
 
-/* The last EEPROM byte, where the updater keeps the MCID it got from the application. */
-static uint8_t eeprom_mcid(const avr_slave_t *d)
-{
-    avr_io_t *io;
-
-    for (io = d->avr->io_port; io; io = io->next) {
-        if (strcmp(io->kind, "eeprom") == 0) {
-            const avr_eeprom_t *ee = (const avr_eeprom_t *)io;
-
-            return ee->eeprom[ee->size - 1u];
-        }
-    }
-    TEST_FAIL_MESSAGE("no EEPROM");
-    return 0;
-}
-
 static void update_ok(uint8_t mcid, hubus_update_result_t *res)
 {
     hubus_update_image_t img = image();
@@ -158,7 +142,7 @@ static void test_fresh_device_gets_its_application(void)
     avr_slave_t *d = add_fresh(HEX("fw_updater_5"));
 
     boot();
-    TEST_ASSERT_EQUAL_HEX8(0xFF, eeprom_mcid(d)); /* no MCID from an application yet */
+    TEST_ASSERT_EQUAL_HEX8(0xFF, avr_slave_eeprom_read(d, -1)); /* no MCID from an application yet */
     TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(SWITCH, NULL));
     update_ok(SWITCH, &res);
     printf("update of %u bytes: %u pages, %u repeated, %.1f s on the bus\n", (unsigned)app_len, res.pages,
@@ -182,13 +166,13 @@ static void test_application_is_replaced(void)
     boot();
     update_ok(SWITCH, &res);
     expect_switch(SWITCH);
-    TEST_ASSERT_EQUAL_HEX8(0xFF, eeprom_mcid(d)); /* the updater ran without UPDATE_ENTER */
+    TEST_ASSERT_EQUAL_HEX8(0xFF, avr_slave_eeprom_read(d, -1)); /* the updater ran without UPDATE_ENTER */
 
     update_ok(SWITCH, &res);
     TEST_ASSERT_EQUAL_UINT((app_len + 63u) / 64u + 2u, res.pages); /* the invalidated info page, the image, the info page */
     expect_switch(SWITCH);
     expect_flash(d);
-    TEST_ASSERT_EQUAL_HEX8(SWITCH, eeprom_mcid(d));
+    TEST_ASSERT_EQUAL_HEX8(SWITCH, avr_slave_eeprom_read(d, -1));
 }
 
 /* The bus breaks off in the middle of the update and the device loses power: the old application was invalidated
@@ -226,10 +210,86 @@ static void test_interrupted_update_is_repeated(void)
     avr_slave_power_cycle(d);
     avr_bus_idle(&bus, BOOT_NS);
     TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(SWITCH, NULL));
-    TEST_ASSERT_EQUAL_HEX8(SWITCH, eeprom_mcid(d));
+    TEST_ASSERT_EQUAL_HEX8(SWITCH, avr_slave_eeprom_read(d, -1));
 
     update_ok(SWITCH, &res);
     expect_switch(SWITCH);
+    expect_flash(d);
+}
+
+/* ---- MCID -------------------------------------------------------------------------------------------------------- */
+
+#define FLASHED_MCID 14u
+#define NEW_MCID 20u
+
+static void set_mcid_ok(uint8_t mcid, uint8_t new_mcid)
+{
+    hubus_update_result_t res;
+    hubus_status_t r = hubus_master_set_mcid(&fx.master, mcid, new_mcid, NULL, 0, &res);
+
+    if (r != HUBUS_OK) {
+        char msg[96];
+
+        snprintf(msg, sizeof msg, "set_mcid: status %d, %s", (int)r, hubus_update_reason_str(res.reason));
+        TEST_FAIL_MESSAGE(msg);
+    }
+}
+
+/* The recommended way: one updater image for all devices, the MCID in the last EEPROM byte from the programmer. The
+ * updater answers to it, and so does the switch it loads. */
+static void test_mcid_from_the_programmer(void)
+{
+    hubus_update_result_t res;
+    avr_slave_t *d = add_fresh(HEX("fw_updater"));
+
+    avr_slave_eeprom_write(d, -1, FLASHED_MCID);
+    boot();
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(FLASHED_MCID, NULL));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(UPDATER_DEFAULT_MCID, NULL));
+    update_ok(FLASHED_MCID, &res);
+    expect_switch(FLASHED_MCID);
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(SWITCH, NULL));
+}
+
+/* A fresh device under the default MCID of the updater gets its MCID over the bus first, then its application, which
+ * starts under it. */
+static void test_fresh_device_gets_its_mcid_over_the_bus(void)
+{
+    hubus_update_result_t res;
+    avr_slave_t *d = add_fresh(HEX("fw_updater"));
+
+    boot();
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(UPDATER_DEFAULT_MCID, NULL));
+    set_mcid_ok(UPDATER_DEFAULT_MCID, NEW_MCID);
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(NEW_MCID, NULL));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(UPDATER_DEFAULT_MCID, NULL));
+    avr_bus_idle(&bus, 10u * MS); /* the EEPROM write */
+    TEST_ASSERT_EQUAL_HEX8(NEW_MCID, avr_slave_eeprom_read(d, -1));
+
+    update_ok(NEW_MCID, &res);
+    expect_switch(NEW_MCID);
+}
+
+/* The running switch moves to another MCID and keeps it after a power cycle; a firmware update keeps it as well. */
+static void test_application_gets_another_mcid(void)
+{
+    hubus_update_result_t res;
+    avr_slave_t *d = add_fresh(HEX("fw_updater_5"));
+
+    boot();
+    update_ok(SWITCH, &res);
+    expect_switch(SWITCH);
+    set_mcid_ok(SWITCH, NEW_MCID);
+    expect_switch(NEW_MCID);
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(SWITCH, NULL));
+    TEST_ASSERT_EQUAL_HEX8(NEW_MCID, avr_slave_eeprom_read(d, -1));
+
+    avr_slave_power_cycle(d);
+    avr_bus_idle(&bus, BOOT_NS);
+    expect_switch(NEW_MCID);
+
+    update_ok(NEW_MCID, &res);
+    expect_switch(NEW_MCID);
     expect_flash(d);
 }
 
@@ -239,5 +299,8 @@ int main(void)
     RUN_TEST(test_fresh_device_gets_its_application);
     RUN_TEST(test_application_is_replaced);
     RUN_TEST(test_interrupted_update_is_repeated);
+    RUN_TEST(test_mcid_from_the_programmer);
+    RUN_TEST(test_fresh_device_gets_its_mcid_over_the_bus);
+    RUN_TEST(test_application_gets_another_mcid);
     return UNITY_END();
 }

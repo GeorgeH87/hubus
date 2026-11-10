@@ -83,19 +83,24 @@ hubus_core_variant_test(test_slave_command_only test_slave_parts.c HUBUS_ENABLE_
 hubus_core_variant_test(test_slave_serial test_slave_serial.c HUBUS_ENABLE_SERIAL=1)
 
 # Firmware update end to end: master library, updater logic, and an application core with update support on one
-# simulated bus. The core and the master are compiled again for the updater configuration.
-add_executable(test_update test_update.c support/update_app_core.c sim/hubus_sim.c
-    ${HUBUS_CORE_SOURCES_ABS} ${PROJECT_SOURCE_DIR}/updater/hubus_updater.c
-    ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c
-    ${PROJECT_SOURCE_DIR}/master/hubus_module.c)
-target_include_directories(test_update PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
-    ${PROJECT_SOURCE_DIR}/updater sim support)
-target_compile_definitions(test_update PRIVATE
-    HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800)
-target_link_libraries(test_update PRIVATE unity)
-target_compile_options(test_update PRIVATE ${HUBUS_TEST_WARNINGS})
-add_test(NAME test_update COMMAND test_update)
-set_tests_properties(test_update PROPERTIES TIMEOUT 120)
+# simulated bus. The core and the master are compiled again for the updater configuration. Twice: with the change of
+# the MCID in the updater (UPDATE_SET_MCID) and without.
+foreach(variant "test_update;1" "test_update_no_set_mcid;0")
+    list(GET variant 0 name)
+    list(GET variant 1 set_mcid)
+    add_executable(${name} test_update.c support/update_app_core.c sim/hubus_sim.c
+        ${HUBUS_CORE_SOURCES_ABS} ${PROJECT_SOURCE_DIR}/updater/hubus_updater.c
+        ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c
+        ${PROJECT_SOURCE_DIR}/master/hubus_module.c)
+    target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
+        ${PROJECT_SOURCE_DIR}/updater sim support)
+    target_compile_definitions(${name} PRIVATE
+        HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800 HUBUS_UPD_SET_MCID=${set_mcid})
+    target_link_libraries(${name} PRIVATE unity)
+    target_compile_options(${name} PRIVATE ${HUBUS_TEST_WARNINGS})
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES TIMEOUT 120)
+endforeach()
 
 # Firmware updates from a module through hubusd: like test_update, with the daemon on top. Its own core and master come
 # before the libraries, so that the updater configuration is the one that counts.
@@ -106,7 +111,7 @@ if(HUBUSD_LIB_AVAILABLE)
     target_include_directories(test_daemon_update PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
         ${PROJECT_SOURCE_DIR}/updater sim support)
     target_compile_definitions(test_daemon_update PRIVATE
-        HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800)
+        HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800 HUBUS_UPD_SET_MCID=1)
     target_link_libraries(test_daemon_update PRIVATE unity hubusd_lib)
     target_compile_options(test_daemon_update PRIVATE ${HUBUS_TEST_WARNINGS})
     add_test(NAME test_daemon_update COMMAND test_daemon_update)

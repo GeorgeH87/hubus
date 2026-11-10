@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "avr_eeprom.h"
 #include "avr_flash.h"
 #include "avr_ioport.h"
 #include "hubus_update.h"
@@ -354,6 +355,33 @@ void avr_slave_power_cycle(avr_slave_t *dev)
     dev->in_isr = 0;
     dev->handling = 0;
     dev->edge_pending = 0;
+}
+
+static uint8_t *eeprom_byte(const avr_slave_t *dev, int addr)
+{
+    avr_io_t *io;
+
+    for (io = dev->avr->io_port; io; io = io->next) {
+        if (strcmp(io->kind, "eeprom") == 0) {
+            avr_eeprom_t *ee = (avr_eeprom_t *)io;
+            long a = addr < 0 ? (long)ee->size + addr : addr;
+
+            TEST_ASSERT_TRUE_MESSAGE(a >= 0 && a < (long)ee->size, "EEPROM address out of range");
+            return &ee->eeprom[a];
+        }
+    }
+    TEST_FAIL_MESSAGE("no EEPROM");
+    return NULL;
+}
+
+uint8_t avr_slave_eeprom_read(const avr_slave_t *dev, int addr)
+{
+    return *eeprom_byte(dev, addr);
+}
+
+void avr_slave_eeprom_write(avr_slave_t *dev, int addr, uint8_t value)
+{
+    *eeprom_byte(dev, addr) = value;
 }
 
 void avr_bus_idle(avr_bus_t *bus, uint64_t ns)

@@ -20,6 +20,7 @@
  *   info <mcid>                REQUEST_INFO to a single MCID
  *   send <mcid> <opcode> [b..] SEND_COMMAND to one slave (0 = all), numbers in C syntax
  *   update <mcid> <file.hex>   firmware update through the updater (docs/spec/06-operation.md section 6.8)
+ *   mcid <mcid> <new>          change the MCID through the updater (UPDATE_SET_MCID, same section)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -157,7 +158,7 @@ int main(int argc, char **argv)
         }
     }
     if (i >= argc) {
-        fprintf(stderr, "usage: %s [options] scan|burst|monitor|capture <mcid>|state <mcid>|info <mcid>|send <mcid> <opcode> [bytes]|update <mcid> <file.hex>\n", argv[0]);
+        fprintf(stderr, "usage: %s [options] scan|burst|monitor|capture <mcid>|state <mcid>|info <mcid>|send <mcid> <opcode> [bytes]|update <mcid> <file.hex>|mcid <mcid> <new>\n", argv[0]);
         return 2;
     }
 
@@ -288,6 +289,22 @@ int main(int argc, char **argv)
         } else {
             printf("%u pages written, %u repeated\n", res.pages, res.retries);
             rc = s == HUBUS_OK ? 0 : fail("update", s);
+        }
+    } else if (strcmp(argv[i], "mcid") == 0 && i + 2 < argc) {
+        unsigned mcid = (unsigned)number(argv[i + 1]);
+        unsigned new_mcid = (unsigned)number(argv[i + 2]);
+        hubus_update_result_t res;
+
+        s = mcid > HUBUS_MCID_MAX || new_mcid > HUBUS_MCID_MAX
+                ? HUBUS_ERR_ARG
+                : hubus_master_set_mcid(&master, (uint8_t)mcid, (uint8_t)new_mcid, modules.module, modules.n, &res);
+        if (s == HUBUS_ERR_UPDATE) {
+            fprintf(stderr, "mcid: %s\n", hubus_update_reason_str(res.reason));
+            rc = 1;
+        } else if (s == HUBUS_OK) {
+            printf("slave %u answers to MCID %u now\n", mcid, new_mcid);
+        } else {
+            rc = fail("mcid", s);
         }
     } else {
         fprintf(stderr, "unknown command %s\n", argv[i]);

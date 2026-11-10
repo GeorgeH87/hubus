@@ -30,7 +30,13 @@ What is still open. The specification is complete except for values that can onl
 ## Firmware Update
 
 - **Status:** implemented for classic tinyAVR, tested in the bus simulation ([§6.8](../spec/06-operation.md#68-firmware-update)) and on a simulated ATtiny85 (`simavr`, [AVR tests](../development.md#avr-tests)); not yet run on hardware.
-- **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule).
+- **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time, the change of the MCID and its interruption); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule), with or without `UPDATE_SET_MCID`.
+
+## MCID Assignment
+
+- **Status:** resolved in software, not run on hardware ([slave library](../slave-library.md#assigning-the-mcid)). The source of the MCID is the choice of the firmware; recommended is the last EEPROM byte, written together with the image (`tools/flash-avr.sh`). Slaves with an updater that takes `UPDATE_SET_MCID` can get another MCID over the bus ([§6.8](../spec/06-operation.md#mcid)).
+- **Accepted:** without a value per device, identical devices share the default MCID of their firmware; the commissioning scan reports them as duplicates, and one of them has to be given its MCID by hand. There is no automatic enumeration: two devices under the same MCID cannot be told apart and addressed one by one without a unique serial number. A firmware without update support can only get its MCID from the programmer.
+- **Open:** the flash script with a real programmer, `EESAVE`, and avrdude older than 7.0, which may write the bytes in front of the MCID as well.
 
 ## D3: Fairness Strategy
 
@@ -47,6 +53,6 @@ What is still open. The specification is complete except for values that can onl
 
 ## Deferred Topics
 
-- Dynamic MCID assignment at runtime.
+- Automatic MCID assignment at runtime (enumeration of devices that share an MCID, which needs a unique serial number).
 - Security or authentication of bus payloads.
 - Physical layer optimization for long distances.

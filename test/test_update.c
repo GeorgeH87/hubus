@@ -3,6 +3,9 @@
  * against the real updater logic with a flash array, and an application core with HUBUS_ENABLE_UPDATE. A small
  * device model switches between them like the ATtiny85 does: UPDATE_ENTER jumps from the application to the
  * updater, UPDATE_LEAVE resets, and the reset starts the application if its info page checks out.
+ *
+ * The change of the MCID (UPDATE_SET_MCID) as well: built twice, with and without HUBUS_UPD_SET_MCID. The
+ * application of the model takes its MCID from the EEPROM byte of the updater, as the examples do, or a fixed one.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +28,8 @@ static hubus_master_hal_t sim_hal;
 static unsigned dev;
 static uint8_t flash[FLASH_SIZE];
 static uint8_t eeprom_mcid;
+static unsigned eeprom_writes; /* by UPDATE_SET_MCID */
+static uint8_t app_fixed_mcid; /* 0: the application takes its MCID from the EEPROM byte */
 static uint8_t reset_requested;
 static uint8_t in_updater;
 static uint16_t booted_entry;
@@ -49,6 +54,14 @@ void hubus_upd_reset(void)
 {
     reset_requested = 1;
 }
+
+#if HUBUS_UPD_SET_MCID
+void hubus_upd_store_mcid(uint8_t mcid)
+{
+    eeprom_mcid = mcid;
+    eeprom_writes++;
+}
+#endif
 
 /* ---- device model ----------------------------------------------------------------------------------------------- */
 
@@ -75,7 +88,8 @@ static void boot(void)
     if (hubus_updater_app_valid(&entry)) {
         in_updater = 0;
         booted_entry = entry;
-        TEST_ASSERT_TRUE(app_start(eeprom_mcid, app_hwid, sizeof app_hwid, sim.clk, sim.data));
+        TEST_ASSERT_TRUE(app_start(app_fixed_mcid ? app_fixed_mcid : eeprom_mcid, app_hwid, sizeof app_hwid, sim.clk,
+                                   sim.data));
         sim.slave[dev] = (hubus_slave_core_t *)app_core();
         sim.pins[dev] = app_pins;
         hubus_sim_settle(&sim);
@@ -196,6 +210,8 @@ void setUp(void)
 
     memset(flash, 0xFF, sizeof flash);
     eeprom_mcid = MCID;
+    eeprom_writes = 0;
+    app_fixed_mcid = 0;
     reset_requested = 0;
     flash_writes = 0;
     flip_at = 0;
@@ -237,7 +253,8 @@ static void test_updater_announces_itself(void)
     TEST_ASSERT_EQUAL_HEX8(0x1E, p[HUBUS_UPD_INFO_SIGNATURE]);
     TEST_ASSERT_EQUAL_UINT8(PAGE, p[HUBUS_UPD_INFO_PAGE]);
     TEST_ASSERT_EQUAL_HEX8(0x18, p[HUBUS_UPD_INFO_APP_SIZE]); /* 0x1800 */
-    TEST_ASSERT_EQUAL_HEX8(HUBUS_UPD_FLAG_RESET_VECTOR, p[HUBUS_UPD_INFO_FLAGS]);
+    TEST_ASSERT_EQUAL_HEX8(HUBUS_UPD_FLAG_RESET_VECTOR | (HUBUS_UPD_SET_MCID ? HUBUS_UPD_FLAG_SET_MCID : 0),
+                           p[HUBUS_UPD_INFO_FLAGS]);
     TEST_ASSERT_EQUAL_HEX8(0x18, p[HUBUS_UPD_INFO_UPDATER]);
 }
 
@@ -474,6 +491,233 @@ static void test_a_slave_in_its_updater_needs_no_support_of_a_module(void)
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res));
 }
 
+/* ---- change of the MCID ----------------------------------------------------------------------------------------- */
+
+#define NEW_MCID 12u
+
+/* HWID type the slave `mcid` announces, -1 if it does not answer. */
+static int hwid_type(uint8_t mcid)
+{
+    hubus_slave_frame_t f;
+
+    if (hubus_master_request_info(&master, mcid, &f) != HUBUS_OK || f.len <= HUBUS_INFO_HWID) {
+        return -1;
+    }
+    return f.payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE];
+}
+
+/* The application of image A runs under MCID. */
+static void install_application(void)
+{
+    hubus_update_image_t a = image(image_a, sizeof image_a);
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, NULL));
+    TEST_ASSERT_FALSE(in_updater);
+}
+
+static void test_set_mcid_arguments(void)
+{
+    TEST_ASSERT_EQUAL(HUBUS_ERR_ARG, hubus_master_set_mcid(&master, MCID, MCID, NULL, 0, NULL));
+    TEST_ASSERT_EQUAL(HUBUS_ERR_ARG, hubus_master_set_mcid(&master, MCID, 0, NULL, 0, NULL));
+    TEST_ASSERT_EQUAL(HUBUS_ERR_ARG, hubus_master_set_mcid(&master, MCID, 64, NULL, 0, NULL));
+    TEST_ASSERT_EQUAL(HUBUS_ERR_ARG, hubus_master_set_mcid(&master, 0, NEW_MCID, NULL, 0, NULL));
+}
+
+#if HUBUS_UPD_SET_MCID
+
+/* The application switches to its updater, which takes the new MCID and stores it; the application starts with it and
+ * keeps it after a power cycle. */
+static void test_set_mcid_of_an_application(void)
+{
+    hubus_update_result_t res;
+
+    install_application();
+    TEST_ASSERT_EQUAL_MESSAGE(HUBUS_OK, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, &res),
+                              hubus_update_reason_str(res.reason));
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_UINT8(NEW_MCID, eeprom_mcid);
+    TEST_ASSERT_EQUAL_UINT(1, eeprom_writes);
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(NEW_MCID));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(MCID));
+
+    boot();
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(NEW_MCID));
+}
+
+/* A slave without a valid application stays in its updater, under the new MCID, also after a reset. */
+static void test_set_mcid_in_the_updater(void)
+{
+    hubus_update_image_t a = image(image_a, sizeof image_a);
+
+    TEST_ASSERT_TRUE(in_updater);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, NULL));
+    TEST_ASSERT_TRUE(in_updater);
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(NEW_MCID));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(MCID));
+    boot();
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(NEW_MCID));
+
+    /* the commissioning of a fresh device: its MCID first, then its application under it */
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, NEW_MCID, &a, NULL, NULL, NULL));
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(NEW_MCID));
+}
+
+/* Another slave under the new MCID: nothing is sent to the one that was to change. */
+static void test_set_mcid_refuses_a_taken_mcid(void)
+{
+    static const uint8_t other_hwid[] = {0x01};
+    hubus_slave_core_t other;
+    hubus_core_config_t cfg;
+    hubus_update_result_t res;
+
+    install_application();
+    memset(&cfg, 0, sizeof cfg);
+    cfg.mcid = NEW_MCID;
+    cfg.hwid = other_hwid;
+    cfg.hwid_len = sizeof other_hwid;
+    TEST_ASSERT_TRUE(hubus_core_init(&other, &cfg, sim.clk, sim.data));
+    (void)hubus_sim_add(&sim, &other);
+
+    TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, &res));
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_MCID_TAKEN, res.reason);
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_UINT(0, eeprom_writes);
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(MCID));
+}
+
+/* The updater takes UPDATE_SET_MCID only with exact addressing, the complement, and an MCID in 1..63. */
+static void test_updater_checks_set_mcid(void)
+{
+    static const struct {
+        uint8_t target_len;
+        uint8_t args[2];
+        uint8_t n;
+    } refused[] = {
+        {3, {NEW_MCID, (uint8_t)~NEW_MCID}, 2}, /* group */
+        {0, {NEW_MCID, (uint8_t)~NEW_MCID}, 2}, /* broadcast */
+        {6, {NEW_MCID, NEW_MCID}, 2},           /* no complement */
+        {6, {NEW_MCID, 0}, 1},                  /* too short */
+        {6, {0, 0xFF}, 2},                      /* reserved MCID */
+        {6, {64, (uint8_t)~64u}, 2},            /* out of range */
+    };
+    static const uint8_t ok[2] = {NEW_MCID, (uint8_t)~NEW_MCID};
+    unsigned i;
+
+    TEST_ASSERT_TRUE(in_updater);
+    for (i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&master, refused[i].target_len, MCID,
+                                                              HUBUS_OP_UPDATE_SET_MCID, refused[i].args, refused[i].n));
+        TEST_ASSERT_EQUAL_INT_MESSAGE(HUBUS_HWID_TYPE_UPDATER, hwid_type(MCID), "refused command taken");
+    }
+    TEST_ASSERT_EQUAL_UINT(0, eeprom_writes);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&master, 6, MCID, HUBUS_OP_UPDATE_SET_MCID, ok, 2));
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(NEW_MCID));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(MCID));
+    TEST_ASSERT_EQUAL_UINT8(NEW_MCID, eeprom_mcid);
+}
+
+/* One flipped bit at every 23rd clock of a whole change: every change still succeeds. */
+static void test_set_mcid_with_bit_errors(void)
+{
+    hubus_update_result_t res;
+    unsigned at, total = 0;
+
+    install_application();
+    for (at = 1;; at += 23) {
+        eeprom_mcid = MCID;
+        boot();
+        rises = 0;
+        last_clk = sim.clk;
+        flip_at = at;
+        sim.filter = flip_filter;
+        TEST_ASSERT_EQUAL_MESSAGE(HUBUS_OK, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, &res),
+                                  hubus_update_reason_str(res.reason));
+        sim.filter = NULL;
+        TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_startup(&master));
+        TEST_ASSERT_FALSE(in_updater);
+        TEST_ASSERT_EQUAL_UINT8(NEW_MCID, eeprom_mcid);
+        TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(NEW_MCID));
+        if (rises < at) {
+            break; /* the change ended before this clock */
+        }
+        total++;
+    }
+    TEST_ASSERT_GREATER_THAN_UINT(20, total);
+}
+
+/* Power fails in update mode: before UPDATE_SET_MCID the application comes back under the old MCID, after it under the
+ * new one, since it takes the stored MCID. */
+static void test_interrupted_set_mcid(void)
+{
+    static const uint8_t key[2] = {HUBUS_UPDATE_KEY0, HUBUS_UPDATE_KEY1};
+    static const uint8_t set[2] = {NEW_MCID, (uint8_t)~NEW_MCID};
+
+    install_application();
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&master, 6, MCID, HUBUS_OP_UPDATE_ENTER, key, 2));
+    TEST_ASSERT_TRUE(in_updater);
+    boot();
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(MCID));
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&master, 6, MCID, HUBUS_OP_UPDATE_ENTER, key, 2));
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&master, 6, MCID, HUBUS_OP_UPDATE_SET_MCID, set, 2));
+    boot();
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(NEW_MCID));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(MCID));
+}
+
+/* An application with an MCID of its own (pins, a constant) ignores the stored one: the master undoes the change, so that
+ * the updater keeps the MCID the application answers to. */
+static void test_set_mcid_of_an_application_with_its_own_mcid(void)
+{
+    hubus_update_result_t res;
+
+    install_application();
+    app_fixed_mcid = MCID;
+    TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, &res));
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_MCID_NOT_KEPT, res.reason);
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_UINT8(MCID, eeprom_mcid);
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(MCID));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(NEW_MCID));
+}
+
+static void test_set_mcid_needs_update_support_of_the_module(void)
+{
+    static const hubus_module_t *const modules[] = {&app_without_update};
+    hubus_update_result_t res;
+
+    install_application();
+    TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_set_mcid(&master, MCID, NEW_MCID, modules, 1, &res));
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_NO_SUPPORT, res.reason);
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(MCID));
+}
+
+#else /* !HUBUS_UPD_SET_MCID */
+
+/* An updater without the option: the application runs again under its MCID, nothing was stored. */
+static void test_set_mcid_needs_support_of_the_updater(void)
+{
+    hubus_update_result_t res;
+
+    install_application();
+    TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, &res));
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_NO_SET_MCID, res.reason);
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_INT(0xF4, hwid_type(MCID));
+    TEST_ASSERT_EQUAL_INT(-1, hwid_type(NEW_MCID));
+
+    /* also when it waits in its updater */
+    flash[HUBUS_UPD_INFO_ADDR] = 0xFF;
+    boot();
+    TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_set_mcid(&master, MCID, NEW_MCID, NULL, 0, &res));
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_NO_SET_MCID, res.reason);
+    TEST_ASSERT_EQUAL_INT(HUBUS_HWID_TYPE_UPDATER, hwid_type(MCID));
+}
+
+#endif
+
 static void test_ihex(void)
 {
     static const char hex[] = ":020000020000FC\n"
@@ -510,6 +754,19 @@ int main(void)
     RUN_TEST(test_a_module_with_update_support_lets_the_update_run);
     RUN_TEST(test_a_slave_without_a_module_is_tried_as_before);
     RUN_TEST(test_a_slave_in_its_updater_needs_no_support_of_a_module);
+    RUN_TEST(test_set_mcid_arguments);
+#if HUBUS_UPD_SET_MCID
+    RUN_TEST(test_set_mcid_of_an_application);
+    RUN_TEST(test_set_mcid_in_the_updater);
+    RUN_TEST(test_set_mcid_refuses_a_taken_mcid);
+    RUN_TEST(test_updater_checks_set_mcid);
+    RUN_TEST(test_set_mcid_with_bit_errors);
+    RUN_TEST(test_interrupted_set_mcid);
+    RUN_TEST(test_set_mcid_of_an_application_with_its_own_mcid);
+    RUN_TEST(test_set_mcid_needs_update_support_of_the_module);
+#else
+    RUN_TEST(test_set_mcid_needs_support_of_the_updater);
+#endif
     RUN_TEST(test_ihex);
     return UNITY_END();
 }

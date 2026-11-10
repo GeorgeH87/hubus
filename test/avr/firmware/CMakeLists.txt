@@ -54,6 +54,7 @@ hubus_fw_example(ex_switch          slave-switch/switch_example.c               
 hubus_fw_example(ex_sensor          slave-sensor/sensor_example.c                  1      0)
 hubus_fw_example(ex_sensor_passive  slave-sensor-passive/sensor_passive_example.c  0      1)
 hubus_fw_example(ex_relay_simple    slave-relay-simple/relay_simple_example.c      0      0)
+hubus_fw_example(ex_relay_simple_pins slave-relay-simple/relay_simple_example.c    0      0 MCID_FROM_PINS=1)
 
 # Firmware update (updater/CMakeLists.txt): the switch with update support, loaded through the updater, and the
 # updater itself. The updater is built with the MCID of the switch, so that the master finds the application under
@@ -69,7 +70,7 @@ function(hubus_fw_updater name mcid)
     target_include_directories(${name} PRIVATE ${HUBUS_ROOT}/updater ${HUBUS_ROOT}/core ${HUBUS_ROOT}/slave)
     target_compile_definitions(${name} PRIVATE
         HUBUS_RX_BUF_SIZE=31 HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1
-        HUBUS_UPD_ADDR=${HUBUS_FW_UPDATER_ADDR} HUBUS_UPDATER_MCID=${mcid})
+        HUBUS_UPD_ADDR=${HUBUS_FW_UPDATER_ADDR} HUBUS_UPDATER_MCID=${mcid} HUBUS_UPD_SET_MCID=1)
     target_compile_options(${name} PRIVATE -Wall -Wextra $<$<BOOL:${HUBUS_WERROR}>:-Werror> -flto)
     target_link_options(${name} PRIVATE -flto -Wl,--section-start=.text=${HUBUS_FW_UPDATER_ADDR}
         -Wl,--section-start=.hubus_reset=0 -Wl,--undefined=hubus_reset_vector)

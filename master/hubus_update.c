@@ -14,7 +14,9 @@
 typedef struct {
     hubus_master_t *m;
     uint8_t mcid;
-    const hubus_update_image_t *img;
+    const hubus_update_image_t *img; /* NULL for a change of the MCID */
+    const hubus_module_t *const *modules;
+    size_t n_modules;
     hubus_update_result_t *res;
     uint16_t page;      /* page size */
     uint16_t app_start;
@@ -40,6 +42,10 @@ const char *hubus_update_reason_str(hubus_update_reason_t r)
     case HUBUS_UPD_REASON_BAD_IMAGE: return "image does not start with RJMP";
     case HUBUS_UPD_REASON_WRITE: return "page write failed";
     case HUBUS_UPD_REASON_NOT_STARTED: return "new application did not start";
+    case HUBUS_UPD_REASON_MCID_TAKEN: return "another slave answers to the new MCID";
+    case HUBUS_UPD_REASON_NO_SET_MCID: return "the updater of this slave cannot change its MCID";
+    case HUBUS_UPD_REASON_MCID_NOT_SET: return "the updater did not take the new MCID";
+    case HUBUS_UPD_REASON_MCID_NOT_KEPT: return "the application takes its MCID from elsewhere; the old MCID was restored";
     }
     return "unknown";
 }
@@ -47,6 +53,12 @@ const char *hubus_update_reason_str(hubus_update_reason_t r)
 static void delay_ms(hubus_master_t *m, uint32_t ms)
 {
     m->hal.delay_ns(m->hal.ctx, ms * 1000000u);
+}
+
+/* Attempts per step: the retry budget of the master, at least 3. */
+static uint8_t attempts(const hubus_master_t *m)
+{
+    return (uint8_t)(m->cfg.retry_budget < 2u ? 3u : m->cfg.retry_budget + 1u);
 }
 
 static uint16_t be16(const uint8_t *p)
@@ -147,7 +159,8 @@ static int is_updater(const hubus_slave_frame_t *f)
     return f->payload[HUBUS_INFO_HWID + HUBUS_HWID_TYPE] == HUBUS_HWID_TYPE_UPDATER;
 }
 
-static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
+/* Switches the slave to its updater; `*from_app` is 1 if an application ran, 0 if the updater ran already. */
+static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f, uint8_t *from_app)
 {
     static const uint8_t key[2] = {HUBUS_UPDATE_KEY0, HUBUS_UPDATE_KEY1};
     hubus_status_t r;
@@ -156,6 +169,7 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
 
     const hubus_module_t *module;
 
+    *from_app = 0;
     /* The application answers, or the updater if the slave already runs it (after an interrupted update). Whether an
      * application supports the update is a property of its module; one without support ignores UPDATE_ENTER. */
     for (i = 0; i < u->attempts; i++) {
@@ -169,8 +183,9 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
     if (is_updater(f)) {
         return HUBUS_OK;
     }
-    if (u->img->modules &&
-        hubus_module_select_info(u->img->modules, u->img->n_modules, f->payload, f->len, &module) == HUBUS_MODULE_FOUND &&
+    *from_app = 1;
+    if (u->modules &&
+        hubus_module_select_info(u->modules, u->n_modules, f->payload, f->len, &module) == HUBUS_MODULE_FOUND &&
         !module->has_update) {
         return fail(u, HUBUS_UPD_REASON_NO_SUPPORT);
     }
@@ -195,9 +210,10 @@ static hubus_status_t enter(upd_t *u, hubus_slave_frame_t *f)
 
 /*
  * Starts the new application. If the updater answers again, UPDATE_LEAVE was lost or the application does not
- * check out at boot; UPDATE_LEAVE is repeated within the attempts.
+ * check out at boot; UPDATE_LEAVE is repeated within the attempts. `other` (0: none) is the MCID the application
+ * ran with before a change of the MCID: if it answers there, it does not take the new one.
  */
-static hubus_status_t leave(upd_t *u, hubus_slave_frame_t *f)
+static hubus_status_t leave(upd_t *u, hubus_slave_frame_t *f, uint8_t other)
 {
     uint8_t attempt;
     unsigned i;
@@ -215,6 +231,10 @@ static hubus_status_t leave(upd_t *u, hubus_slave_frame_t *f)
                     return HUBUS_OK;
                 }
                 break;
+            }
+            if (other && hubus_master_request_info(u->m, other, f) == HUBUS_OK && f->len > HUBUS_INFO_HWID &&
+                !is_updater(f)) {
+                return fail(u, HUBUS_UPD_REASON_MCID_NOT_KEPT);
             }
         }
     }
@@ -265,7 +285,7 @@ hubus_status_t hubus_master_update(hubus_master_t *m, uint8_t mcid, const hubus_
     uint32_t i;
     upd_t u;
     hubus_status_t r;
-    uint8_t result;
+    uint8_t result, from_app;
     uint16_t addr;
 
     if (!res) {
@@ -279,10 +299,12 @@ hubus_status_t hubus_master_update(hubus_master_t *m, uint8_t mcid, const hubus_
     u.m = m;
     u.mcid = mcid;
     u.img = img;
+    u.modules = img->modules;
+    u.n_modules = img->n_modules;
     u.res = res;
-    u.attempts = (uint8_t)(m->cfg.retry_budget < 2u ? 3u : m->cfg.retry_budget + 1u);
+    u.attempts = attempts(m);
 
-    r = enter(&u, &f);
+    r = enter(&u, &f, &from_app);
     if (r == HUBUS_OK) {
         r = check_info(&u, &f);
     }
@@ -349,7 +371,115 @@ hubus_status_t hubus_master_update(hubus_master_t *m, uint8_t mcid, const hubus_
     if (r != HUBUS_OK) {
         return r;
     }
-    return leave(&u, &f);
+    return leave(&u, &f, 0);
+}
+
+/* ---- MCID ------------------------------------------------------------------------------------------------------ */
+
+/* After the slave was switched to its updater: back to the application if one ran, then `reason`. */
+static hubus_status_t give_up(upd_t *u, hubus_slave_frame_t *f, uint8_t from_app, hubus_update_reason_t reason)
+{
+    hubus_status_t r = from_app ? leave(u, f, 0) : HUBUS_OK;
+
+    return r == HUBUS_ERR_LINE_FAULT ? r : fail(u, reason);
+}
+
+hubus_status_t hubus_master_set_mcid(hubus_master_t *m, uint8_t mcid, uint8_t new_mcid,
+                                     const hubus_module_t *const *modules, size_t n_modules, hubus_update_result_t *res)
+{
+    hubus_update_result_t dummy;
+    hubus_slave_frame_t f;
+    uint8_t args[2], from_app, attempt, i, write_ms;
+    int done = 0;
+    upd_t u;
+    hubus_status_t r = HUBUS_ERR_NO_RESPONSE;
+
+    if (!res) {
+        res = &dummy;
+    }
+    memset(res, 0, sizeof *res);
+    if (mcid < HUBUS_MCID_MIN || mcid > HUBUS_MCID_MAX || new_mcid < HUBUS_MCID_MIN || new_mcid > HUBUS_MCID_MAX ||
+        mcid == new_mcid) {
+        return HUBUS_ERR_ARG;
+    }
+    memset(&u, 0, sizeof u);
+    u.m = m;
+    u.mcid = mcid;
+    u.modules = modules;
+    u.n_modules = n_modules;
+    u.res = res;
+    u.attempts = attempts(m);
+
+    /* Silence on the new MCID, or another slave there; a damaged answer is repeated, and counts as an answer. */
+    for (i = 0; i < u.attempts; i++) {
+        r = hubus_master_request_info(m, new_mcid, &f);
+        if (r == HUBUS_OK || r == HUBUS_ERR_NO_RESPONSE || r == HUBUS_ERR_LINE_FAULT) {
+            break;
+        }
+    }
+    if (r == HUBUS_ERR_LINE_FAULT) {
+        return r;
+    }
+    if (r != HUBUS_ERR_NO_RESPONSE) {
+        return fail(&u, HUBUS_UPD_REASON_MCID_TAKEN);
+    }
+
+    r = enter(&u, &f, &from_app);
+    if (r != HUBUS_OK) {
+        return r;
+    }
+    if (f.len != HUBUS_UPD_INFO_START + HUBUS_UPD_INFO_LEN) {
+        return give_up(&u, &f, from_app, HUBUS_UPD_REASON_BAD_INFO);
+    }
+    if (!(f.payload[HUBUS_UPD_INFO_START + HUBUS_UPD_INFO_FLAGS] & HUBUS_UPD_FLAG_SET_MCID)) {
+        return give_up(&u, &f, from_app, HUBUS_UPD_REASON_NO_SET_MCID);
+    }
+    write_ms = f.payload[HUBUS_UPD_INFO_START + HUBUS_UPD_INFO_WRITE_MS];
+
+    /* UPDATE_SET_MCID is fire-and-forget: while the updater still answers to the old MCID, it was lost. */
+    args[0] = new_mcid;
+    args[1] = (uint8_t)~new_mcid;
+    for (attempt = 0; attempt < u.attempts && !done; attempt++) {
+        r = hubus_master_send_command(m, HUBUS_TARGET_LEN_EXACT, mcid, HUBUS_OP_UPDATE_SET_MCID, args, 2);
+        if (r != HUBUS_OK) {
+            return r;
+        }
+        delay_ms(m, (uint32_t)write_ms + WRITE_MARGIN_MS); /* the updater writes the MCID to its EEPROM */
+        for (i = 0; i < u.attempts; i++) {
+            r = hubus_master_request_info(m, new_mcid, &f);
+            if (r == HUBUS_OK && f.len > HUBUS_INFO_HWID && is_updater(&f)) {
+                done = 1;
+                break;
+            }
+            if (r != HUBUS_ERR_LINE_FAULT) {
+                r = hubus_master_request_info(m, mcid, &f);
+                if (r == HUBUS_OK && f.len > HUBUS_INFO_HWID && is_updater(&f)) {
+                    break;
+                }
+            }
+            if (r == HUBUS_ERR_LINE_FAULT) {
+                return r;
+            }
+        }
+    }
+    if (!done) {
+        return give_up(&u, &f, from_app, HUBUS_UPD_REASON_MCID_NOT_SET);
+    }
+    u.mcid = new_mcid;
+    if (!from_app) {
+        return HUBUS_OK; /* no valid application: the slave waits in its updater, under the new MCID */
+    }
+    r = leave(&u, &f, mcid);
+    if (r == HUBUS_ERR_UPDATE && res->reason == HUBUS_UPD_REASON_MCID_NOT_KEPT) {
+        /* The application hands its own MCID to the updater again, which stores it in place of the new one. */
+        u.mcid = mcid;
+        r = enter(&u, &f, &from_app);
+        if (r == HUBUS_OK && from_app) {
+            r = leave(&u, &f, 0);
+        }
+        return r == HUBUS_ERR_LINE_FAULT ? r : fail(&u, HUBUS_UPD_REASON_MCID_NOT_KEPT);
+    }
+    return r;
 }
 
 /* ---- Intel HEX ------------------------------------------------------------------------------------------------ */

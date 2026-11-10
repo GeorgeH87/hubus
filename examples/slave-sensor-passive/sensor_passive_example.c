@@ -62,8 +62,7 @@ static void publish(uint16_t value)
 
 int main(void)
 {
-    static const hubus_slave_config_t cfg = {
-        .mcid = 0x08,
+    static hubus_slave_config_t cfg = {
         .hwid = hwid,
         .hwid_len = sizeof hwid,
         .state = state,
@@ -73,6 +72,7 @@ int main(void)
     };
 
     publish(measure()); /* a valid value before the first read */
+    cfg.mcid = hubus_slave_mcid_from_eeprom(0x08); /* written when flashing (tools/flash-avr.sh), else 8 */
     hubus_slave_init(&cfg);
     sei();
 

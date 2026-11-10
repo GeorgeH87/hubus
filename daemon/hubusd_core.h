@@ -53,6 +53,7 @@ typedef enum {
     HUBUSD_REQ_READ,     /* REQUEST_STATE: read the live state of one slave */
     HUBUSD_REQ_PROBE,    /* REQUEST_INFO to one MCID (prefix), configured or not */
     HUBUSD_REQ_UPDATE,   /* firmware update of one slave (prefix) from a module; text: its name, or empty */
+    HUBUSD_REQ_SET_MCID, /* new MCID (args[0]) for one slave (prefix), through its updater */
     HUBUSD_REQ_SCAN,
     HUBUSD_REQ_STATS,
     HUBUSD_REQ_REJECT    /* message that was invalid in the MQTT thread; reported by the bus thread */

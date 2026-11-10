@@ -54,8 +54,7 @@ static void on_status_capture(void *ctx)
 
 int main(void)
 {
-    static const hubus_slave_config_t cfg = {
-        .mcid = 0x07,
+    static hubus_slave_config_t cfg = {
         .hwid = hwid,
         .hwid_len = sizeof hwid,
         .on_status_capture = on_status_capture,
@@ -64,6 +63,7 @@ int main(void)
     };
 
     latest = measure();
+    cfg.mcid = hubus_slave_mcid_from_eeprom(0x07); /* written when flashing (tools/flash-avr.sh), else 7 */
     hubus_slave_init(&cfg);
     sei();
 

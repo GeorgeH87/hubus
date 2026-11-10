@@ -1872,6 +1872,8 @@ static int request_waits(const hubusd_t *d, const hubusd_request_t *q)
     case HUBUSD_REQ_PROBE:
     case HUBUSD_REQ_UPDATE:
         return is_blind(d, q->prefix);
+    case HUBUSD_REQ_SET_MCID:
+        return is_blind(d, q->prefix) || is_blind(d, q->args[0]); /* a blind slave under the new MCID would look absent */
     case HUBUSD_REQ_RAW:
         return target_blind(d, q->target_len, q->prefix);
     case HUBUSD_REQ_SCAN:
@@ -2059,6 +2061,93 @@ static void run_update(hubusd_t *d, const hubusd_request_t *q)
     publish_firmware(d, mcid, 0, -1);
 }
 
+/* ---- change of the MCID ---------------------------------------------------------------------------------------------- */
+
+static void publish_mcid_result(hubusd_t *d, unsigned mcid, unsigned new_mcid, const char *result)
+{
+    char buf[200], t[160];
+    jw_t w;
+
+    jw_init(&w, buf, sizeof buf);
+    jw_obj_begin(&w, NULL);
+    jw_uint(&w, "mcid", mcid);
+    jw_uint(&w, "new_mcid", new_mcid);
+    jw_str(&w, "result", result);
+    jw_uint(&w, "ts", wall_s(d));
+    jw_obj_end(&w);
+    topic(d, t, sizeof t, "master/mcid");
+    pub_json(d, &w, 0, t);
+}
+
+/*
+ * Runs on the bus thread and keeps the bus until it is done (hubus_master_set_mcid()). hubusd does not write its
+ * configuration: it takes the slave under the new MCID as the configuration has it there (configured, or reported as
+ * unknown), and says what the configuration has to follow. The old MCID goes offline.
+ */
+static void run_set_mcid(hubusd_t *d, const hubusd_request_t *q)
+{
+    unsigned mcid = q->prefix, new_mcid = q->args[0];
+    hubusd_slave_t *s = &d->slave[mcid], *n = &d->slave[new_mcid];
+    hubus_update_result_t res;
+    hubus_slave_frame_t info;
+    hubus_status_t r;
+
+    log_event(d, 0, "MCID of slave %u (%s) to %u", mcid, slave_name(d, mcid), new_mcid);
+    s->updating = 1; /* it restarts: no instance meanwhile */
+    sync_instances(d);
+    r = hubus_master_set_mcid(&d->master, (uint8_t)mcid, (uint8_t)new_mcid, d->modules, d->n_modules, &res);
+    s->updating = 0;
+    if (r == HUBUS_ERR_LINE_FAULT) {
+        sync_instances(d);
+        publish_mcid_result(d, mcid, new_mcid, hubus_status_str(r));
+        bus_fault(d, r);
+        return;
+    }
+    if (r != HUBUS_OK) {
+        const char *why = r == HUBUS_ERR_UPDATE ? hubus_update_reason_str(res.reason) : hubus_status_str(r);
+
+        log_event(d, 2, "MCID of slave %u not changed: %s", mcid, why);
+        publish_mcid_result(d, mcid, new_mcid, why);
+        if (s->configured && hubus_master_request_info(&d->master, (uint8_t)mcid, &info) == HUBUS_OK) {
+            store_info(d, mcid, &info); /* it may have restarted */
+            s->needs_refresh = 1;
+        }
+        sync_instances(d);
+        refresh_states(d);
+        return;
+    }
+
+    d->stats.commands_executed++;
+    log_event(d, 0, "slave %u answers to MCID %u now", mcid, new_mcid);
+    publish_mcid_result(d, mcid, new_mcid, "ok");
+    n->update_module = s->update_module; /* an update that broke off goes on under the new MCID */
+    s->update_module = NULL;
+    s->unknown_seen = 0;
+    if (s->configured) {
+        set_online(d, mcid, 0);
+        log_event(d, 1, "the configuration still has slave %u: move it to MCID %u", mcid, new_mcid);
+    } else {
+        s->have_info = 0;
+    }
+    if (hubus_master_request_info(&d->master, (uint8_t)new_mcid, &info) == HUBUS_OK) {
+        n->last_seen_ms = now_ms(d);
+        n->ping_failures = 0;
+        if (n->configured) {
+            store_info(d, new_mcid, &info);
+            set_online(d, new_mcid, 1);
+            n->needs_refresh = 1;
+        } else {
+            n->info = info;
+            n->have_info = 1;
+            n->unknown_seen = 1;
+            log_event(d, 1, "slave %u is not configured: add it to the configuration and reload hubusd", new_mcid);
+        }
+    }
+    publish_state(d, 0);
+    sync_instances(d);
+    refresh_states(d);
+}
+
 static void exec_request(hubusd_t *d, const hubusd_request_t *q)
 {
     hubus_status_t r;
@@ -2095,6 +2184,9 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
         break;
     case HUBUSD_REQ_UPDATE:
         run_update(d, q);
+        break;
+    case HUBUSD_REQ_SET_MCID:
+        run_set_mcid(d, q);
         break;
     case HUBUSD_REQ_SET: {
         const hubusd_slave_t *s = &d->slave[q->prefix];
@@ -2307,6 +2399,16 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
                 return;
             }
             memcpy(r.text, text, strlen(text) + 1u);
+        } else if (strcmp(end, "mcid") == 0) {
+            const char *rest;
+
+            if (!parse_uint(text, 63, &b, &rest) || *rest || b < HUBUS_MCID_MIN || b == a) {
+                enqueue_reject(d, "invalid new MCID '%s' for slave %u (1..63, not %u)", text, a, a);
+                return;
+            }
+            r.kind = HUBUSD_REQ_SET_MCID;
+            r.args[0] = (uint8_t)b;
+            r.n_args = 1;
         } else if (strcmp(end, "cmd") == 0) {
             r.kind = HUBUSD_REQ_RAW;
             if (parse_raw(text, &r) != 0 || (r.opcode != HUBUS_OP_STATUS_CAPTURE && r.opcode < HUBUS_OP_APP_MIN) ||
@@ -2357,7 +2459,7 @@ void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg)
 void hubusd_subscriptions(const hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx)
 {
     static const char *const filters[] = {"master/cmd/+", "slave/+/+/set", "slave/+/+/rgb/set", "slave/+/cmd", "slave/+/capture", "slave/+/read",
-                                          "slave/+/update", "group/+/+/cmd"};
+                                          "slave/+/update", "slave/+/mcid", "group/+/+/cmd"};
     char t[160];
     unsigned i;
 

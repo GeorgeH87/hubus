@@ -95,6 +95,7 @@ A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](sp
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon collects and publishes it. |
 | `hubus/slave/<n>/read` | any | `REQUEST_STATE`: reads the live state of a slave that has one in one transaction and publishes it. Rejected for slaves without a state. |
 | `hubus/slave/<n>/update` | empty, or the name of a module | Starts a [firmware update](#firmware-updates) from the image of the module. Only a trigger: the image never comes over MQTT. |
+| `hubus/slave/<n>/mcid` | the new MCID `1..63` | [Changes the MCID](#changing-the-mcid) of the slave through its updater; result on `hubus/master/mcid`. Also for a slave that is not configured, such as a fresh device under the default MCID 63. |
 | `hubus/group/<prefix>/<len>/cmd` | as `cmd` | Group (`len` 0..5) or broadcast (`0/0`) command. Slaves never answer group commands; opcode `0` makes a group capture its states, which a burst then collects. |
 | `hubus/master/cmd/scan` | any | Commissioning scan ([§6.4](spec/06-operation.md#64-commissioning-scan-and-duplicate-mcids)); result on `hubus/master/scan`. |
 | `hubus/master/cmd/probe` | MCID `1..63` | One `REQUEST_INFO` to a single MCID, configured or not; result on `hubus/master/probe`. There is no function that polls all 63 MCIDs. |
@@ -113,6 +114,7 @@ Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, pa
 | `hubus/master/scan` | no | result of the last scan |
 | `hubus/slave/<n>/firmware` | yes | for a module with a firmware image, in the form of the update entity of Home Assistant: `installed_version`, `latest_version`, `in_progress`, `update_percentage` |
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `module`, `state_capable` |
+| `hubus/master/mcid` | no | result of the last change of an MCID: `mcid`, `new_mcid`, `result` (`ok`, or why not), timestamp |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
 | `hubus/slave/<n>/info` | yes | from the bus: protocol version, speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), the whole `hwid`, device type, and for the full form `variant`, `firmware`, `revision`, `serial`; `updater`: the updater runs. From the module: `module`, `events`, `status_capture`, `state`, `update`, `max_command`, `blind` ([§7.8](spec/07-slave.md#78-blind-sections)), `module_failed` ([module functions](#module-functions)). And the keys of its `entities`. |
@@ -220,6 +222,21 @@ The firmware of a slave comes with its module: a plugin holds the application im
 - **The instance of the module** is destroyed before the update and created anew afterwards, for what the slave then says it is. The entities stay as they are if it keeps its module.
 - **If an update fails,** the reason is on `hubus/master/log`, and the slave usually waits in its updater (`updater` in its `info`). Until hubusd restarts, an empty trigger repeats the update.
 - **A slave in its updater** no longer says what it is: its hardware identifier is only `0xFF`. After a restart of hubusd the trigger has to name the module: `mosquitto_pub -t hubus/slave/5/update -m my-module`. The updater checks the device signature, if the module states one, but not whether this is the right firmware for the device: choosing the module is up to you.
+- **The MCID survives an update:** it is kept in the EEPROM of the slave, which an update does not touch ([slave library](slave-library.md#assigning-the-mcid)).
+
+## Changing the MCID
+
+A slave whose updater takes `UPDATE_SET_MCID` can get another MCID over MQTT ([§6.8](spec/06-operation.md#mcid), [slave library](slave-library.md#changing-the-mcid-over-the-bus)):
+
+```sh
+mosquitto_pub -t hubus/slave/63/mcid -m 12   # a fresh device under the default MCID of the updater gets 12
+```
+
+- **What happens:** hubusd refuses a new MCID that already answers, switches the slave to its updater, gives it the new MCID, and starts its application again. The bus stands still for about a second. The result is on `hubus/master/mcid` and `hubus/master/log`.
+- **hubusd does not write its configuration.** It takes the slave under the new MCID as the configuration has it there: a configured MCID goes into operation with the module of the slave, an MCID outside the configuration is reported as an unknown slave in `hubus/master/state`, with a hint on `hubus/master/log`. The old MCID goes offline; if it is configured, the log says that the configuration still has it. Move the slave in the configuration and reload hubusd (`systemctl reload hubusd`, [above](#configuration)), or add the new MCID before the change, so that the slave goes into operation at once.
+- **An application that takes its MCID from elsewhere** (pins, a constant) does not take the new one: hubusd reports `the application takes its MCID from elsewhere`, and the slave keeps its old MCID.
+- **A slave in its updater** stays there, under the new MCID; an update that broke off goes on there: `mosquitto_pub -t hubus/slave/12/update -m my-module`.
+- Without update support in its module, or with an updater that cannot change the MCID, the slave stays as it was and the reason is reported.
 
 ## How It Works
 

@@ -8,11 +8,15 @@
  *   reset          start the application if the info page checks out, otherwise stay
  *   UPDATE_ENTER   the application jumps here with HUBUS_UPDATE_KEY0 in GPIOR0 and its MCID in GPIOR1
  *
- * The MCID comes from the application, which stores it in the last EEPROM byte for the next time the updater
- * starts without one (no valid application). Without that byte the build option HUBUS_UPDATER_MCID applies.
+ * MCID: the last EEPROM byte (E2END), the place where the slave library looks as well
+ * (hubus_slave_mcid_from_eeprom()). The recommended way to fill it is the programmer, together with the updater
+ * image (tools/flash-avr.sh); without it the build option HUBUS_UPDATER_MCID applies. The application hands over
+ * the MCID it runs with at UPDATE_ENTER, and the updater stores it there for the next time it starts without a valid
+ * application. With HUBUS_UPD_SET_MCID the master can change it in update mode (UPDATE_SET_MCID); the updater stores
+ * the new one there as well. A firmware update over the bus never touches the EEPROM otherwise.
  *
- * Fuses: SELFPRGEN programmed (self-programming), brown-out detection recommended. The watchdog must not be
- * forced on (WDTON), because the updater switches it off.
+ * Fuses: SELFPRGEN programmed (self-programming), brown-out detection recommended, EESAVE recommended (a chip erase
+ * then keeps the MCID). The watchdog must not be forced on (WDTON), because the updater switches it off.
  */
 #include <avr/boot.h>
 #include <avr/eeprom.h>
@@ -50,6 +54,15 @@ void hubus_upd_flash_write(uint16_t addr, const uint8_t *page)
     boot_page_write(addr);
     boot_spm_busy_wait();
 }
+
+#if HUBUS_UPD_SET_MCID
+/* Starts the EEPROM write (3.4 ms, the CPU keeps running) and returns; a following page write waits for it
+ * (hubus_upd_flash_write()). */
+void hubus_upd_store_mcid(uint8_t mcid)
+{
+    eeprom_update_byte(MCID_EEPROM, mcid);
+}
+#endif
 
 void hubus_upd_reset(void)
 {
@@ -93,13 +106,13 @@ int main(void)
     }
     if (entered) {
         reset_ports();
-        if (mcid >= HUBUS_MCID_MIN && mcid <= HUBUS_MCID_MAX) {
-            eeprom_update_byte(MCID_EEPROM, mcid);
-        }
     }
-    if (!entered || mcid < HUBUS_MCID_MIN || mcid > HUBUS_MCID_MAX) {
+    /* unsigned wrap-around: 0 and everything above HUBUS_MCID_MAX are no MCID */
+    if (entered && (uint8_t)(mcid - HUBUS_MCID_MIN) <= HUBUS_MCID_MAX - HUBUS_MCID_MIN) {
+        eeprom_update_byte(MCID_EEPROM, mcid);
+    } else {
         mcid = eeprom_read_byte(MCID_EEPROM);
-        if (mcid < HUBUS_MCID_MIN || mcid > HUBUS_MCID_MAX) {
+        if ((uint8_t)(mcid - HUBUS_MCID_MIN) > HUBUS_MCID_MAX - HUBUS_MCID_MIN) {
             mcid = HUBUS_UPDATER_MCID;
         }
     }

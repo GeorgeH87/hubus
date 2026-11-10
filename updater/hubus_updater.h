@@ -8,12 +8,14 @@
  *   UPDATE_LOAD  offset data...         copy into the page buffer
  *   UPDATE_WRITE addr_hi addr_lo crc16  write the page buffer to flash after the STOP
  *   UPDATE_LEAVE                        reset after the STOP; a valid application is started
+ *   UPDATE_SET_MCID mcid ~mcid          with HUBUS_UPD_SET_MCID: store the new MCID, answer to it from the next
+ *                                       transaction on (exact addressing only)
  *
  * Flash writes and the reset wait for the STOP of their transaction (hubus_updater_poll()); the master keeps the
  * bus quiet for the write time the updater announces, because a flash write halts the CPU on classic tinyAVR.
  *
- * The platform provides hubus_upd_flash_read(), hubus_upd_flash_write(), and hubus_upd_reset(), and the layout
- * below.
+ * The platform provides hubus_upd_flash_read(), hubus_upd_flash_write(), hubus_upd_reset(), with
+ * HUBUS_UPD_SET_MCID hubus_upd_store_mcid(), and the layout below.
  */
 #ifndef HUBUS_UPDATER_H
 #define HUBUS_UPDATER_H
@@ -58,6 +60,13 @@
 #endif
 #define HUBUS_UPD_RESET_RJMP ((uint16_t)(0xC000u | ((HUBUS_UPD_ADDR / 2u - 1u) & 0x0FFFu)))
 
+/* Optional UPDATE_SET_MCID (docs/spec/06-operation.md section 6.8), off by default: the firmware developer selects
+ * it per updater; the updater information announces it (HUBUS_UPD_FLAG_SET_MCID). */
+#ifndef HUBUS_UPD_SET_MCID
+#define HUBUS_UPD_SET_MCID 0
+#endif
+#define HUBUS_UPD_ALL_FLAGS (HUBUS_UPD_FLAGS | (HUBUS_UPD_SET_MCID ? HUBUS_UPD_FLAG_SET_MCID : 0u))
+
 #if (HUBUS_UPD_FLAGS & HUBUS_UPD_FLAG_RESET_VECTOR) && HUBUS_UPD_APP_START != 0
 #error "The reset vector rule needs the application area at address 0"
 #endif
@@ -79,6 +88,11 @@
 uint8_t hubus_upd_flash_read(uint16_t addr);
 void hubus_upd_flash_write(uint16_t addr, const uint8_t *page); /* erase and write one page */
 void hubus_upd_reset(void);                                     /* does not return on a device */
+#if HUBUS_UPD_SET_MCID
+/* Keeps the MCID for the next start of the updater, where the application may read it too (HUBUS: last EEPROM byte).
+ * Called while the bus runs: it must not block for long (start the EEPROM write, do not wait for it). */
+void hubus_upd_store_mcid(uint8_t mcid);
+#endif
 
 /* ---- updater ------------------------------------------------------------------------------------------------ */
 

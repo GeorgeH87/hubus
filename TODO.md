@@ -146,3 +146,33 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 Open:
 
 - [ ] **Hardware test**: plugins, entities, and discovery on a Raspberry Pi with Home Assistant (together with the end-to-end test in section 10).
+
+## 13. Assigning the MCID
+
+Decisions: The library is not tied to a controller. It offers functions that the developer of a firmware selects (build options, as with the event buffer, the state, and `HUBUS_ENABLE_UPDATE`); nothing is prescribed, everything else is a recommendation. A firmware for the ATtiny85 may leave out the update, and with it the change of the MCID, just as any other firmware may include it. The source of the MCID is the choice of the slave application (EEPROM, GPIOs, a constant); the core only takes `cfg->mcid`. The **recommended way** is to set it when flashing: one image for all devices, one EEPROM byte per device (the last one, read by the updater). It is a recommendation, not a requirement; without it the default of the firmware applies and collisions are accepted. Where the update is built in, the MCID can in addition be changed over the bus, in the update mode only, if that part is selected too ([slave library](docs/slave-library.md#assigning-the-mcid), [decisions](docs/project/decisions.md)).
+
+Flashing:
+
+- [x] Every example takes its MCID from the last EEPROM byte, with its old MCID as the default (`examples/`, `test/avr/firmware/fw_slave.c`); the MCID is a parameter of the flash script, written together with the image in one avrdude call. Run on simulated ATtiny85 devices (`test_avr_examples`: two relays from one image, invalid bytes).
+- [x] `tools/flash-avr.sh [-m mcu] [-c programmer] [-P port] [-n] image.hex [mcid]`: a one-byte Intel HEX image for the EEPROM, the offset of the last byte from avr-gcc (also for the 0/1/2-series), `-` for the MCID alone; without an MCID it says that the default applies. Tried with `-n` only, not with a programmer.
+- [x] Slave library: `hubus_slave_mcid_from_eeprom(fallback)` and `hubus_slave_mcid_or()` in `slave/hubus_slave.h`: the last EEPROM byte as the updater reads it, range check, fallback; on the 0/1/2-series the offset of the mapped EEPROM.
+- [x] `example_relay_simple_pins`: the simple relay with its MCID from two jumpers (`0x20` plus PB1, PB4); the updater stores what the application hands over, and a change over the bus does not last, which the master undoes and reports.
+
+Change over the bus (update mode):
+
+- [x] Specification [§6.8](docs/spec/06-operation.md#mcid): `UPDATE_SET_MCID` (`0x05`, `mcid ~mcid`, exact addressing only), flag bit 1 in the updater information. Takes effect at once (from the next transaction), answers nothing, leaves the state unchanged; the master asks the new MCID.
+- [x] The state after the change, documented: the updater keeps the MCID in the last EEPROM byte; an application with its own source ignores it, so the master checks under which MCID the application answers and undoes the change otherwise.
+- [x] Updater: `HUBUS_UPD_SET_MCID` (CMake `HUBUS_UPDATER_SET_MCID`, on for the ATtiny85 reference updater), range check, `eeprom_update_byte` through the platform function `hubus_upd_store_mcid()`, the new MCID in the running core. 60 bytes: 2040 instead of 1980 of 2048; the build also produces `hubus_updater_no_set_mcid` and checks both.
+- [x] The option is in the hardware-independent part of the updater (`updater/hubus_updater.c`); another updater only provides `hubus_upd_store_mcid()`, and the flag tells the master. The updater for the 0/1/2-series is still open (section 11).
+- [x] Master library: `hubus_master_set_mcid(m, mcid, new_mcid, modules, n_modules, &res)`: refuses a taken MCID, enters the update mode, repeats the opcode until the updater answers to the new MCID, leaves the update mode under the new one; reasons `MCID_TAKEN`, `NO_SET_MCID`, `MCID_NOT_SET`, `MCID_NOT_KEPT` (with the change undone), `NO_SUPPORT` from the module.
+- [x] Master example: command `mcid <old> <new>`. Compiles; not run on a Raspberry Pi.
+- [x] hubusd: `hubus/slave/<n>/mcid` with the new MCID, result on `hubus/master/mcid`. It does not write its configuration: a configured new MCID goes into operation with its module, another one is reported as unknown, and the log says what the configuration has to follow; the old MCID goes offline.
+- [x] Tests: `test_update` and `test_update_no_set_mcid` on the bus simulation (from an application and from the updater, taken MCID, the checks of the updater, bit errors, power loss in update mode, an application with its own MCID, a module without update support, an updater without the option), `test_daemon_update` (MQTT), `test_avr_update` on a simulated ATtiny85 (the MCID from the programmer, a fresh device that gets its MCID over the bus, the running switch that moves and keeps it after a power cycle and an update).
+- [ ] Hardware: change the MCID on an ATtiny85 and survive an interrupted change (together with the firmware update test in section 9); the flash script with a real programmer and `EESAVE`.
+
+Documentation:
+
+- [x] The MCID parts rewritten: [slave library](docs/slave-library.md#assigning-the-mcid), [§6.8](docs/spec/06-operation.md#mcid), [§7.2](docs/spec/07-slave.md#72-mcid), [master library](docs/master-library.md#firmware-update), [hubusd](docs/daemon.md#changing-the-mcid), [development](docs/development.md#avr-tests), the header of `updater/hubus_updater_avr.c`.
+- [x] Fuse settings in one place ([slave library](docs/slave-library.md#fuses)): `EESAVE` (now in the recommended `hfuse` `0xD5`), `SELFPRGEN`, brown-out detection, `WDTON`; a flash write erases the chip, and without `EESAVE` the MCID with it.
+- [x] The firmware update over the bus does not touch the EEPROM: the MCID survives it (spec, slave library, hubusd).
+- [x] Glossary, [open issues](docs/project/open-issues.md#mcid-assignment) (no automatic enumeration without a unique serial number), [decisions](docs/project/decisions.md).

@@ -4,7 +4,7 @@
  *
  *   PB2 = CLK, PB3 = DATA (library defaults, slave/hubus_slave_config.h)
  *
- * Build options: FW_MCID, HUBUS_ENABLE_EVENTS, HUBUS_ENABLE_STATE.
+ * Build options: FW_MCID (unless the last EEPROM byte holds an MCID), HUBUS_ENABLE_EVENTS, HUBUS_ENABLE_STATE.
  *
  * State, 2 bytes: [0] value of the last SET, [1] number of finished jobs (EVENT writes and blind sections).
  *
@@ -74,8 +74,7 @@ static void on_status_capture(void *ctx)
 
 int main(void)
 {
-    static const hubus_slave_config_t cfg = {
-        .mcid = FW_MCID,
+    static hubus_slave_config_t cfg = {
         .hwid = hwid,
         .hwid_len = sizeof hwid,
 #if HUBUS_ENABLE_STATE
@@ -91,6 +90,7 @@ int main(void)
         .has_blind_time = 1,
     };
 
+    cfg.mcid = hubus_slave_mcid_from_eeprom(FW_MCID); /* FW_MCID unless the EEPROM byte holds one */
     hubus_slave_init(&cfg);
     sei();
 #if HUBUS_ENABLE_EVENTS

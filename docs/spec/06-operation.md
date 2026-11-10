@@ -179,9 +179,10 @@ The updater is a slave like any other: same MCID, same protocol, no event buffer
 | `0x02` | `UPDATE_LOAD` | `offset data…` | updater | Copy `data` into the page buffer at `offset`. A load that does not fit into the page is ignored. |
 | `0x03` | `UPDATE_WRITE` | `addr_hi addr_lo crc_hi crc_lo` | updater | Write the page buffer to the flash page at byte address `addr`, after the STOP of the transaction. |
 | `0x04` | `UPDATE_LEAVE` | – | updater | Reset after the STOP of the transaction; the updater then starts the application if it is valid. |
+| `0x05` | `UPDATE_SET_MCID` | `mcid ~mcid` | updater with flag bit 1 | Answer to `mcid` from the next transaction on, and keep it ([MCID](#mcid)). Optional. Only with exact addressing, exactly these two bytes, the second the complement of the first, and `mcid` in `1..63`; otherwise ignored. |
 
-- Every other slave ignores these opcodes as unknown reserved opcodes ([§4.4](04-frames.md#44-command-opcodes)), so a misdirected command does no harm. An application without update support ignores `UPDATE_ENTER`; the updater ignores `0x10..0xFF`.
-- The exact addressing and the key keep a broadcast or a stray frame from switching slaves into their updaters.
+- Every other slave ignores these opcodes as unknown reserved opcodes ([§4.4](04-frames.md#44-command-opcodes)), so a misdirected command does no harm. An application without update support ignores `UPDATE_ENTER`; the updater ignores `0x10..0xFF`, and one without flag bit 1 ignores `UPDATE_SET_MCID`.
+- The exact addressing and the key keep a broadcast or a stray frame from switching slaves into their updaters. For `UPDATE_SET_MCID` the exact addressing keeps a group from getting one MCID for several slaves.
 - `UPDATE_WRITE` checks before writing: `addr` is the start of a page inside the application area, the CRC-16 ([below](#integrity)) of the whole page buffer equals `crc`, and with the reset vector rule the page at address 0 starts with the required jump. Otherwise nothing is written.
 - A flash write halts the CPU on classic tinyAVR devices. The updater writes only after the STOP, and the master keeps the bus quiet for the write time the updater announces: no clock, no transaction.
 
@@ -196,7 +197,7 @@ The updater's `SLAVE_INFO` is byte 0 (protocol version and speed class, [§4.7](
 | 4–5 | First byte of the application area |
 | 6–7 | Size of the application area in bytes, including the info page |
 | 8 | Write time in milliseconds: how long the master waits after `UPDATE_WRITE` |
-| 9 | Flags: bit 0 = reset vector rule (below) |
+| 9 | Flags: bit 0 = reset vector rule (below), bit 1 = takes `UPDATE_SET_MCID` ([MCID](#mcid)); the other bits are `0` |
 | 10–11 | Byte address of the updater |
 | 12 | Updater version |
 | 13 | Maximum command payload the updater accepts, in bytes (`3..31`; including the opcode), which limits `UPDATE_LOAD` |
@@ -257,7 +258,37 @@ Pages and the application are protected by CRC-16/CCITT-FALSE (polynomial `0x102
 
 ### MCID
 
-The updater answers to the MCID of the application. The application hands it over when it switches; the updater keeps it for the next time it starts without a valid application. How it keeps it is up to the implementation; the HUBUS updater uses the last byte of the EEPROM ([slave library](../slave-library.md#firmware-update)).
+Where a slave gets its MCID from is the choice of its firmware: a value written per device when it is programmed, pins, or a constant. The specification prescribes none; the HUBUS slave library recommends the first, one byte in the EEPROM ([slave library](../slave-library.md#assigning-the-mcid)).
+
+The updater answers to the MCID of the application. The application hands it over when it switches; the updater keeps it for the next time it starts without a valid application. How it keeps it is up to the implementation; the HUBUS updater uses the last byte of the EEPROM, the same byte the slave library reads. A firmware update writes the flash only, so the MCID survives it.
+
+**Changing the MCID** (optional, flag bit 1). In its updater a slave MAY take a new MCID over the bus:
+
+- `UPDATE_SET_MCID` takes effect at once: the updater answers only to the new MCID from the next transaction on. It answers nothing and leaves its state unchanged; the master sees the result by asking the new MCID.
+- The updater keeps the new MCID where it keeps the one it got from the application, and uses it at its next start without a valid application. The master keeps the bus quiet for the write time after the command, as after `UPDATE_WRITE`.
+- Whether the change lasts is up to the application: one that takes its MCID from the place where the updater keeps it starts with the new one after `UPDATE_LEAVE`. One that takes it from elsewhere starts with its own and hands that over again at the next `UPDATE_ENTER`. The master therefore cannot assume a lasting effect; it checks under which MCID the application answers.
+
+```mermaid
+sequenceDiagram
+    participant M as Master
+    participant S as Slave
+    M->>S: REQUEST_INFO to the new MCID
+    Note over M: no answer: the MCID is free
+    M->>S: UPDATE_ENTER 0x55 0x50 (old MCID)
+    M->>S: REQUEST_INFO (old, until type 0xFF, flag bit 1)
+    M->>S: UPDATE_SET_MCID new ~new (old MCID)
+    Note over M,S: master waits the write time
+    M->>S: REQUEST_INFO (new, until the updater answers)
+    M->>S: UPDATE_LEAVE (new MCID)
+    M->>S: REQUEST_INFO (new, until the application answers)
+```
+
+1. The master refuses a new MCID that already answers ([§6.4](#64-commissioning-scan-and-duplicate-mcids)).
+2. It switches the slave to its updater as for an update and checks flag bit 1. Without it, it sends `UPDATE_LEAVE` and reports that the updater cannot change the MCID.
+3. It sends `UPDATE_SET_MCID` to the old MCID and asks the new one. While the updater still answers to the old MCID, the command was lost, and the master repeats it within its retry budget.
+4. A slave that ran an application gets `UPDATE_LEAVE` under the new MCID; one that waited in its updater stays there. If the application answers under the old MCID, it takes its MCID from elsewhere: the master undoes the change with `UPDATE_ENTER` and `UPDATE_LEAVE` to the old MCID, which hands the old MCID back to the updater, and reports it.
+
+An interruption leaves a consistent slave: before `UPDATE_SET_MCID` it keeps the old MCID, after it the new one, both for its updater and for an application that takes the stored MCID.
 
 ## 6.9 Blind Time After a Command
 

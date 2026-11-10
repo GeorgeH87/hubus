@@ -37,6 +37,8 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
     hubus_example(sensor          slave-sensor/sensor_example.c                  1      0)
     hubus_example(sensor_passive  slave-sensor-passive/sensor_passive_example.c  0      1)
     hubus_example(relay_simple    slave-relay-simple/relay_simple_example.c      0      0)
+    # The MCID from two jumpers instead of the EEPROM: the source of the MCID is up to the application.
+    hubus_example(relay_simple_pins slave-relay-simple/relay_simple_example.c    0      0 MCID_FROM_PINS=1)
 
     # The switch with firmware update: installed together with the updater, and loadable through it. It must end
     # before the info page, the last page in front of the updater.

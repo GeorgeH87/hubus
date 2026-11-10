@@ -28,7 +28,7 @@ static const uint8_t hwid[HUBUS_HWID_UPDATER_LEN] HUBUS_UPD_FLASH_CONST = {
     HI(HUBUS_UPD_APP_START), LO(HUBUS_UPD_APP_START),
     HI(HUBUS_UPD_APP_SIZE), LO(HUBUS_UPD_APP_SIZE),
     HUBUS_UPD_WRITE_MS,
-    HUBUS_UPD_FLAGS,
+    HUBUS_UPD_ALL_FLAGS,
     HI(HUBUS_UPD_ADDR), LO(HUBUS_UPD_ADDR),
     HUBUS_UPD_VERSION,
     HUBUS_RX_BUF_SIZE,
@@ -63,6 +63,17 @@ static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t l
     } else if (opcode == HUBUS_OP_UPDATE_LEAVE && len == 0u) {
         job = HUBUS_UPD_JOB_LEAVE;
     }
+#if HUBUS_UPD_SET_MCID
+    /* Exact addressing only (TARGET_LEN in bits 5..3 of the header), and the complement as a check: a group never
+     * gets one MCID for several slaves. Unsigned wrap-around rejects 0 with the MCIDs above 63. After a command the
+     * core ignores the bus until the STOP, so the new MCID counts from the next transaction on. */
+    else if (opcode == HUBUS_OP_UPDATE_SET_MCID && len == 2u && (uint8_t)(args[0] ^ args[1]) == 0xFFu &&
+             (uint8_t)(args[0] - HUBUS_MCID_MIN) <= HUBUS_MCID_MAX - HUBUS_MCID_MIN &&
+             (hubus_updater_core.hdr[0] & 0x38u) == HUBUS_TARGET_LEN_EXACT << 3) {
+        hubus_upd_store_mcid(args[0]);
+        hubus_updater_core.mcid = args[0];
+    }
+#endif
 }
 
 static void write_page(void)

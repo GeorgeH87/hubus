@@ -25,10 +25,11 @@ static void on_command(void *ctx, uint8_t opcode, const uint8_t *args, uint8_t l
 
 int main(void)
 {
-    static const hubus_slave_config_t cfg = {
-        .mcid = 3, .hwid = hwid, .hwid_len = sizeof hwid,
+    static hubus_slave_config_t cfg = {
+        .hwid = hwid, .hwid_len = sizeof hwid,
         .on_status_capture = on_status_capture, .on_command = on_command,
     };
+    cfg.mcid = hubus_slave_mcid_from_eeprom(3); /* written when flashing, else 3 (see Assigning the MCID) */
     hubus_slave_init(&cfg);                    /* pin change interrupts for CLK and DATA */
     sei();                                     /* global interrupts: when the application is ready */
     for (;;) {
@@ -46,6 +47,8 @@ int main(void)
 | `hubus_slave_is_pending()` | 1 while the buffer has not been read. Write the next fragment when it is 0. |
 | `hubus_slave_blind_begin()`, `hubus_slave_blind_end()` | Frame a blind section ([§7.8](spec/07-slave.md#78-blind-sections)): code that has to run with all interrupts disabled for longer than the speed class allows. `begin` returns 1 with interrupts disabled, or 0 while the slave drives `DATA` or owes an answer (try again). `end` resynchronizes with the current pin levels and enables interrupts again. Main loop only, with interrupts enabled. |
 | `hubus_slave_short_begin()`, `hubus_slave_short_interrupted()`, `hubus_slave_short_end()` | Frame an interruptible section: long timing-critical work in short pieces with all interrupts disabled, which gives way to the bus. `begin` returns 1 with interrupts disabled if the bus is between transactions and no edge waits, else 0 with interrupts enabled (try again). `interrupted` returns 1 once a `CLK` or `DATA` change waits for the interrupt handler; the caller then stops. `end` enables interrupts again. Main loop only. |
+| `hubus_slave_mcid_from_eeprom(fallback)` | The MCID in the last EEPROM byte, or `fallback` if that byte holds none (erased, `0`, above `63`): the recommended source of `cfg.mcid` ([assigning the MCID](#assigning-the-mcid)). AVR only. |
+| `hubus_slave_mcid_or(mcid, fallback)` | The range check alone: `mcid` if it is `1..63`, else `fallback`, for an MCID from elsewhere. |
 | `hubus_slave_isr()` | The pin change handler. The HAL vectors call it; the application only calls it itself in host tests, where there are no interrupts. |
 
 The functions below the library are the hardware-independent core (`core/hubus_slave_core.h`), used by the library, the host tests, and the bus simulation: `hubus_core_init(core, cfg, clk, data)`, `hubus_core_pins(core, clk, data)` (feed the pin levels after every change), `hubus_core_data_low(core)` (the `DATA` drive to apply: 1 pulls low, 0 releases), `hubus_core_write()`, `hubus_core_is_pending()`, and for blind sections `hubus_core_can_blind()` and `hubus_core_resync(core, clk, data)`. Firmware does not call them; `hubus_core_config_t` is the same type as `hubus_slave_config_t`.
@@ -54,7 +57,7 @@ Configuration (`hubus_slave_config_t`):
 
 | Field | Meaning |
 |---|---|
-| `mcid` | `1..63`, unique on the bus ([§7.2](spec/07-slave.md#72-mcid)) |
+| `mcid` | `1..63`, unique on the bus ([§7.2](spec/07-slave.md#72-mcid)); where it comes from is up to the application ([assigning the MCID](#assigning-the-mcid)) |
 | `hwid`, `hwid_len` | Hardware identifier in `SLAVE_INFO`, in flash (`PROGMEM`), `1..30` bytes: the type alone in the short form, or type, variant, version, hardware revision, and an optional serial number in the full form ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)) |
 | `serial`, `serial_len` | With `HUBUS_ENABLE_SERIAL`: a serial number in RAM, sent after `hwid` and counted in its 30 bytes. The application reads it before `hubus_slave_init()`, for example from EEPROM or the signature row. |
 | `state`, `state_len` | Live state for `REQUEST_STATE`: RAM the application keeps up to date, read while transmitting, 1..31 bytes; `NULL` for no state ([§4.10](spec/04-frames.md#410-state)) |
@@ -119,7 +122,9 @@ The event buffer costs about 490 bytes of flash and 41 bytes of RAM (including t
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
 | `slave-ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
 
-Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#entities); their modules also state the entities of each device ([hubusd](daemon.md#entities)). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update).
+Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#entities); their modules also state the entities of each device ([hubusd](daemon.md#entities)). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update), and `example_relay_simple_pins`, the simple relay with its MCID from two jumpers ([assigning the MCID](#assigning-the-mcid)).
+
+Every example takes its MCID from the last EEPROM byte and falls back to its own default (switch 5, relay 3, sensor 7, passive sensor 8, simple relay 4, LED strip 11): one image serves every device of a kind.
 
 ## Configuration
 
@@ -148,20 +153,69 @@ A slave can receive new firmware over the bus if it carries the updater ([§6.8]
 |---|---|
 | `0x0000..0x17BF` | application, at most 6080 bytes; word 0 jumps to the updater |
 | `0x17C0..0x17FF` | info page: length, CRC-16, and entry of the application |
-| `0x1800..0x1FFF` | updater (`updater/`, 2006 bytes) |
+| `0x1800..0x1FFF` | updater (`updater/`, 2040 bytes; 1980 without `UPDATE_SET_MCID`) |
 
 **Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and `HUBUS_UPDATER_ADDR=0x1800`, and keep it below `0x17C0`; the firmware only needs a HWID whose module states the update support. The library then jumps to the updater on `UPDATE_ENTER`, with the MCID handed over in `GPIOR1`. This costs about 60 bytes of flash. Without an updater at that address the command is ignored. `example_switch_update` is the switch built this way, with a check that it fits.
 
-**Updater.** `build/avr-attiny85/updater/hubus_updater.hex`, linked to `0x1800`. It runs without interrupts, starts the application at reset if the info page checks out (a CRC-16 over the application, about 30 ms at 8 MHz), and otherwise waits for the master. Its MCID comes from the application and is kept in the last EEPROM byte; before an application has stored one, the build option `HUBUS_UPDATER_MCID` (default 63) applies. The application must not use that EEPROM byte.
+**Updater.** `build/avr-attiny85/updater/hubus_updater.hex`, linked to `0x1800`. It runs without interrupts, starts the application at reset if the info page checks out (a CRC-16 over the application, about 30 ms at 8 MHz), and otherwise waits for the master. Its MCID is the last EEPROM byte, the same one the library reads ([assigning the MCID](#assigning-the-mcid)); while that byte holds none, the build option `HUBUS_UPDATER_MCID` (default 63) applies. At `UPDATE_ENTER` it stores the MCID the application hands over there. The application may read the byte, but must not write it.
 
-**Installing.** The first installation needs an in-system programmer, once: the updater, an application, and the fuses. `SELFPRGEN` (extended fuse bit 0) allows the updater to write flash; brown-out detection protects the write against a sinking supply ([§8.10](spec/08-faults.md#810-power-loss-during-a-firmware-update)); `WDTON` must stay unprogrammed. With the internal 8 MHz oscillator and BOD at 2.7 V:
+| Updater option (CMake) | Meaning |
+|---|---|
+| `HUBUS_UPDATER_MCID` | MCID while the last EEPROM byte holds none; default 63 |
+| `HUBUS_UPDATER_SET_MCID` | `ON` (default): the updater takes `UPDATE_SET_MCID`, the change of the MCID over the bus, and announces it with flag bit 1 ([§6.8](spec/06-operation.md#mcid)). It costs 60 bytes, which the 2 KB of the updater have to spare; the build also produces `hubus_updater_no_set_mcid` to show the difference. `OFF` leaves it out (C macro `HUBUS_UPD_SET_MCID`). |
+
+**Installing.** The first installation needs an in-system programmer, once: the [fuses](#fuses), the updater, and its MCID. `tools/flash-avr.sh` writes the updater image and the MCID in one call:
 
 ```sh
-avrdude -c usbasp -p t85 -U lfuse:w:0xE2:m -U hfuse:w:0xDD:m -U efuse:w:0xFE:m
-avrdude -c usbasp -p t85 -U flash:w:build/avr-attiny85/updater/hubus_updater.hex
+avrdude -c usbasp -p t85 -U lfuse:w:0xE2:m -U hfuse:w:0xD5:m -U efuse:w:0xFE:m
+sh tools/flash-avr.sh build/avr-attiny85/updater/hubus_updater.hex 5
 ```
 
-The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master under `HUBUS_UPDATER_MCID`, which loads the application with `hubus_master_update()`. Build the updater with the MCID of the application (`-DHUBUS_UPDATER_MCID=5` for the switch), then `hubus_master_example update 5 example_switch_update.hex` loads it ([master library](master-library.md#firmware-update)). With the default 63, `update 63` loads the application as well, but reports `HUBUS_UPD_REASON_NOT_STARTED`: the application starts under its own MCID, where the master does not look for it. Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
+The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master under MCID 5, and `hubus_master_example update 5 example_switch_update.hex` loads the switch ([master library](master-library.md#firmware-update)), which starts under the same MCID, since it reads the same byte. A device programmed without an MCID waits under 63; `hubus_master_example mcid 63 5` gives it its MCID over the bus first ([below](#changing-the-mcid-over-the-bus)). Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
+
+A firmware update over the bus writes the flash only: the MCID in the EEPROM survives it.
+
+## Assigning the MCID
+
+The library takes `cfg.mcid` and nothing else: where the MCID comes from is the choice of the application. Everything below is a recommendation and a set of building blocks that the developer of a firmware selects, as with the optional parts; none of it is tied to a controller.
+
+| Source | How | Example |
+|---|---|---|
+| **EEPROM, written when flashing** (recommended) | one image for all devices, one byte per device: `cfg.mcid = hubus_slave_mcid_from_eeprom(default)` | every example |
+| Pins (jumpers, DIP switch) | read once at reset, a base MCID plus the pins | `example_relay_simple_pins`: `0x20` plus jumpers on PB1 and PB4 |
+| A constant | one image per device | – |
+
+**Recommended: the last EEPROM byte.** `hubus_slave_mcid_from_eeprom(default)` reads the last byte of the EEPROM (`E2END` on classic tinyAVR, the last byte of the mapped EEPROM on the 0/1/2-series) and returns `default` if it holds no MCID. The updater keeps its MCID in the same byte, so application and updater always agree. `tools/flash-avr.sh` writes it together with the image:
+
+```sh
+sh tools/flash-avr.sh build/avr-attiny85/examples/example_relay.hex 12   # image and MCID 12, one avrdude call
+sh tools/flash-avr.sh - 13                                               # the MCID alone, the flash stays
+sh tools/flash-avr.sh -m attiny1614 -c serialupdi -P /dev/ttyUSB0 image.hex 7
+```
+
+The script builds a one-byte Intel HEX image for the EEPROM (`-n` prints it and the avrdude command). It needs avrdude 7.0 or newer, which writes only that byte, and `avr-gcc` for the size of the EEPROM. Without an MCID it says so: the firmware then runs with its default.
+
+**Without a value per device** every device of a firmware gets its default, and identical devices collide. That is accepted: the commissioning scan reports them as a suspected duplicate MCID ([§6.4](spec/06-operation.md#64-commissioning-scan-and-duplicate-mcids)), and one of them has to be given its MCID with the programmer or over the bus. There is no automatic enumeration: without a unique serial number the master cannot address one of two devices that answer to the same MCID.
+
+**Pins** make the MCID visible on the device and need no programmer, at the cost of pins. The updater stores whatever the application hands over at `UPDATE_ENTER`, so it agrees with the pins after the first update; a change over the bus does not last, since the application reads its pins again (the master reports it and undoes the change).
+
+### Changing the MCID over the Bus
+
+With an updater that takes `UPDATE_SET_MCID` (`HUBUS_UPDATER_SET_MCID`), the master can give a slave another MCID without a programmer ([§6.8](spec/06-operation.md#mcid)): `hubus_master_set_mcid()` ([master library](master-library.md#firmware-update)), `hubus_master_example mcid <old> <new>`, or the `mcid` topic of [hubusd](daemon.md#changing-the-mcid). The slave switches to its updater, which writes the new MCID to the last EEPROM byte and answers to it at once; the application then starts with it if it reads that byte. It works for a slave in its updater as well, for example a fresh device under the default MCID 63, before its first application.
+
+This is only possible in update mode, so only for firmware with `HUBUS_ENABLE_UPDATE` and an updater with the option. A firmware without update support keeps the MCID it was flashed with.
+
+### Fuses
+
+The fuses of a slave with the updater, in one place (ATtiny85, internal 8 MHz oscillator):
+
+| Fuse | Value | Why |
+|---|---|---|
+| `lfuse` | `0xE2` | internal 8 MHz oscillator, no clock division |
+| `hfuse` | `0xD5` | `EESAVE` programmed: a chip erase keeps the EEPROM and with it the MCID; brown-out detection at 2.7 V protects flash and EEPROM writes against a sinking supply ([§8.10](spec/08-faults.md#810-power-loss-during-a-firmware-update)); `WDTON` unprogrammed, since the updater switches the watchdog off; `SPIEN` programmed for the programmer |
+| `efuse` | `0xFE` | `SELFPRGEN` programmed: the updater may write the flash |
+
+Every `avrdude -U flash:w` erases the chip first. Without `EESAVE` (`hfuse` `0xDD`) that erases the EEPROM too, and the MCID with it, unless the same call writes it again, as `tools/flash-avr.sh` does. A slave without the updater needs only `lfuse`; `EESAVE` is still useful there to keep the MCID across reprogramming.
 
 ## Supported Devices
 

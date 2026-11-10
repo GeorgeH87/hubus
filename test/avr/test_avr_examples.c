@@ -83,15 +83,27 @@ static uint8_t output(const avr_slave_t *d, uint8_t pin)
 
 /* The button drives PB1 from outside. simavr lets the internal pull-up win over a level raised on the pin at every
  * write of PORTB or DDRB, so the level is also set as the external one of the port. */
-static void press(const avr_slave_t *d, uint8_t pressed)
+/* The pins of `mask` are driven from outside with the levels of `value`; the external levels of the port are replaced
+ * as a whole, so every driven pin goes into one call. */
+static void drive(const avr_slave_t *d, uint8_t mask, uint8_t value)
 {
     avr_ioport_external_t ext;
+    uint8_t pin;
 
     ext.name = 'B';
-    ext.mask = 1u << BUTTON_PIN;
-    ext.value = pressed ? 0u : 1u << BUTTON_PIN;
+    ext.mask = mask;
+    ext.value = value & mask;
     avr_ioctl(d->avr, AVR_IOCTL_IOPORT_SET_EXTERNAL('B'), &ext);
-    avr_raise_irq(avr_io_getirq(d->avr, AVR_IOCTL_IOPORT_GETIRQ('B'), BUTTON_PIN), pressed ? 0 : 1);
+    for (pin = 0; pin < 8; pin++) {
+        if (mask & (1u << pin)) {
+            avr_raise_irq(avr_io_getirq(d->avr, AVR_IOCTL_IOPORT_GETIRQ('B'), pin), (value >> pin) & 1u);
+        }
+    }
+}
+
+static void press(const avr_slave_t *d, uint8_t pressed)
+{
+    drive(d, 1u << BUTTON_PIN, pressed ? 0u : 1u << BUTTON_PIN);
 }
 
 /* Voltage of the temperature sensor in mV; simavr converts it against the 1.1 V reference the sensors select. */
@@ -392,6 +404,55 @@ static void test_examples_share_the_bus(void)
     TEST_ASSERT_EQUAL_UINT8(1, output(relay, RELAY_PIN));
 }
 
+/* ---- MCID -------------------------------------------------------------------------------------------------------- */
+
+/* One image for all devices, one EEPROM byte per device as the programmer writes it (tools/flash-avr.sh): two relays
+ * from the same image under their own MCIDs. A byte without an MCID (0, above 63, erased) leaves the default. */
+static void test_examples_take_their_mcid_from_the_eeprom(void)
+{
+    avr_slave_t *a = add(FW("ex_relay"));
+    avr_slave_t *b = add(FW("ex_relay"));
+    avr_slave_t *sensor = add(FW("ex_sensor"));
+    avr_slave_t *sw = add(FW("ex_switch"));
+
+    avr_slave_eeprom_write(a, -1, 30);
+    avr_slave_eeprom_write(b, -1, 31);
+    avr_slave_eeprom_write(sensor, -1, 0);
+    avr_slave_eeprom_write(sw, -1, 64);
+    boot();
+    check_info(30, 0x81, 0x01);
+    check_info(31, 0x81, 0x01);
+    check_info(SENSOR, 0x83, 0x01);
+    check_info(SWITCH, 0x82, 0x01);
+    TEST_ASSERT_EQUAL(HUBUS_ERR_NO_RESPONSE, hubus_master_request_info(&fx.master, RELAY, &(hubus_slave_frame_t){0}));
+
+    set_relay(31, 1);
+    TEST_ASSERT_EQUAL_UINT8(0, output(a, RELAY_PIN));
+    TEST_ASSERT_EQUAL_UINT8(1, output(b, RELAY_PIN));
+}
+
+/* The source of the MCID is up to the application: example_relay_simple_pins reads two jumpers (PB1, PB4 to ground)
+ * and ignores the EEPROM byte. */
+#define JUMPERS ((1u << 1) | (1u << 4))
+
+static void test_relay_with_its_mcid_from_jumpers(void)
+{
+    avr_slave_t *a = add(FW("ex_relay_simple_pins"));
+    avr_slave_t *b = add(FW("ex_relay_simple_pins"));
+
+    drive(a, JUMPERS, 1u << 4); /* PB1 closed: + 1 */
+    drive(b, JUMPERS, 1u << 1); /* PB4 closed: + 2 */
+    avr_slave_eeprom_write(a, -1, 9);
+    boot();
+    check_info(0x21, 0x81, 0x02);
+    check_info(0x22, 0x81, 0x02);
+    TEST_ASSERT_EQUAL(HUBUS_ERR_NO_RESPONSE, hubus_master_request_info(&fx.master, 9, &(hubus_slave_frame_t){0}));
+
+    set_relay(0x22, 1);
+    TEST_ASSERT_EQUAL_UINT8(0, output(a, RELAY_PIN));
+    TEST_ASSERT_EQUAL_UINT8(1, output(b, RELAY_PIN));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -402,5 +463,7 @@ int main(void)
     RUN_TEST(test_sensor_reports_its_measurement);
     RUN_TEST(test_passive_sensor_state);
     RUN_TEST(test_examples_share_the_bus);
+    RUN_TEST(test_examples_take_their_mcid_from_the_eeprom);
+    RUN_TEST(test_relay_with_its_mcid_from_jumpers);
     return UNITY_END();
 }

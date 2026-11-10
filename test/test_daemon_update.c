@@ -1,7 +1,8 @@
 /*
  * Firmware updates from a module: hubusd on the simulated bus against the real updater logic with a flash array and an
  * application core with update support. The device model is the one of test_update.c: UPDATE_ENTER jumps from the application
- * to the updater, UPDATE_LEAVE resets, and the reset starts the application if its info page checks out.
+ * to the updater, UPDATE_LEAVE resets, and the reset starts the application if its info page checks out. The application
+ * takes its MCID from the EEPROM byte of the updater, which a change of the MCID (UPDATE_SET_MCID) writes.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +50,11 @@ void hubus_upd_flash_write(uint16_t addr, const uint8_t *page)
 void hubus_upd_reset(void)
 {
     reset_requested = 1;
+}
+
+void hubus_upd_store_mcid(uint8_t mcid)
+{
+    eeprom_mcid = mcid; /* the application takes it at its next start */
 }
 
 static void app_pins(hubus_slave_core_t *core, uint8_t clk, uint8_t data)
@@ -276,16 +282,21 @@ static void say(const char *topic, const char *payload)
     hubusd_handle_message(dmn, topic, payload, strlen(payload));
 }
 
+/* The slaves of the configuration of the next start(). */
+static const char *slaves_yaml;
+
 /* Starts hubusd with the device, which runs its old application, or waits in its updater with an empty flash. */
 static void start(int with_application)
 {
-    static const char *yaml =
-        "mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 5\n  ping_failures: 3\n  scan_interval_s: 0\nslaves:\n  - mcid: 9\n";
+    char yaml[400];
     hubus_master_hal_t hal;
     hubusd_mqtt_t mq = {NULL, fake_publish};
     hubusd_clock_t clk = {NULL, clk_mono, clk_wall};
     char err[200];
 
+    snprintf(yaml, sizeof yaml,
+             "mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 5\n  ping_failures: 3\n  scan_interval_s: 0\nslaves:\n%s",
+             slaves_yaml);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_parse(yaml, strlen(yaml), &cfg, err, sizeof err), err);
     hubus_sim_init(&sim);
     sim_hal = hubus_sim_master_hal(&sim);
@@ -320,6 +331,7 @@ void setUp(void)
     app_hwid[HUBUS_HWID_VERSION] = OLD_VERSION;
     live_instances = created_instances = 0;
     make_image(image, sizeof image, 0x0F, 1);
+    slaves_yaml = "  - mcid: 9\n";
     dmn = NULL;
 }
 
@@ -503,6 +515,116 @@ static void test_a_module_without_an_image_offers_no_update(void)
     TEST_ASSERT_EQUAL_UINT(0, flash_writes);
 }
 
+/* ---- change of the MCID ----------------------------------------------------------------------------------------- */
+
+/* The device model starts with an application that is not in its flash: an update puts one there, so that the
+ * application starts again after the updater. */
+static void install_image(void)
+{
+    after_update_new_version();
+    say("hubus/slave/9/update", "");
+    settle();
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "done") >= 1u);
+}
+
+/* The configuration has the slave under both MCIDs while it moves: hubusd takes it into operation under the new one, and
+ * the old one goes offline. */
+static void test_a_trigger_changes_the_mcid(void)
+{
+    slaves_yaml = "  - mcid: 9\n  - mcid: 12\n";
+    start(1);
+    install_image();
+    wait_for_live_instances(1);
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[9].online);
+    say("hubus/slave/9/mcid", "12");
+    settle();
+
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_UINT8(12, eeprom_mcid);
+    assert_contains("hubus/master/mcid", "\"result\":\"ok\"");
+    assert_contains("hubus/master/mcid", "\"new_mcid\":12");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "move it to MCID 12") >= 1u);
+    TEST_ASSERT_EQUAL_INT(0, dmn->slave[9].online);
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[12].online);
+    TEST_ASSERT_EQUAL_PTR(&app_module, dmn->slave[12].module);
+    assert_contains("hubus/slave/12/availability", "online");
+    assert_contains("hubus/slave/9/availability", "offline");
+    wait_for_live_instances(2); /* both are configured with a module: the old one keeps its instance while it is offline */
+
+    clock_ms += 6000;
+    settle();
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[12].online);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_BUS_OK, dmn->bus);
+}
+
+static void test_a_new_mcid_outside_the_configuration_is_reported(void)
+{
+    start(1);
+    install_image();
+    say("hubus/slave/9/mcid", "12");
+    settle();
+    assert_contains("hubus/master/mcid", "\"result\":\"ok\"");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "slave 12 is not configured") >= 1u);
+    assert_contains("hubus/master/state", "\"unknown_slaves\":[{\"mcid\":12");
+    TEST_ASSERT_EQUAL_INT(0, dmn->slave[9].online);
+}
+
+static void test_a_slave_in_its_updater_takes_the_mcid_and_keeps_its_update(void)
+{
+    slaves_yaml = "  - mcid: 9\n  - mcid: 12\n";
+    start(1);
+    cut_after_writes = 3;
+    after_update_new_version();
+    say("hubus/slave/9/update", "");
+    settle();
+    TEST_ASSERT_TRUE(in_updater);
+    cut_after_writes = 0;
+
+    say("hubus/slave/9/mcid", "12");
+    settle();
+    TEST_ASSERT_TRUE(in_updater);
+    assert_contains("hubus/master/mcid", "\"result\":\"ok\"");
+    TEST_ASSERT_EQUAL_PTR(&app_module, dmn->slave[12].update_module);
+    TEST_ASSERT_NULL(dmn->slave[9].update_module);
+
+    say("hubus/slave/12/update", "");
+    settle();
+    TEST_ASSERT_FALSE(in_updater);
+    assert_contains("hubus/slave/12/firmware", "\"installed_version\":\"8\"");
+}
+
+static void test_a_failed_change_leaves_the_slave_as_it_was(void)
+{
+    start(1);
+    install_image();
+    app_module.has_update = false;
+    say("hubus/slave/9/mcid", "12");
+    settle();
+    app_module.has_update = true;
+    assert_contains("hubus/master/mcid", "no update support");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "MCID of slave 9 not changed") >= 1u);
+    TEST_ASSERT_FALSE(in_updater);
+    TEST_ASSERT_EQUAL_UINT8(MCID, eeprom_mcid);
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[9].online);
+}
+
+static void test_invalid_mcid_payloads_are_rejected(void)
+{
+    static const char *const bad[] = {"0", "9", "64", "x", ""};
+    unsigned i;
+
+    start(1);
+    for (i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        n_msgs = 0;
+        say("hubus/slave/9/mcid", bad[i]);
+        settle();
+        TEST_ASSERT_TRUE_MESSAGE(count_containing("hubus/master/log", "invalid new MCID") >= 1u, bad[i]);
+        TEST_ASSERT_NULL(last("hubus/master/mcid"));
+    }
+    TEST_ASSERT_FALSE(in_updater);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -515,5 +637,10 @@ int main(void)
     RUN_TEST(test_a_slave_in_its_updater_needs_the_name_of_the_module);
     RUN_TEST(test_a_failed_update_can_be_repeated_without_a_name);
     RUN_TEST(test_a_module_without_an_image_offers_no_update);
+    RUN_TEST(test_a_trigger_changes_the_mcid);
+    RUN_TEST(test_a_new_mcid_outside_the_configuration_is_reported);
+    RUN_TEST(test_a_slave_in_its_updater_takes_the_mcid_and_keeps_its_update);
+    RUN_TEST(test_a_failed_change_leaves_the_slave_as_it_was);
+    RUN_TEST(test_invalid_mcid_payloads_are_rejected);
     return UNITY_END();
 }
