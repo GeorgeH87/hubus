@@ -19,6 +19,9 @@
 | **Implementation and operation** | |
 | [Slave library](slave-library.md) | API, optional parts, configuration, supported devices, footprint, examples |
 | [Example: LED strip and push button](example-ledstrip.md) | One ATtiny85 driving a WS2812B strip with raw frames or animation bytecode from the master, and reporting a button; a frame goes out in a blind section, an animation in an interruptible section |
+| [Example: DHT11 sensor](example-dht11.md) | One ATtiny85 with a DHT11: temperature and humidity as state, read in an interruptible section that gives way to the bus, and a firmware update |
+| [Example: distance sensor](example-distance.md) | One ATtiny85 with an HC-SR04: the distance can be read at any time, an event when an object is nearer than a trigger distance that the master sends |
+| [Example: motion sensor](example-motion.md) | One ATtiny85 with a HC-SR501 PIR module: an event for every change, a warm-up, and a firmware update |
 | [Master library](master-library.md) | API of the master: HAL, startup, bursts, transactions, commissioning, diagnosis, protocol helpers |
 | [hubusd](daemon.md) | The master as an MQTT service: installation, configuration, topics, Home Assistant |
 | [Development](development.md) | Toolchain, build and test, documentation tools |

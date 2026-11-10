@@ -211,6 +211,7 @@ DEVICE_MODULE(relay_second, false, ENTITIES(switch_second_entities));
 #define OP_FUNC_COLOUR 0x40u
 #define OP_FUNC_POWER 0x41u
 #define OP_FUNC_BURST 0x42u
+#define OP_FUNC_LIMIT 0x45u
 #define FUNC_BURST_COMMANDS 45u
 
 static pthread_mutex_t func_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -285,6 +286,14 @@ static hubus_module_status_t func_on_set(hubus_module_instance_t *self, const hu
         }
         return HUBUS_MODULE_OK;
     }
+    if (value->type == HUBUS_VALUE_NUMBER) {
+        char text[24];
+
+        args[0] = (uint8_t)value->as.number;
+        snprintf(text, sizeof text, "%g", value->as.number);
+        (void)host->set_state(host, entity->key, text);
+        return host->send(host, OP_FUNC_LIMIT, args, 1);
+    }
     if (value->type == HUBUS_VALUE_RGB) {
         if (value->as.rgb.r == 1) {
             return HUBUS_MODULE_REJECTED;
@@ -313,6 +322,7 @@ static const hubus_entity_t func_entities[] = {
         .off = {.used = true, .opcode = 0x10, .n_args = 1, .args = {0}},
     },
     {.key = "first", .name = "First byte", .component = HUBUS_COMPONENT_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
+    {.key = "limit", .name = "Limit", .component = HUBUS_COMPONENT_NUMBER, .unit = HUBUS_UNIT_PERCENT, .min = 5, .max = 100, .step = 5},
 };
 #define FUNCTIONS .create = func_create, .destroy = func_destroy, .on_frame = func_on_frame, .on_set = func_on_set
 DEVICE_MODULE(func_module, false, FUNCTIONS, ENTITIES(func_entities));
@@ -1817,6 +1827,34 @@ static void test_discovery_of_lights_and_switches_without_commands(void)
     assert_contains("hubus/slave/4/info", "\"module_failed\":false");
 }
 
+static void test_a_number_has_a_range_and_goes_to_on_set(void)
+{
+    func_setup();
+    PUMP_UNTIL(func_read(&func_live) == 2u);
+    assert_contains("homeassistant/number/hubus_4_limit/config", "\"command_topic\":\"hubus/slave/4/limit/set\"");
+    assert_contains("homeassistant/number/hubus_4_limit/config", "\"min\":5");
+    assert_contains("homeassistant/number/hubus_4_limit/config", "\"max\":100");
+    assert_contains("homeassistant/number/hubus_4_limit/config", "\"step\":5");
+    assert_contains("homeassistant/number/hubus_4_limit/config", "\"unit_of_measurement\":\"%\"");
+
+    say("hubus/slave/4/limit/set", "30");
+    PUMP_UNTIL(func_dev->last_op == OP_FUNC_LIMIT && func_dev->last_args[0] == 30u);
+    PUMP_UNTIL(last("hubus/slave/4/limit/state") != NULL);
+    TEST_ASSERT_EQUAL_STRING("30", last("hubus/slave/4/limit/state"));
+
+    /* outside the range, or no number: refused before the module sees it */
+    func_dev->last_op = 0;
+    say("hubus/slave/4/limit/set", "101");
+    say("hubus/slave/4/limit/set", "4");
+    say("hubus/slave/4/limit/set", "abc");
+    say("hubus/slave/4/limit/set", "30x");
+    settle();
+    sleep_ms(5);
+    settle();
+    TEST_ASSERT_EQUAL_HEX8(0, func_dev->last_op);
+    TEST_ASSERT_EQUAL_STRING("30", last("hubus/slave/4/limit/state"));
+}
+
 /* ---- the module of the LED strip -------------------------------------------------------------------------------- */
 
 #define OP_FILL 0x41u
@@ -1984,6 +2022,109 @@ static void test_a_refused_program_is_reported(void)
     strip_until_commands(2);
     TEST_ASSERT_EQUAL_INT(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 0, report, 3, 0));
     PUMP_UNTIL(strcmp(last("hubus/slave/3/animation/state"), "refused by the slave") == 0);
+}
+
+/* ---- the module of the distance sensor --------------------------------------------------------------------------- */
+
+static sim_dev_t *dist;
+
+static void distance_setup(void)
+{
+    static const hubus_module_t *const modules[] = {&hubusd_distance_module};
+
+    load("mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 0\n  scan_interval_s: 0\n  readback: none\nslaves:\n  - mcid: 3\n");
+    dev_force_variant = 1;
+    dist = add_dev(3, 0x87);
+    start_daemon();
+    hubusd_set_modules(dmn, modules, 1);
+    settle();
+    PUMP_UNTIL(last("hubus/slave/3/info") != NULL);
+}
+
+static void distance_until_commands(unsigned n)
+{
+    unsigned k;
+
+    for (k = 0; k < 2000u && dist->commands < n; k++) {
+        clock_ms += 5;
+        settle();
+        sleep_ms(1);
+    }
+    TEST_ASSERT_EQUAL_UINT(n, dist->commands);
+}
+
+static void distance_report(uint8_t near, uint16_t mm, uint16_t threshold_mm)
+{
+    uint8_t f[5] = {near, (uint8_t)(mm >> 8), (uint8_t)mm, (uint8_t)(threshold_mm >> 8), (uint8_t)threshold_mm};
+
+    TEST_ASSERT_EQUAL_INT(HUBUS_WRITE_OK, hubus_sim_slave_write(&sim, 0, f, sizeof f, 0));
+}
+
+static void test_the_distance_sensor_offers_a_distance_a_state_and_a_trigger_distance(void)
+{
+    distance_setup();
+    assert_contains("homeassistant/sensor/hubus_3_distance/config", "\"device_class\":\"distance\"");
+    assert_contains("homeassistant/sensor/hubus_3_distance/config", "\"unit_of_measurement\":\"cm\"");
+    assert_contains("homeassistant/binary_sensor/hubus_3_near/config", "\"state_topic\":\"hubus/slave/3/near/state\"");
+    assert_contains("homeassistant/number/hubus_3_threshold/config", "\"command_topic\":\"hubus/slave/3/threshold/set\"");
+    assert_contains("homeassistant/number/hubus_3_threshold/config", "\"min\":0");
+    assert_contains("homeassistant/number/hubus_3_threshold/config", "\"max\":400");
+    assert_contains("homeassistant/number/hubus_3_threshold/config", "\"unit_of_measurement\":\"cm\"");
+    PUMP_UNTIL(last("hubus/slave/3/threshold/state") != NULL);
+    TEST_ASSERT_EQUAL_STRING("30", last("hubus/slave/3/threshold/state")); /* the default */
+}
+
+/* After a power-up the slave says its threshold is 0, and the module sends the one it has: 30 cm, then what the user chose. A
+ * frame that agrees with it costs nothing. */
+static void test_the_distance_sensor_gets_its_trigger_distance_back_after_a_power_up(void)
+{
+    distance_setup();
+    distance_report(0, 0, 0);
+    distance_until_commands(1);
+    TEST_ASSERT_EQUAL_HEX8(0x40, dist->last_op);
+    TEST_ASSERT_EQUAL_UINT8(2, dist->last_len);
+    TEST_ASSERT_EQUAL_HEX8(0x01, dist->last_args[0]); /* 300 mm */
+    TEST_ASSERT_EQUAL_HEX8(0x2C, dist->last_args[1]);
+
+    distance_report(0, 800, 300); /* the slave has it */
+    settle();
+    sleep_ms(5);
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, dist->commands);
+    PUMP_UNTIL(last("hubus/slave/3/distance/state") != NULL);
+    TEST_ASSERT_EQUAL_STRING("80.0", last("hubus/slave/3/distance/state"));
+    TEST_ASSERT_EQUAL_STRING("OFF", last("hubus/slave/3/near/state"));
+
+    say("hubus/slave/3/threshold/set", "50");
+    distance_until_commands(2);
+    TEST_ASSERT_EQUAL_HEX8(0x01, dist->last_args[0]); /* 500 mm */
+    TEST_ASSERT_EQUAL_HEX8(0xF4, dist->last_args[1]);
+    PUMP_UNTIL(strcmp(last("hubus/slave/3/threshold/state"), "50") == 0);
+
+    distance_report(1, 120, 0); /* a power-up again: the user's value, not the default */
+    distance_until_commands(3);
+    TEST_ASSERT_EQUAL_HEX8(0xF4, dist->last_args[1]);
+    PUMP_UNTIL(strcmp(last("hubus/slave/3/near/state"), "ON") == 0);
+}
+
+static void test_the_trigger_distance_takes_numbers_within_its_range_only(void)
+{
+    distance_setup();
+    say("hubus/slave/3/threshold/set", "401");
+    say("hubus/slave/3/threshold/set", "-1");
+    say("hubus/slave/3/threshold/set", "far");
+    settle();
+    sleep_ms(5);
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, dist->commands);
+    say("hubus/slave/3/threshold/set", "0"); /* events off */
+    distance_until_commands(1);
+    TEST_ASSERT_EQUAL_HEX8(0, dist->last_args[0]);
+    TEST_ASSERT_EQUAL_HEX8(0, dist->last_args[1]);
+    say("hubus/slave/3/threshold/set", "400");
+    distance_until_commands(2);
+    TEST_ASSERT_EQUAL_HEX8(0x0F, dist->last_args[0]); /* 4000 mm */
+    TEST_ASSERT_EQUAL_HEX8(0xA0, dist->last_args[1]);
 }
 
 /* ---- replacing the modules (SIGHUP) ------------------------------------------------------------------------------ */
@@ -2379,6 +2520,7 @@ int main(void)
     RUN_TEST(test_a_function_that_hangs_stops_only_its_module);
     RUN_TEST(test_create_that_fails_is_logged_and_set_is_rejected);
     RUN_TEST(test_discovery_of_lights_and_switches_without_commands);
+    RUN_TEST(test_a_number_has_a_range_and_goes_to_on_set);
     RUN_TEST(test_the_strip_offers_a_lamp_an_animation_and_a_button);
     RUN_TEST(test_the_lamp_fills_the_strip_with_its_colour);
     RUN_TEST(test_a_formula_is_compiled_and_sent_as_a_program);
@@ -2387,6 +2529,9 @@ int main(void)
     RUN_TEST(test_the_lamp_ends_an_animation_and_none_returns_to_the_lamp);
     RUN_TEST(test_after_a_power_up_the_strip_gets_back_what_it_showed);
     RUN_TEST(test_a_refused_program_is_reported);
+    RUN_TEST(test_the_distance_sensor_offers_a_distance_a_state_and_a_trigger_distance);
+    RUN_TEST(test_the_distance_sensor_gets_its_trigger_distance_back_after_a_power_up);
+    RUN_TEST(test_the_trigger_distance_takes_numbers_within_its_range_only);
     RUN_TEST(test_replacing_a_module_makes_new_instances_and_entities);
     RUN_TEST(test_replacing_with_the_same_module_changes_nothing);
     RUN_TEST(test_modules_a_slave_needs_are_not_given_up);

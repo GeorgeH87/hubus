@@ -63,6 +63,18 @@ set(HUBUS_FW_UPDATER_ADDR 0x1800)
 hubus_fw_example(ex_switch_update   slave-switch/switch_example.c                  1      1
                  HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_FW_UPDATER_ADDR})
 
+# The motion sensor (MCID 12) with a short warm-up, as it is shipped otherwise: with update support.
+hubus_fw_example(ex_motion          slave-motion/motion_example.c                  1      0
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_FW_UPDATER_ADDR} PIR_WARMUP_MS=100)
+
+# The DHT11 sensor (MCID 13) as shipped: with update support.
+hubus_fw_example(ex_dht11           slave-dht11/dht11_example.c                    0      1
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_FW_UPDATER_ADDR})
+
+# The distance sensor (MCID 14) as shipped: with update support.
+hubus_fw_example(ex_distance        slave-distance/distance_example.c              1      1
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_FW_UPDATER_ADDR})
+
 # hubus_fw_updater(name mcid)
 function(hubus_fw_updater name mcid)
     add_executable(${name} ${HUBUS_ROOT}/updater/hubus_updater_avr.c ${HUBUS_ROOT}/updater/hubus_updater.c

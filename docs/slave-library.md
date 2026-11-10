@@ -121,6 +121,9 @@ The event buffer costs about 490 bytes of flash and 41 bytes of RAM (including t
 | `slave-sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
 | `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
 | `slave-ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
+| `slave-dht11` | DHT11 temperature and humidity, read only: state with the values and a fault byte, with firmware update ([description](example-dht11.md)) | 0 | 1 |
+| `slave-distance` | HC-SR04 distance: state and event with the distance and a near flag, trigger distance from the master, with firmware update ([description](example-distance.md)) | 1 | 1 |
+| `slave-motion` | HC-SR501 PIR motion sensor: an event for every change, with firmware update ([description](example-motion.md)) | 1 | 0 |
 
 Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#entities); their modules also state the entities of each device ([hubusd](daemon.md#entities)). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update), and `example_relay_simple_pins`, the simple relay with its MCID from two jumpers ([assigning the MCID](#assigning-the-mcid)).
 

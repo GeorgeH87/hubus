@@ -117,6 +117,66 @@ static const hubus_module_t temperature_passive = {
     ENTITIES(temperature_entities),
 };
 
+/* The DHT11 is only read: the state holds the humidity in percent, the temperature in degrees Celsius, and a fault byte
+ * (1: no good reading yet, or the last readings failed; the values are then old). */
+static const hubus_entity_t dht11_entities[] = {
+    {
+        .key = "temperature",
+        .name = "Temperature",
+        .component = HUBUS_COMPONENT_SENSOR,
+        .device_class = HUBUS_DEVICE_CLASS_TEMPERATURE,
+        .unit = HUBUS_UNIT_CELSIUS,
+        .decode = {.offset = 1, .len = 1, .scale = 1.0},
+    },
+    {
+        .key = "humidity",
+        .name = "Humidity",
+        .component = HUBUS_COMPONENT_SENSOR,
+        .device_class = HUBUS_DEVICE_CLASS_HUMIDITY,
+        .unit = HUBUS_UNIT_PERCENT,
+        .decode = {.offset = 0, .len = 1, .scale = 1.0},
+    },
+    {
+        .key = "fault",
+        .name = "Sensor fault",
+        .component = HUBUS_COMPONENT_BINARY_SENSOR,
+        .decode = {.offset = 2, .len = 1, .scale = 1.0},
+    },
+};
+
+static const hubus_module_rule_t dht11_rules[] = {RULE_VARIANT(0x86, 0x01)};
+static const hubus_module_t dht11 = {
+    HUBUS_MODULE_INIT,
+    .name = "dht11",
+    .rules = dht11_rules,
+    .n_rules = HUBUS_MODULE_LEN(dht11_rules),
+    .max_command = HUBUS_MAX_PAYLOAD,
+    .has_state = true,
+    .has_update = true,
+    ENTITIES(dht11_entities),
+};
+
+/* The HC-SR501 has no state and no commands: one byte per event, 1 for motion and 0 for none. */
+static const hubus_entity_t motion_entities[] = {{
+    .key = "motion",
+    .name = "Motion",
+    .component = HUBUS_COMPONENT_BINARY_SENSOR,
+    .device_class = HUBUS_DEVICE_CLASS_MOTION,
+    .decode = {.offset = 0, .len = 1, .scale = 1.0},
+}};
+
+static const hubus_module_rule_t motion_rules[] = {RULE_VARIANT(0x88, 0x01)};
+static const hubus_module_t motion = {
+    HUBUS_MODULE_INIT,
+    .name = "motion",
+    .rules = motion_rules,
+    .n_rules = HUBUS_MODULE_LEN(motion_rules),
+    .max_command = HUBUS_MAX_PAYLOAD,
+    .has_events = true,
+    .has_update = true,
+    ENTITIES(motion_entities),
+};
+
 /* One module for every updater; what differs per device is in the updater information. */
 static const hubus_module_rule_t updater_rules[] = {{.pattern = {HUBUS_HWID_TYPE_UPDATER}, .mask = {0xFF}, .len = 1}};
 static const hubus_module_t updater = {
@@ -129,7 +189,7 @@ static const hubus_module_t updater = {
 };
 
 static const hubus_module_t *const modules[] = {
-    &relay, &relay_simple, &switch_module, &switch_update, &temperature, &temperature_passive, &hubusd_ledstrip_module, &updater,
+    &relay, &relay_simple, &switch_module, &switch_update, &temperature, &temperature_passive, &hubusd_ledstrip_module, &dht11, &motion, &hubusd_distance_module, &updater,
 };
 
 const hubus_module_t *const *hubusd_builtin_modules(size_t *count)
@@ -176,6 +236,7 @@ const char *hubusd_component_name(hubus_component_t component)
     case HUBUS_COMPONENT_SWITCH: return "switch";
     case HUBUS_COMPONENT_LIGHT: return "light";
     case HUBUS_COMPONENT_TEXT: return "text";
+    case HUBUS_COMPONENT_NUMBER: return "number";
     case HUBUS_COMPONENT_COUNT: break;
     }
     return "sensor";
@@ -193,6 +254,7 @@ const char *hubusd_device_class_name(hubus_device_class_t device_class)
     case HUBUS_DEVICE_CLASS_CURRENT: return "current";
     case HUBUS_DEVICE_CLASS_MOTION: return "motion";
     case HUBUS_DEVICE_CLASS_DOOR: return "door";
+    case HUBUS_DEVICE_CLASS_DISTANCE: return "distance";
     case HUBUS_DEVICE_CLASS_NONE:
     case HUBUS_DEVICE_CLASS_COUNT: break;
     }
@@ -209,6 +271,7 @@ const char *hubusd_unit_text(hubus_unit_t unit)
     case HUBUS_UNIT_WATT: return "W";
     case HUBUS_UNIT_VOLT: return "V";
     case HUBUS_UNIT_AMPERE: return "A";
+    case HUBUS_UNIT_CENTIMETER: return "cm";
     case HUBUS_UNIT_NONE:
     case HUBUS_UNIT_COUNT: break;
     }

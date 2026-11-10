@@ -52,6 +52,36 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
         DEPENDS example_switch_update
         COMMENT "Checking that the application fits below the updater")
 
+    # The motion sensor, always with firmware update; PIR on PB0.
+    hubus_example(motion          slave-motion/motion_example.c                  1      0
+                  HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(example_motion_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:example_motion>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS example_motion
+        COMMENT "Checking that the motion sensor fits below the updater")
+
+    # The DHT11 sensor, always with firmware update; data pin on PB0.
+    hubus_example(dht11           slave-dht11/dht11_example.c                    0      1
+                  HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(example_dht11_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:example_dht11>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS example_dht11
+        COMMENT "Checking that the DHT11 sensor fits below the updater")
+
+    # The distance sensor, always with firmware update; TRIG on PB0, ECHO on PB1.
+    hubus_example(distance        slave-distance/distance_example.c              1      1
+                  HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(example_distance_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:example_distance>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS example_distance
+        COMMENT "Checking that the distance sensor fits below the updater")
+
     # 3-byte event buffer: the RAM goes to the LED frame buffer and the animation program
     hubus_example(ledstrip        "slave-ledstrip/ledstrip_example.c;slave-ledstrip/ledvm.c" 1 1 TX_BUF 3)
     add_custom_target(example_ledstrip_size ALL

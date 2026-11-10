@@ -89,7 +89,7 @@ A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](sp
 
 | Topic | Payload | Effect |
 |---|---|---|
-| `hubus/slave/<n>/<key>/set` | `ON` / `OFF`, or text | Command to the entity `<key>` of the slave. A switch sends the command stated by its module (relay: opcode `0x10`), and the state is published according to `readback` (below). A switch without fixed commands, a light, and a text entity (any text, at most 95 characters) go to the [functions of the module](#module-functions). |
+| `hubus/slave/<n>/<key>/set` | `ON` / `OFF`, a number, or text | Command to the entity `<key>` of the slave. A switch sends the command stated by its module (relay: opcode `0x10`), and the state is published according to `readback` (below). A switch without fixed commands, a light, a text entity (any text, at most 95 characters), and a number entity (a number within the range of the entity; anything else is refused by hubusd) go to the [functions of the module](#module-functions). |
 | `hubus/slave/<n>/<key>/rgb/set` | `r,g,b` | The colour of a light, three numbers `0..255`. |
 | `hubus/slave/<n>/cmd` | `0x10 1 2` | Raw command: opcode, then argument bytes (numbers, separated by spaces or commas). Opcode `0x00` (status capture) or `0x10..0xFF`. |
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon collects and publishes it. |
@@ -178,7 +178,7 @@ A slave without an event buffer, for example a sensor that is only read, never a
 
 With `mqtt.discovery: true` (default) the daemon publishes retained discovery messages under `<discovery prefix>/<component>/<object>/config` (prefix `homeassistant` by default):
 
-- one entity per entity of the module, of the kind it states: `switch`, `binary_sensor`, `sensor`, `light` (the default schema with `rgb_command_topic`), or `text`, with unit and device class where it has them. Its object id is `hubus_<n>_<key>`; a module with one entity gives it the name of the device, one with several gives each its own name;
+- one entity per entity of the module, of the kind it states: `switch`, `binary_sensor`, `sensor`, `light` (the default schema with `rgb_command_topic`), `text`, or `number` (with `min`, `max`, `step` and a box input), with unit and device class where it has them. Its object id is `hubus_<n>_<key>`; a module with one entity gives it the name of the device, one with several gives each its own name;
 - an `update` entity for a slave whose module has a [firmware image](#firmware-updates), with version, progress, and an install button;
 - each slave is a device with MCID, firmware version, and serial number, grouped under the **HUBUS master** device and available only while master and slave are online;
 - the master device has diagnostic sensors: uptime, bus errors, retries, duplicate frames, lost buffer contents, rejected commands, bus state. The diagnosis is on `hubus/master/diagnosis`.
@@ -187,7 +187,7 @@ Removing a slave from the configuration and sending `SIGHUP` removes its entitie
 
 ## Entities
 
-The protocol does not define what payload bytes mean. The module of a slave does: it lists the **entities** of the slave, each with a key, a name, a kind of Home Assistant entity (`switch`, `binary_sensor`, `sensor`, `light`, `text`), a unit and device class, where its value lies in a frame (offset, 1 or 2 bytes, byte order, sign, `value = raw * scale + add`, decimals), and for a switch the commands for `ON` and `OFF` ([§6.10](spec/06-operation.md#610-master-modules), [master library](master-library.md#master-modules)). hubusd turns every entity into topics under `hubus/slave/<n>/<key>/` and, with discovery, into an entity of Home Assistant. Nothing is configured for it: a new device brings a module with its entities, as a [plugin](master-library.md#loading-plugins).
+The protocol does not define what payload bytes mean. The module of a slave does: it lists the **entities** of the slave, each with a key, a name, a kind of Home Assistant entity (`switch`, `binary_sensor`, `sensor`, `light`, `text`, `number`), a unit and device class, where its value lies in a frame (offset, 1 or 2 bytes, byte order, sign, `value = raw * scale + add`, decimals), for a number its range, and for a switch the commands for `ON` and `OFF` ([§6.10](spec/06-operation.md#610-master-modules), [master library](master-library.md#master-modules)). hubusd turns every entity into topics under `hubus/slave/<n>/<key>/` and, with discovery, into an entity of Home Assistant. Nothing is configured for it: a new device brings a module with its entities, as a [plugin](master-library.md#loading-plugins).
 
 The modules of the examples are built in:
 
@@ -196,6 +196,9 @@ The modules of the examples are built in:
 | `relay`, `relay-simple` | `relay`, a switch (opcode `0x10`, argument `1` or `0`); `relay-simple` has no state to read, so its value comes from the cache ([readback](#state-after-a-command-readback)) |
 | `switch`, `switch-update` | `button`, a binary sensor (the first byte of the state) |
 | `ledstrip` | `button` as above, `lamp`, a light, and `animation`, a text entity for a formula ([LED strip](example-ledstrip.md#master-side)) |
+| `dht11` | `temperature` (°C) and `humidity` (%), sensors read from the state, and `fault`, a binary sensor (`1`: no good reading yet or the last readings failed; [DHT11](example-dht11.md)) |
+| `distance` | `distance` (cm, device class `distance`), `near`, a binary sensor, and `threshold`, a number from 0 to 400 cm (default 30) that the module sends to the slave ([distance sensor](example-distance.md)) |
+| `motion` | `motion`, a binary sensor with device class `motion` (one byte per event: `1` motion, `0` none; [motion sensor](example-motion.md)) |
 | `temperature`, `temperature-passive` | `temperature`, a sensor in °C with device class `temperature`: the raw ADC value of the ATtiny85 internal sensor as `raw - 273`; accurate values need a calibration per device |
 
 A slave without entities stays usable through the raw topics (`data`, `cmd`, `capture`, `read`). The entities of earlier versions had the topics `hubus/slave/<n>/state` and `hubus/slave/<n>/set`; the discovery entries they left are removed by `mqtt.discovery_cleanup: true` at the next start.
@@ -207,7 +210,7 @@ What cannot be described as data is code: a module may have the functions `creat
 - **One thread per module that has functions**, started with its first instance; modules without functions cost no thread. The calls of one module run one after the other, in the order of the events. Different modules do not wait for each other.
 - **An instance per slave:** created when a slave is configured and its module is known; destroyed when the slave is removed, its module changes, or hubusd stops.
 - **`on_frame`** gets every new frame of the slave, also what is read back. A repeated frame is left out. `gap` says that frames were lost before this one, on the bus or in the queue of the module.
-- **`on_set`** gets the value of a `set` topic, parsed: a bool for a switch without fixed commands and for the on/off of a light, RGB for the colour of a light, text for a text entity. A value that cannot be parsed, or that the function refuses, is reported on `hubus/master/log` and counted in `commands_rejected`.
+- **`on_set`** gets the value of a `set` topic, parsed: a bool for a switch without fixed commands and for the on/off of a light, RGB for the colour of a light, text for a text entity, a number within `min`..`max` for a number entity. A value that cannot be parsed, or that the function refuses, is reported on `hubus/master/log` and counted in `commands_rejected`.
 - **A function reaches hubusd only through its host:** `send()`, `set_state()`, and `log()` append to a queue of 64 entries that the bus thread empties. A command then goes through the command queue like any other, with its checks and blind times; while that queue is full, the commands wait in the queue of the module, so a long series is not lost. A function learns from `HUBUS_MODULE_FAILED` that the queue of its module is full.
 - **Each module has a queue of 32 jobs.** When it is full, a frame is dropped, counted in `module_jobs_dropped`, and the next frame of that slave has `gap` set; a `set` is rejected. `create` and `destroy` wait for room and are never dropped.
 - **A function that does not return within `modules.call_timeout_ms`** stops its module: it is logged, and `module_failed` in `hubus/slave/<n>/info` becomes `true` for all its slaves. The module gets no more calls, so `set` for an entity that needs a function is rejected. What is data keeps working: decoding the entities, fixed commands, blind times. A thread cannot be stopped safely, so it is left alone; only a new plugin file with `SIGHUP` or a restart brings the module back.

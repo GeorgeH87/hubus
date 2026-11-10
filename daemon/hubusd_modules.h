@@ -16,6 +16,9 @@ const hubus_module_t *const *hubusd_builtin_modules(size_t *count);
 /* The LED strip (docs/example-ledstrip.md): built in, and the one with functions (hubusd_ledstrip.c). */
 extern const hubus_module_t hubusd_ledstrip_module;
 
+/* The HC-SR04 distance sensor with a trigger distance (docs/example-distance.md), with functions (hubusd_distance.c). */
+extern const hubus_module_t hubusd_distance_module;
+
 /* Adds to the initialised `set` the built-in modules and the plugins of cfg->modules.dir, and reports every plugin file. Returns the
  * number of plugins loaded. The caller closes the set with hubus_module_set_unload(). */
 size_t hubusd_load_modules(const hubusd_config_t *cfg, hubus_module_set_t *set, hubus_load_report_fn report, void *ctx);
