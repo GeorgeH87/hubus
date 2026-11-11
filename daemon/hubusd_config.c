@@ -236,11 +236,12 @@ static void load_gpio(ctx_t *c, yn_t *root)
     warn_unknown(c, s, "gpio");
 }
 
+/* A time in microseconds, stored in nanoseconds: up to 1 s, so that it fits the uint32_t of the master. */
 static void read_us(ctx_t *c, yn_t *s, const char *key, uint32_t *ns)
 {
     unsigned us = *ns / 1000u;
 
-    read_unsigned(c, s, key, 1, 10000000, &us);
+    read_unsigned(c, s, key, 1, 1000000, &us);
     *ns = us * 1000u;
 }
 

@@ -25,6 +25,19 @@ static void expect_error(const char *text, const char *needle)
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, needle), err);
 }
 
+/* The longest times fit the nanoseconds of the master. */
+static void test_longest_times(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse("timing:\n  clk_low_us: 1000000\n  clk_high_us: 1000000\n  sample_us: 1000000\n"
+                                   "  cond_us: 1000000\n  turnaround_us: 1000000\n  class_margin_us: 1000000\n"));
+    TEST_ASSERT_EQUAL_UINT32(1000000000u, cfg.master.t_clk_low_ns);
+    TEST_ASSERT_EQUAL_UINT32(1000000000u, cfg.master.t_clk_high_ns);
+    TEST_ASSERT_EQUAL_UINT32(1000000000u, cfg.master.t_sample_ns);
+    TEST_ASSERT_EQUAL_UINT32(1000000000u, cfg.master.t_cond_ns);
+    TEST_ASSERT_EQUAL_UINT32(1000000000u, cfg.master.t_turnaround_ns);
+    TEST_ASSERT_EQUAL_UINT32(1000000000u, cfg.master.t_class_margin_ns);
+}
+
 /* ---- YAML tree ------------------------------------------------------------ */
 
 static void test_yaml_tree_and_line_numbers(void)
@@ -184,6 +197,9 @@ static void test_error_classes(void)
     expect_error("gpio:\n  clk: 4\n  data: 4\n", "different lines");
     expect_error("gpio:\n  realtime: 200\n", "between 0 and 99");
     expect_error("timing:\n  clk_low_us: 0\n", "clk_low_us");
+    expect_error("timing:\n  clk_low_us: 1000001\n", "between 1 and 1000000");
+    expect_error("timing:\n  turnaround_us: 10000000\n", "between 1 and 1000000"); /* would overflow in ns */
+    expect_error("timing:\n  class_margin_us: 1000001\n", "between 0 and 1000000");
     expect_error("timing:\n  clk_high_us: 10\n  sample_us: 50\n", "sample_us");
     expect_error("slaves: 3\n", "must be a list");
     expect_error("slaves:\n  - name: x\n", "without 'mcid'");
@@ -411,6 +427,7 @@ int main(void)
     RUN_TEST(test_empty_file_is_an_empty_mapping);
     RUN_TEST(test_empty_configuration_gives_defaults);
     RUN_TEST(test_full_configuration);
+    RUN_TEST(test_longest_times);
     RUN_TEST(test_unknown_keys_are_warnings_with_line_numbers);
     RUN_TEST(test_error_classes);
     RUN_TEST(test_modules_directory);

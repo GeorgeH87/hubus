@@ -57,11 +57,11 @@ The `timing` section configures the clock and the retry behaviour of the master 
 
 | Key | Default | Range | Meaning |
 |---|---|---|---|
-| `clk_low_us` | 50 | 1 to 10000000 | Minimum `CLK` low time (`T_CLK_LOW`). |
-| `clk_high_us` | 50 | 1 to 10000000 | Minimum `CLK` high time (`T_CLK_HIGH`). |
+| `clk_low_us` | 50 | 1 to 1000000 | Minimum `CLK` low time (`T_CLK_LOW`). |
+| `clk_high_us` | 50 | 1 to 1000000 | Minimum `CLK` high time (`T_CLK_HIGH`). |
 | `sample_us` | 25 | 1 to `clk_high_us` | Sample point of `DATA` after the rising edge (`T_SAMPLE`). A larger value than `clk_high_us` is a configuration error. |
-| `cond_us` | 50 | 1 to 10000000 | `CLK` high time around the `DATA` change of START and STOP (`T_COND`). |
-| `turnaround_us` | 200 | 1 to 10000000 | `CLK` low time after the turnaround slot (`T_TURNAROUND`); raised to `clk_low_us` if smaller. |
+| `cond_us` | 50 | 1 to 1000000 | `CLK` high time around the `DATA` change of START and STOP (`T_COND`). |
+| `turnaround_us` | 200 | 1 to 1000000 | `CLK` low time after the turnaround slot (`T_TURNAROUND`); raised to `clk_low_us` if smaller. |
 | `class_margin_us` | 10 | 0 to 1000000 | Added to the response time of a slave's speed class when that class raises the timing ([below](#speed-classes)). |
 | `line_fault_ticks` | 300 | 280 to 65000 | Clock ticks of a `DATA` line stuck low before it is a line fault; at least one maximum frame. |
 | `retry_budget` | 2 | 0 to 20 | Retries of a failed `REQUEST_DATA` within a burst. |
