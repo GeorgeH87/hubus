@@ -161,7 +161,9 @@ Measured in the simulation (`test/avr/test_avr_ledstrip.c`, ATtiny85 at 8 MHz): 
 
 ## Sizes
 
-ATtiny85, `LED_BYTES` 180, event buffer reduced to 3 bytes (`HUBUS_TX_BUF_SIZE=3`): 6042 bytes of flash and 356 bytes of RAM, of which the program buffer, parameters, and variables take about 70. Each LED adds 3 bytes of RAM. Of the 512 bytes, keep about 130 bytes for the stack (the simulation measures 78 with a program running), so `LED_BYTES` can go up to about 200 (66 RGB LEDs).
+ATtiny85, `LED_BYTES` 180, event buffer reduced to 3 bytes (`HUBUS_TX_BUF_SIZE=3`): 5982 bytes of flash and 373 bytes of RAM (data and bss), of which the program buffer, parameters, and variables take about 70. Each LED adds 3 bytes of RAM. Of the 512 bytes, keep about 130 bytes for the stack (the simulation measures 78 with a program running), so `LED_BYTES` can go up to about 200 (66 RGB LEDs).
+
+With `HUBUS_ENABLE_UPDATE` the firmware takes 6076 bytes of flash and 374 bytes of RAM. It fits below the info page in front of the updater (6080 bytes at `HUBUS_UPDATER_ADDR` `0x1800`), with 4 bytes to spare: a larger program buffer, a new opcode, or a larger slave library leaves no room for the updater. The AVR build checks it (`example_ledstrip_update_size`). That build only checks the size: it keeps the HWID variant `1`, and there is no module with `has_update` for the strip yet.
 
 ## Master Side
 
