@@ -36,6 +36,7 @@ typedef struct {
     uint32_t t_sample_ns;      /* delay from CLK rise to reading DATA (<= t_clk_high_ns) */
     uint32_t t_cond_ns;        /* minimum CLK high time around a START/STOP DATA change */
     uint32_t t_turnaround_ns;  /* minimum CLK low time after the turnaround slot */
+    uint32_t t_class_margin_ns;/* added to the response time of a speed class (docs/spec/01-physical-layer.md section 1.5) */
     uint16_t line_fault_ticks; /* DATA stuck low for this many ticks is a line fault (>= one max frame) */
     uint8_t retry_budget;      /* retries of a failed REQUEST_DATA within a burst */
     uint8_t follow_more;       /* immediately request the next fragment after MORE = 1 */
@@ -102,9 +103,20 @@ typedef struct {
 
 /* ---- master state --------------------------------------------------- */
 
+/*
+ * Speed classes (docs/spec/01-physical-layer.md section 1.5): the master notes the class of every valid SLAVE_INFO it
+ * receives, also from slaves without a module. `cfg` holds the timing in use: the configured minimums (`base`), raised
+ * to the response time of the slowest known class plus `t_class_margin_ns` for T_CLK_LOW, T_CLK_HIGH, T_COND, and
+ * T_TURNAROUND. The timing never goes below the configuration; slaves the master does not know count as class 0, for
+ * which the configuration applies. A class stays known until hubus_master_init(), also when the slave goes silent: a
+ * slow slave that comes back would otherwise be clocked too fast until its SLAVE_INFO is read again.
+ */
 typedef struct {
     hubus_master_hal_t hal;
-    hubus_master_cfg_t cfg;
+    hubus_master_cfg_t cfg;  /* timing in use: `base` raised by the speed classes */
+    hubus_master_cfg_t base; /* the configuration as given to hubus_master_init() */
+    uint8_t speed_class[HUBUS_MCID_MAX + 1u]; /* from the last valid SLAVE_INFO, 0 = not known or not declared */
+    uint8_t speed_limit;     /* MCID whose class raised the timing, 0 = the configuration applies */
     uint8_t clk;   /* CLK level driven by the master */
     uint8_t hold;  /* keep CLK high after STOP (back-to-back transactions in a burst) */
     hubus_mask_stack_t stack;
@@ -115,6 +127,21 @@ typedef struct {
 } hubus_master_t;
 
 void hubus_master_init(hubus_master_t *m, const hubus_master_hal_t *hal, const hubus_master_cfg_t *cfg);
+
+/* ---- speed classes -------------------------------------------------- */
+
+/* Edge response time `R` of a speed class in nanoseconds; 0 for class 0 (not declared) and for values above 15. */
+uint32_t hubus_speed_class_ns(uint8_t speed_class);
+
+/*
+ * The slave that slows down the whole bus: the MCID whose speed class raised at least one timing value above the
+ * configuration (the lowest MCID among equally slow ones), 0 if the configured minimums apply. `m->cfg` holds the
+ * resulting timing, `m->speed_class[mcid]` the class.
+ */
+uint8_t hubus_master_speed_limit(const hubus_master_t *m);
+
+/* Notes the speed class of a slave and recomputes the timing. The master calls it for every valid SLAVE_INFO itself. */
+void hubus_master_note_speed_class(hubus_master_t *m, uint8_t mcid, uint8_t speed_class);
 
 /* ---- line control --------------------------------------------------- */
 

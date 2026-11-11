@@ -196,6 +196,12 @@ int main(int argc, char **argv)
                 printf("mcid %2u: suspected duplicate MCID or line problem\n", mcid);
             }
         }
+        if (hubus_master_speed_limit(&master)) {
+            mcid = hubus_master_speed_limit(&master);
+            printf("warning: mcid %u (speed class %u) slows down the bus: clock low %lu us, high %lu us\n", mcid,
+                   master.speed_class[mcid], (unsigned long)(master.cfg.t_clk_low_ns / 1000u),
+                   (unsigned long)(master.cfg.t_clk_high_ns / 1000u));
+        }
     } else if (strcmp(argv[i], "burst") == 0) {
         rc = run_burst(&master);
     } else if (strcmp(argv[i], "monitor") == 0) {

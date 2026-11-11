@@ -46,6 +46,7 @@ typedef struct {
     unsigned n_log;
     void (*on_record)(void *ctx, const hubus_slave_frame_t *f);
     void *on_record_ctx;
+    uint8_t speed_class; /* speed class of the slaves added from now on */
 } fx_t;
 
 static inline void fx_on_capture(void *ctx)
@@ -109,6 +110,7 @@ static inline unsigned fx_add_full(fx_t *fx, uint8_t mcid, int capture, uint8_t 
     cfg.on_command = fx_on_command;
     cfg.state = state_len ? fx->app[idx].state : NULL;
     cfg.state_len = state_len;
+    cfg.speed_class = fx->speed_class;
     cfg.ctx = &fx->app[idx];
     TEST_ASSERT_TRUE(hubus_core_init(&fx->core[idx], &cfg, fx->sim.clk, fx->sim.data));
     TEST_ASSERT_EQUAL_UINT(idx, hubus_sim_add(&fx->sim, &fx->core[idx]));

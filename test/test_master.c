@@ -973,6 +973,118 @@ static void test_configured_minimum_timing_is_respected(void)
     TEST_ASSERT_EQUAL_UINT(0, fx.sim.timing_violations);
 }
 
+/* ---- speed classes ------------------------------------------------------------ */
+
+static void test_speed_class_response_times(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(0, hubus_speed_class_ns(0));
+    TEST_ASSERT_EQUAL_UINT32(1024000, hubus_speed_class_ns(1));
+    TEST_ASSERT_EQUAL_UINT32(724000, hubus_speed_class_ns(2));
+    TEST_ASSERT_EQUAL_UINT32(64000, hubus_speed_class_ns(9));
+    TEST_ASSERT_EQUAL_UINT32(45000, hubus_speed_class_ns(10));
+    TEST_ASSERT_EQUAL_UINT32(8000, hubus_speed_class_ns(15));
+    TEST_ASSERT_EQUAL_UINT32(0, hubus_speed_class_ns(16));
+}
+
+static void assert_timing(uint32_t clk_low, uint32_t clk_high, uint32_t cond, uint32_t turnaround)
+{
+    TEST_ASSERT_EQUAL_UINT32(clk_low, fx.master.cfg.t_clk_low_ns);
+    TEST_ASSERT_EQUAL_UINT32(clk_high, fx.master.cfg.t_clk_high_ns);
+    TEST_ASSERT_EQUAL_UINT32(cond, fx.master.cfg.t_cond_ns);
+    TEST_ASSERT_EQUAL_UINT32(turnaround, fx.master.cfg.t_turnaround_ns);
+    TEST_ASSERT_EQUAL_UINT32(fx.cfg.t_sample_ns, fx.master.cfg.t_sample_ns);
+}
+
+/* Slaves that are faster than the configuration, or declare no class, leave it as it is. */
+static void test_fast_speed_classes_keep_the_configured_timing(void)
+{
+    hubus_slave_frame_t f;
+
+    fx_init(&fx);
+    fx.speed_class = 15; /* 8 us */
+    fx_add(&fx, 5);
+    fx.speed_class = 0;
+    fx_add(&fx, 6);
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&fx.master, 5, &f));
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_info(&fx.master, 6, &f));
+    TEST_ASSERT_EQUAL_UINT8(15, fx.master.speed_class[5]);
+    TEST_ASSERT_EQUAL_UINT8(0, fx.master.speed_class[6]);
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_master_speed_limit(&fx.master));
+    assert_timing(50000, 50000, 50000, 200000);
+}
+
+/* A slower class raises T_CLK_LOW, T_CLK_HIGH, T_COND, and T_TURNAROUND to R plus the margin; the scan learns it from
+ * every slave, and the bus then runs with the raised minimums. */
+static void test_slow_speed_class_raises_the_timing(void)
+{
+    hubus_burst_stats_t st;
+    static hubus_scan_t scan;
+    unsigned s;
+
+    fx_init(&fx);
+    fx.speed_class = 9; /* 64 us */
+    s = fx_add(&fx, 20);
+    fx.speed_class = 6; /* 181 us */
+    fx_add(&fx, 33);
+    fx_add(&fx, 34);
+    fx_startup(&fx);
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_master_speed_limit(&fx.master));
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_scan(&fx.master, &scan));
+    TEST_ASSERT_EQUAL_UINT8(33, hubus_master_speed_limit(&fx.master)); /* the lowest of the two equally slow ones */
+    assert_timing(191000, 191000, 191000, 200000); /* T_TURNAROUND was already longer */
+
+    hubus_sim_check_timing(&fx.sim, 191000, 191000, 191000);
+    fx_write(&fx, s, 1);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, 6, 34, 0x10, NULL, 0));
+    TEST_ASSERT_EQUAL(HUBUS_OK, fx_burst(&fx, &st));
+    TEST_ASSERT_EQUAL_UINT(1, st.served);
+    TEST_ASSERT_EQUAL_UINT(0, fx.sim.timing_violations);
+}
+
+/* The slowest class sets the timing; a slave that reports a faster class later gives the time back. */
+static void test_speed_limit_follows_the_slowest_known_class(void)
+{
+    fx_init(&fx);
+    fx.cfg.t_class_margin_ns = 0;
+    {
+        hubus_master_hal_t hal = hubus_sim_master_hal(&fx.sim);
+
+        hubus_master_init(&fx.master, &hal, &fx.cfg);
+    }
+    hubus_master_note_speed_class(&fx.master, 10, 4); /* 362 us */
+    hubus_master_note_speed_class(&fx.master, 11, 1); /* 1024 us */
+    TEST_ASSERT_EQUAL_UINT8(11, hubus_master_speed_limit(&fx.master));
+    assert_timing(1024000, 1024000, 1024000, 1024000);
+
+    hubus_master_note_speed_class(&fx.master, 11, 0); /* another firmware, no class declared */
+    TEST_ASSERT_EQUAL_UINT8(10, hubus_master_speed_limit(&fx.master));
+    assert_timing(362000, 362000, 362000, 362000);
+
+    hubus_master_note_speed_class(&fx.master, 10, 12); /* 22 us */
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_master_speed_limit(&fx.master));
+    assert_timing(50000, 50000, 50000, 200000);
+
+    hubus_master_note_speed_class(&fx.master, 0, 1); /* no slave */
+    hubus_master_note_speed_class(&fx.master, 12, 16); /* no class */
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_master_speed_limit(&fx.master));
+}
+
+/* hubus_master_init() starts again from the configuration. */
+static void test_init_forgets_the_speed_classes(void)
+{
+    hubus_master_hal_t hal;
+
+    fx_init(&fx);
+    hubus_master_note_speed_class(&fx.master, 10, 1);
+    TEST_ASSERT_EQUAL_UINT8(10, hubus_master_speed_limit(&fx.master));
+    hal = hubus_sim_master_hal(&fx.sim);
+    hubus_master_init(&fx.master, &hal, &fx.cfg);
+    TEST_ASSERT_EQUAL_UINT8(0, hubus_master_speed_limit(&fx.master));
+    TEST_ASSERT_EQUAL_UINT8(0, fx.master.speed_class[10]);
+    assert_timing(50000, 50000, 50000, 200000);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1024,5 +1136,10 @@ int main(void)
     RUN_TEST(test_diagnose_many_failing_mcids_is_a_line_problem);
     RUN_TEST(test_counters_track_transactions_and_errors);
     RUN_TEST(test_configured_minimum_timing_is_respected);
+    RUN_TEST(test_speed_class_response_times);
+    RUN_TEST(test_fast_speed_classes_keep_the_configured_timing);
+    RUN_TEST(test_slow_speed_class_raises_the_timing);
+    RUN_TEST(test_speed_limit_follows_the_slowest_known_class);
+    RUN_TEST(test_init_forgets_the_speed_classes);
     return UNITY_END();
 }

@@ -12,6 +12,7 @@ void hubus_master_cfg_default(hubus_master_cfg_t *cfg)
     cfg->t_sample_ns = 25000u;
     cfg->t_cond_ns = 50000u;
     cfg->t_turnaround_ns = 200000u;
+    cfg->t_class_margin_ns = 10000u;
     cfg->line_fault_ticks = 300u; /* a bit more than one maximum frame (34 bytes = 272 bits) */
     cfg->retry_budget = 2u;
     cfg->follow_more = 1u;
@@ -49,12 +50,68 @@ void hubus_master_init(hubus_master_t *m, const hubus_master_hal_t *hal, const h
     if (m->cfg.t_turnaround_ns < m->cfg.t_clk_low_ns) {
         m->cfg.t_turnaround_ns = m->cfg.t_clk_low_ns;
     }
+    m->base = m->cfg;
     for (i = 0; i <= HUBUS_MCID_MAX; i++) {
         hubus_gen_reset(&m->gen[i]);
     }
     m->hal.set_data_low(m->hal.ctx, 0);
     m->hal.set_clk(m->hal.ctx, 0);
     m->clk = 0;
+}
+
+/* ---- speed classes ---------------------------------------------------- */
+
+uint32_t hubus_speed_class_ns(uint8_t speed_class)
+{
+    /* 8 us * 2^((15 - k) / 2), rounded down to whole microseconds */
+    static const uint16_t r_us[HUBUS_SPEED_CLASS_MAX + 1u] = {0,  1024, 724, 512, 362, 256, 181, 128,
+                                                             90, 64,   45,  32,  22,  16,  11,  8};
+
+    return speed_class > HUBUS_SPEED_CLASS_MAX ? 0u : (uint32_t)r_us[speed_class] * 1000u;
+}
+
+uint8_t hubus_master_speed_limit(const hubus_master_t *m)
+{
+    return m->speed_limit;
+}
+
+static uint32_t at_least(uint32_t value, uint32_t floor)
+{
+    return value > floor ? value : floor;
+}
+
+/* The timing values the slowest known slave needs; T_SAMPLE stays, it is the master's own and T_CLK_HIGH only grows. */
+static void apply_speed_classes(hubus_master_t *m)
+{
+    uint8_t slowest = 0;
+    uint32_t r, floor;
+    unsigned mcid;
+
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        if (m->speed_class[mcid] && (!slowest || m->speed_class[mcid] < m->speed_class[slowest])) {
+            slowest = (uint8_t)mcid;
+        }
+    }
+    r = slowest ? hubus_speed_class_ns(m->speed_class[slowest]) : 0u;
+    floor = r ? r + m->base.t_class_margin_ns : 0u;
+    m->cfg.t_clk_low_ns = at_least(m->base.t_clk_low_ns, floor);
+    m->cfg.t_clk_high_ns = at_least(m->base.t_clk_high_ns, floor);
+    m->cfg.t_cond_ns = at_least(m->base.t_cond_ns, floor);
+    m->cfg.t_turnaround_ns = at_least(m->base.t_turnaround_ns, floor);
+    m->speed_limit = (m->cfg.t_clk_low_ns != m->base.t_clk_low_ns || m->cfg.t_clk_high_ns != m->base.t_clk_high_ns ||
+                      m->cfg.t_cond_ns != m->base.t_cond_ns || m->cfg.t_turnaround_ns != m->base.t_turnaround_ns)
+                         ? slowest
+                         : 0u;
+}
+
+void hubus_master_note_speed_class(hubus_master_t *m, uint8_t mcid, uint8_t speed_class)
+{
+    if (mcid < HUBUS_MCID_MIN || mcid > HUBUS_MCID_MAX || speed_class > HUBUS_SPEED_CLASS_MAX ||
+        m->speed_class[mcid] == speed_class) {
+        return;
+    }
+    m->speed_class[mcid] = speed_class;
+    apply_speed_classes(m);
 }
 
 /* ---- primitives ------------------------------------------------------ */
@@ -505,6 +562,10 @@ static hubus_status_t request_impl(hubus_master_t *m, uint8_t req_type, uint8_t 
         hubus_status_t end = cond_stop(m);
         if (end != HUBUS_OK) {
             (void)recover(m);
+        }
+        if (h.type == HUBUS_S_INFO && h.len > HUBUS_INFO_BYTE0) {
+            /* also for an unknown protocol version: the speed class is the one field the master always uses (4.7) */
+            hubus_master_note_speed_class(m, h.mcid, HUBUS_INFO_SPEED_CLASS(buf[HUBUS_HEADER_BYTES + HUBUS_INFO_BYTE0]));
         }
         if (out) {
             out->type = h.type;

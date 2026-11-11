@@ -17,8 +17,8 @@ What is still open. The specification is complete except for values that can onl
 
 ## Speed Classes on the Master
 
-- **Status:** open. Slaves announce their speed class in `SLAVE_INFO` ([§1.5](../spec/01-physical-layer.md#15-speed-classes)); the master library and hubusd do not evaluate it yet and keep using their configured minimums. hubusd only publishes it.
-- **Direction:** first derive the bus-wide minimums from the slowest known slave and warn when one slave slows down the whole bus; later, if measurements show a gain, clock the rest of a frame faster once the slower slaves have rejected its prefix. The microsecond values of the classes are checked against the measured response times ([H3](#h3-concrete-timing-values)).
+- **Status:** the bus-wide part is implemented. Slaves announce their speed class in `SLAVE_INFO` ([§1.5](../spec/01-physical-layer.md#15-speed-classes)); the master library raises `T_CLK_LOW`, `T_CLK_HIGH`, `T_COND`, and `T_TURNAROUND` to the response time of the slowest known class plus a margin, never below the configured minimums, and hubusd warns when one slave slows down the whole bus ([master library](../master-library.md#speed-classes), [hubusd](../daemon.md#speed-classes)). Tested on the bus simulation; not run on hardware.
+- **Open:** if measurements show a gain, clock the rest of a frame faster once the slower slaves have rejected its prefix. The microsecond values of the classes and the margin (10 µs by default) are checked against the measured response times ([H3](#h3-concrete-timing-values)).
 
 ## Stack Use on 128 B RAM Devices
 

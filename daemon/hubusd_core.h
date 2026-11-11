@@ -129,9 +129,11 @@ typedef struct hubusd {
     uint64_t next_startup_ms;
     uint64_t next_scan_ms;
     uint64_t next_stats_ms;
-    char last_state_json[768];
+    char last_state_json[1024];
     char last_diag_json[256];
     int started;          /* initial startup, scan, and probe done */
+    uint8_t speed_limit;       /* the slave that slows down the bus, as last reported (hubus_master_speed_limit()) */
+    uint8_t speed_limit_class; /* and its speed class */
 
     hubusd_slave_t slave[HUBUS_MCID_MAX + 1u];
     hubusd_stats_t stats;

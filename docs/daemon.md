@@ -62,6 +62,7 @@ The `timing` section configures the clock and the retry behaviour of the master 
 | `sample_us` | 25 | 1 to `clk_high_us` | Sample point of `DATA` after the rising edge (`T_SAMPLE`). A larger value than `clk_high_us` is a configuration error. |
 | `cond_us` | 50 | 1 to 10000000 | `CLK` high time around the `DATA` change of START and STOP (`T_COND`). |
 | `turnaround_us` | 200 | 1 to 10000000 | `CLK` low time after the turnaround slot (`T_TURNAROUND`); raised to `clk_low_us` if smaller. |
+| `class_margin_us` | 10 | 0 to 1000000 | Added to the response time of a slave's speed class when that class raises the timing ([below](#speed-classes)). |
 | `line_fault_ticks` | 300 | 280 to 65000 | Clock ticks of a `DATA` line stuck low before it is a line fault; at least one maximum frame. |
 | `retry_budget` | 2 | 0 to 20 | Retries of a failed `REQUEST_DATA` within a burst. |
 | `follow_fragments` | true | true, false | Request the next fragment right after `MORE = 1`. |
@@ -76,6 +77,15 @@ To adapt the bus:
 - **Slower slaves, long wires, or interference:** raise `clk_low_us` (the slave needs it for its interrupt latency and for updating `DATA`) and `turnaround_us`. Slaves running at 1 MHz are the usual limit; the values must suit the slowest slave on the bus.
 - **Faster bus:** lower `clk_low_us`, `clk_high_us`, and `sample_us` together, keeping `sample_us <= clk_high_us`, and watch the statistics for CRC errors ([Statistics and Diagnosis](#statistics-and-diagnosis)).
 - The defaults are conservative placeholders until measured on hardware ([open issues](project/open-issues.md#h3-concrete-timing-values)). Changes need a restart of the daemon.
+
+#### Speed Classes
+
+Every slave states in its `SLAVE_INFO` how fast it reacts to the bus, as a speed class with an edge response time `R` ([§1.5](spec/01-physical-layer.md#15-speed-classes)). The master library notes the class of every slave it reads, also of slaves that are not configured or have no module, and raises `clk_low_us`, `clk_high_us`, `cond_us`, and `turnaround_us` to `R` of the slowest one plus `class_margin_us`, each where the configured value is smaller. Class `0` (not declared) and slaves the master has not read yet stand for the configured values.
+
+- The configured values stay the lower limit: a fast slave never makes the bus faster than configured.
+- When a slave raises the timing, hubusd logs a warning on `hubus/master/log`, once per change, for example `slave 3 (speed class 4, 362 us) slows down the bus: clock low 372 us, ...`. `hubus/master/state` shows the timing in use under `timing`, and the slave as `limited_by`.
+- A class stays known until hubusd restarts, also when the slave goes offline or moves to another MCID: a slow slave that comes back would otherwise be clocked too fast until its `SLAVE_INFO` is read again. After removing a slow slave, restart hubusd to get the faster timing back.
+- One slow slave slows down the whole bus, since every slave watches every edge. Clocking only the part of a frame after its address faster is not implemented ([open issues](project/open-issues.md#speed-classes-on-the-master)).
 
 The `gpio` section selects the chip by label (`chip`, preferred) or device path (`path`), the offsets of `clk` and `data` (different lines), `realtime` (`SCHED_FIFO` priority 1 to 99, 0 = off, needs `CAP_SYS_NICE`), and `internal_pullup` (the SoC pull-up on `DATA`, for bench tests only; use an external pull-up).
 
@@ -108,7 +118,7 @@ Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, pa
 | Topic | Retained | Content |
 |---|---|---|
 | `hubus/master/status` | yes | `online` / `offline` (last will) |
-| `hubus/master/state` | yes | bus state (`ok`, `line_fault`), last error, version, configured and online slaves, unknown slaves on the bus |
+| `hubus/master/state` | yes | bus state (`ok`, `line_fault`), last error, version, configured and online slaves, unknown slaves on the bus, the timing in use (`timing`: `clk_low_us`, `clk_high_us`, `cond_us`, `turnaround_us`, and `limited_by`, the MCID of the slave whose speed class raised it, [speed classes](#speed-classes)) |
 | `hubus/master/stats` | no | statistics (below), every `mqtt.stats_interval_s` and on request |
 | `hubus/master/diagnosis` | yes | `ok`, `suspected_duplicate_mcid` with the MCIDs, or `line_problem` |
 | `hubus/master/scan` | no | result of the last scan |

@@ -259,6 +259,9 @@ static void load_timing(ctx_t *c, yn_t *root)
     read_us(c, s, "sample_us", &m->t_sample_ns);
     read_us(c, s, "cond_us", &m->t_cond_ns);
     read_us(c, s, "turnaround_us", &m->t_turnaround_ns);
+    v = m->t_class_margin_ns / 1000u;
+    read_unsigned(c, s, "class_margin_us", 0, 1000000, &v);
+    m->t_class_margin_ns = v * 1000u;
     v = m->line_fault_ticks;
     read_unsigned(c, s, "line_fault_ticks", 280, 65000, &v);
     m->line_fault_ticks = (uint16_t)v;

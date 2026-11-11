@@ -70,7 +70,8 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Commissioning scan (group `REQUEST_INFO`) and duplicate MCID heuristic.
 - [x] Configurable timing minimums (for the slowest slave on the bus).
 - [x] Real-time priority option for the clock thread.
-- [ ] Derive the timing minimums from the speed classes of the known slaves; later clock the rest of a frame faster once slower slaves have rejected its prefix ([open issues](docs/project/open-issues.md#speed-classes-on-the-master)).
+- [x] Derive the timing minimums from the speed classes of the known slaves: raised to `R` of the slowest plus `t_class_margin_ns`, never below the configuration; hubusd warns and shows the timing in `hubus/master/state` ([master library](docs/master-library.md#speed-classes), [hubusd](docs/daemon.md#speed-classes)).
+- [ ] Later, if measurements show a gain: clock the rest of a frame faster once slower slaves have rejected its prefix ([open issues](docs/project/open-issues.md#speed-classes-on-the-master)).
 
 ## 7. Examples
 
@@ -184,7 +185,7 @@ Three new devices, each with slave firmware (always with the update option), a m
 Free pins next to `CLK` (PB2) and `DATA` (PB3): PB0, PB1, PB4 (PB5 is reset).
 
 - [x] Entity kind `number` (`HUBUS_COMPONENT_NUMBER`, `min`/`max`/`step`, value through `on_set`, discovery as a box input; module API version 2).
-- [x] LED strip and push button: the build with the updater fits below the info page, 6076 of 6080 bytes; the AVR build checks it (`example_ledstrip_update_size`, [sizes](docs/example-ledstrip.md#sizes)). Only a size check: no HWID variant and no module with update support for the strip.
+- [x] LED strip and push button: the build with the updater fits below the info page, 6076 of 6080 bytes; the AVR build warns once it no longer fits (`example_ledstrip_update_size`, [sizes](docs/example-ledstrip.md#sizes)). Only a size check: no HWID variant and no module with update support for the strip.
 - [x] DHT11 (`0x86`): temperature and humidity as state, read at most once per second; the 40-bit read in an interruptible section that is repeated when the bus needs an edge. Module with two sensors. Test with a simulated DHT11 (pulse widths, bad checksum, absent sensor). Run on a simulated ATtiny85 with a model of the sensor (`test_avr_examples`); not run on hardware, [description](docs/example-dht11.md).
 - [x] HC-SR04 (`0x87`): echo width measured on PB1 (trigger PB0), distance as state, an event when it falls below the threshold (and when it leaves it, with hysteresis). Command to set the threshold; the slave reports "no threshold" after power-up and the master sends the stored value, default 30 cm. Module with a distance sensor and a `number` entity. The echo is 5 V: divider or a 3.3 V sensor. Test with a simulated echo. Run on a simulated ATtiny85 with a model of the module (`test_avr_examples`), the module on the simulated bus (`test_daemon_core`); not run on hardware, [description](docs/example-distance.md).
 - [x] HC-SR501 (`0x88`): event buffer only (1 motion, 0 cleared), no state; warm-up of the PIR after power-up. Module: `binary_sensor` with the device class `motion`. Test on a simulated ATtiny85. Run on a simulated ATtiny85 (`test_avr_examples`); not run on hardware, [description](docs/example-motion.md).

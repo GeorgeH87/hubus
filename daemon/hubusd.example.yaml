@@ -18,6 +18,7 @@ timing:
   sample_us: 25          # DATA sample point after the rising edge, at most clk_high_us
   cond_us: 50            # CLK high time around START/STOP
   turnaround_us: 200     # CLK low time after the turnaround slot
+  class_margin_us: 10    # added to the response time of a slave's speed class when it is slower than the above
   line_fault_ticks: 300  # ticks of DATA stuck low before a line fault (at least 280)
   retry_budget: 2        # retries of a failed REQUEST_DATA within a burst
   follow_fragments: true # request the next fragment right after MORE = 1

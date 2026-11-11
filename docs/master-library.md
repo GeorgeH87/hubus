@@ -60,7 +60,19 @@ Every function returns a `hubus_status_t`; `hubus_status_str()` turns it into te
 | `hubus_master_reset(m)` | RESET ([§6.5](spec/06-operation.md#65-communication-stack-reset)): every slave goes idle with `DATA` released and keeps its buffer. Also ends a blind time ([§6.9](spec/06-operation.md#69-blind-time-after-a-command)). |
 | `hubus_master_shutdown(m)` | Optional: RESET, so that all slaves are idle with `DATA` released. |
 
-`hubus_master_cfg_t`: `t_clk_low_ns`, `t_clk_high_ns`, `t_sample_ns`, `t_cond_ns`, `t_turnaround_ns` (all minimums in nanoseconds), `line_fault_ticks`, `retry_budget`, `follow_more`, `max_fragments`, `dup_fail_threshold`, `line_problem_count`. `hubusd` exposes them as the [`timing` section](daemon.md#timing).
+`hubus_master_cfg_t`: `t_clk_low_ns`, `t_clk_high_ns`, `t_sample_ns`, `t_cond_ns`, `t_turnaround_ns` (all minimums in nanoseconds), `t_class_margin_ns`, `line_fault_ticks`, `retry_budget`, `follow_more`, `max_fragments`, `dup_fail_threshold`, `line_problem_count`. `hubusd` exposes them as the [`timing` section](daemon.md#timing).
+
+### Speed Classes
+
+The master notes the speed class of every valid `SLAVE_INFO` it receives, in `REQUEST_INFO`, a group `REQUEST_INFO`, and the commissioning scan, also from slaves without a module and of an unknown protocol version ([§1.5](spec/01-physical-layer.md#15-speed-classes), [§4.7](spec/04-frames.md#47-slave-info-slave_info)). `m->cfg` holds the timing in use: the configuration given to `hubus_master_init()` (kept in `m->base`), with `t_clk_low_ns`, `t_clk_high_ns`, `t_cond_ns`, and `t_turnaround_ns` raised to the response time `R` of the slowest known class plus `t_class_margin_ns` (default 10 µs). The timing never goes below the configuration; class `0` and slaves the master has not read stand for it. A class stays known until `hubus_master_init()`, also when the slave goes silent.
+
+| Function | Purpose |
+|---|---|
+| `hubus_speed_class_ns(k)` | `R` of class `k` in nanoseconds; 0 for class 0 and values above 15. |
+| `hubus_master_speed_limit(m)` | The MCID whose class raised the timing (the lowest one among equally slow slaves), 0 if the configuration applies. `m->speed_class[mcid]` holds the class. |
+| `hubus_master_note_speed_class(m, mcid, k)` | Notes a class and recomputes the timing; the master calls it itself. |
+
+The master example (`examples/master`) warns after a `scan` when a slave slows down the bus.
 
 ## Hardware Abstraction
 

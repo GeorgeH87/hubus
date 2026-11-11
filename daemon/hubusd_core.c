@@ -365,7 +365,7 @@ static const char *bus_text(const hubusd_t *d)
 
 static void publish_state(hubusd_t *d, int force)
 {
-    char buf[768];
+    char buf[1024];
     char serial[64];
     char t[160];
     jw_t w;
@@ -400,6 +400,16 @@ static void publish_state(hubusd_t *d, int force)
         jw_obj_end(&w);
     }
     jw_arr_end(&w);
+    /* the timing in use: the configuration, raised by the speed class of the slowest known slave */
+    jw_obj_begin(&w, "timing");
+    jw_uint(&w, "clk_low_us", d->master.cfg.t_clk_low_ns / 1000u);
+    jw_uint(&w, "clk_high_us", d->master.cfg.t_clk_high_ns / 1000u);
+    jw_uint(&w, "cond_us", d->master.cfg.t_cond_ns / 1000u);
+    jw_uint(&w, "turnaround_us", d->master.cfg.t_turnaround_ns / 1000u);
+    if (hubus_master_speed_limit(&d->master)) {
+        jw_uint(&w, "limited_by", hubus_master_speed_limit(&d->master));
+    }
+    jw_obj_end(&w);
     jw_obj_end(&w);
     if (!jw_ok(&w)) {
         d->stats.publish_errors++;
@@ -410,6 +420,32 @@ static void publish_state(hubusd_t *d, int force)
         topic(d, t, sizeof t, "master/state");
         pub(d, t, buf, 1);
     }
+}
+
+/* Warns once when the speed class of a slave slows down the whole bus (docs/spec/01-physical-layer.md section 1.5). The
+ * master raises the timing by itself whenever it reads a SLAVE_INFO; this only reports the change. */
+static void check_timing(hubusd_t *d)
+{
+    const hubus_master_cfg_t *t = &d->master.cfg;
+    uint8_t mcid = hubus_master_speed_limit(&d->master);
+    uint8_t cls = mcid ? d->master.speed_class[mcid] : 0u;
+
+    if (mcid == d->speed_limit && cls == d->speed_limit_class) {
+        return;
+    }
+    d->speed_limit = mcid;
+    d->speed_limit_class = cls;
+    if (mcid) {
+        log_event(d, 1,
+                  "slave %u (speed class %u, %lu us) slows down the bus: clock low %lu us, high %lu us, conditions %lu us, "
+                  "turnaround %lu us",
+                  mcid, cls, (unsigned long)(hubus_speed_class_ns(cls) / 1000u), (unsigned long)(t->t_clk_low_ns / 1000u),
+                  (unsigned long)(t->t_clk_high_ns / 1000u), (unsigned long)(t->t_cond_ns / 1000u),
+                  (unsigned long)(t->t_turnaround_ns / 1000u));
+    } else {
+        log_event(d, 0, "bus timing back to the configured minimums");
+    }
+    publish_state(d, 0);
 }
 
 static void publish_diagnosis(hubusd_t *d, int force)
@@ -2593,6 +2629,7 @@ int hubusd_step(hubusd_t *d)
     if (drain_modules(d)) {
         busy = 1;
     }
+    check_timing(d); /* a SLAVE_INFO of the last step may have raised it */
 
     if (d->bus != HUBUSD_BUS_OK) {
         if (!d->started && d->bus == HUBUSD_BUS_STARTING) {

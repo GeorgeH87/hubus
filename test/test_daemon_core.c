@@ -630,6 +630,12 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
     assert_contains("hubus/slave/5/info", "\"speed_class\":0");
     TEST_ASSERT_TRUE(last_msg("hubus/slave/3/info")->retain);
 
+    /* class 4 (362 us) is slower than the configured 50 us: the bus follows slave 3, and hubusd says so once */
+    assert_contains("hubus/master/state",
+                    "\"timing\":{\"clk_low_us\":372,\"clk_high_us\":372,\"cond_us\":372,\"turnaround_us\":372,\"limited_by\":3}");
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log",
+                                               "slave 3 (speed class 4, 362 us) slows down the bus: clock low 372 us"));
+
     /* initial state is read back from the slaves */
     assert_last("hubus/slave/3/relay/state", "OFF");
     assert_last("hubus/slave/5/button/state", "OFF");
