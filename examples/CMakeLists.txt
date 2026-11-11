@@ -91,12 +91,12 @@ if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
         DEPENDS example_ledstrip
         COMMENT "Checking that the LED strip leaves room for the stack")
     # The LED strip with firmware update, only to check that it fits below the info page (4 bytes to spare). It keeps
-    # HWID variant 1, and no module states update support for it.
+    # HWID variant 1, and no module states update support for it, so a larger build only warns.
     hubus_example(ledstrip_update "slave-ledstrip/ledstrip_example.c;slave-ledstrip/ledvm.c" 1 1 TX_BUF 3
                   HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
     add_custom_target(example_ledstrip_update_size ALL
         COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:example_ledstrip_update>
-                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=384
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=384 -DWARN_ONLY=ON
                 -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
         DEPENDS example_ledstrip_update
         COMMENT "Checking that the LED strip with update fits below the updater")
