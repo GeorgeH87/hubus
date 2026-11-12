@@ -201,6 +201,7 @@ static void strip_on_frame(hubus_module_instance_t *self, const hubus_module_hos
 /* Only SHOW makes the strip blind: 180 bytes of 12.5 us, the reset time of the strip, and the wait for the slave to be free
  * (docs/example-ledstrip.md). */
 static const hubus_module_rule_t strip_rules[] = {{.pattern = {0x84, 0x01}, .mask = {0xFF, 0xFF}, .len = 2}};
+static const hubus_module_rule_t strip_update_rules[] = {{.pattern = {0x84, 0x02}, .mask = {0xFF, 0xFF}, .len = 2}};
 static const hubus_module_blind_t strip_blind[] = {{.opcode = OP_SHOW, .ms = 4}};
 static const hubus_entity_t strip_entities[] = {
     {.key = "button", .name = "Button", .component = HUBUS_COMPONENT_BINARY_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
@@ -208,21 +209,24 @@ static const hubus_entity_t strip_entities[] = {
     {.key = "animation", .name = "Animation", .component = HUBUS_COMPONENT_TEXT},
 };
 
+/* The same firmware with and without update support: only the variant and has_update differ. */
+#define STRIP_MODULE                                                                                                   \
+    HUBUS_MODULE_INIT, .max_command = HUBUS_MAX_PAYLOAD, .has_state = true, .has_events = true,                        \
+        .has_status_capture = true, .blind_ops = strip_blind, .n_blind_ops = HUBUS_MODULE_LEN(strip_blind),            \
+        .entities = strip_entities, .n_entities = HUBUS_MODULE_LEN(strip_entities), .create = strip_create,            \
+        .destroy = strip_destroy, .on_frame = strip_on_frame, .on_set = strip_on_set
+
 const hubus_module_t hubusd_ledstrip_module = {
-    HUBUS_MODULE_INIT,
+    STRIP_MODULE,
     .name = "ledstrip",
     .rules = strip_rules,
     .n_rules = HUBUS_MODULE_LEN(strip_rules),
-    .max_command = HUBUS_MAX_PAYLOAD,
-    .has_state = true,
-    .has_events = true,
-    .has_status_capture = true,
-    .blind_ops = strip_blind,
-    .n_blind_ops = HUBUS_MODULE_LEN(strip_blind),
-    .entities = strip_entities,
-    .n_entities = HUBUS_MODULE_LEN(strip_entities),
-    .create = strip_create,
-    .destroy = strip_destroy,
-    .on_frame = strip_on_frame,
-    .on_set = strip_on_set,
+};
+
+const hubus_module_t hubusd_ledstrip_update_module = {
+    STRIP_MODULE,
+    .name = "ledstrip-update",
+    .rules = strip_update_rules,
+    .n_rules = HUBUS_MODULE_LEN(strip_update_rules),
+    .has_update = true,
 };

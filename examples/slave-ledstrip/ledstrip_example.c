@@ -5,7 +5,8 @@
  *   PB0 = WS2812B data input (through a 5 V buffer, docs/example-ledstrip.md)
  *   PB1 = push button to ground (internal pull-up)
  *
- * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1, HUBUS_TX_BUF_SIZE=3.
+ * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1, HUBUS_TX_BUF_SIZE=3; HUBUS_ENABLE_UPDATE=1 for the
+ * firmware update (HWID variant 2).
  * LED_BYTES sets the frame buffer (default 180 bytes: 60 RGB LEDs).
  *
  * The slave keeps a raw frame buffer. The master either fills it and shows it once, or sends a program in the
@@ -79,7 +80,12 @@
 #define PROG_REFUSED 2
 
 /* Hardware identifier (docs/hwid-types.md): type, variant, version, hardware revision, serial number. */
-static const uint8_t hwid[] PROGMEM = {0x84, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x04};
+#if HUBUS_ENABLE_UPDATE
+#define STRIP_VARIANT 0x02 /* with firmware update: a property of the image, stated by its module */
+#else
+#define STRIP_VARIANT 0x01
+#endif
+static const uint8_t hwid[] PROGMEM = {0x84, STRIP_VARIANT, 0x02, 0x00, 0x00, 0x00, 0x00, 0x04};
 
 static uint8_t frame[LED_BYTES];
 static volatile uint8_t state[3]; /* button, seq of the last SHOW, program */

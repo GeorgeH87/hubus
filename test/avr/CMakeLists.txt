@@ -60,3 +60,4 @@ foreach(name test_avr_examples test_avr_update)
     set_tests_properties(${name} PROPERTIES TIMEOUT 300 LABELS avr
         ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=0")
 endforeach()
+target_include_directories(test_avr_update PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)

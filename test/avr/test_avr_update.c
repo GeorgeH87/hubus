@@ -8,6 +8,8 @@
  * writes with SPM, the CRC check of the info page at boot, the hand-over from the application (UPDATE_ENTER inside its
  * interrupt handler), the MCID in EEPROM, and UPDATE_LEAVE by the watchdog. The MCID in the last EEPROM byte as
  * the programmer writes it, and its change over the bus (UPDATE_SET_MCID), with the switch taking it from there.
+ * The LED strip with update support (ex_ledstrip_update) as well: nearly the whole application area, replaced while
+ * its animation runs in an interruptible section.
  */
 #include <stdio.h>
 #include <string.h>
@@ -15,7 +17,9 @@
 #include "avr_ioport.h"
 #include "avr_slave.h"
 #include "fixture.h"
+#include "hubus_crc.h"
 #include "hubus_update.h"
+#include "ledvm.h"
 #include "sim_avr.h"
 #include "sim_io.h"
 
@@ -75,15 +79,20 @@ static void boot(void)
     fx_startup(&fx);
 }
 
-static hubus_update_image_t image(void)
+static hubus_update_image_t image_of(const uint8_t *data, uint32_t len)
 {
     hubus_update_image_t img;
 
     memset(&img, 0, sizeof img);
-    img.data = app;
-    img.len = app_len;
+    img.data = data;
+    img.len = len;
     memcpy(img.signature, attiny85_signature, 3);
     return img;
+}
+
+static hubus_update_image_t image(void)
+{
+    return image_of(app, app_len);
 }
 
 /* HWID type the slave `mcid` announces, -1 if it does not answer. */
@@ -110,18 +119,22 @@ static void expect_switch(uint8_t mcid)
 
 /* The flash of the device holds the image, with the jump to the updater at address 0 in place of its reset vector,
  * and the updater untouched. */
-static void expect_flash(const avr_slave_t *d)
+static void expect_flash_of(const avr_slave_t *d, const uint8_t *data, uint32_t len)
 {
     uint16_t w0 = (uint16_t)(d->avr->flash[0] | d->avr->flash[1] << 8);
 
     TEST_ASSERT_EQUAL_HEX16((uint16_t)(updater[0] | updater[1] << 8), w0);
-    TEST_ASSERT_EQUAL_HEX8_ARRAY(&app[2], &d->avr->flash[2], app_len - 2u);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(&data[2], &d->avr->flash[2], len - 2u);
     TEST_ASSERT_EQUAL_HEX8_ARRAY(&updater[UPDATER_ADDR], &d->avr->flash[UPDATER_ADDR], FLASH_SIZE - UPDATER_ADDR);
 }
 
-static void update_ok(uint8_t mcid, hubus_update_result_t *res)
+static void expect_flash(const avr_slave_t *d)
 {
-    hubus_update_image_t img = image();
+    expect_flash_of(d, app, app_len);
+}
+
+static void update_image_ok(uint8_t mcid, hubus_update_image_t img, hubus_update_result_t *res)
+{
     hubus_status_t r = hubus_master_update(&fx.master, mcid, &img, NULL, NULL, res);
 
     if (r != HUBUS_OK) {
@@ -131,6 +144,11 @@ static void update_ok(uint8_t mcid, hubus_update_result_t *res)
                  (unsigned)res->page);
         TEST_FAIL_MESSAGE(msg);
     }
+}
+
+static void update_ok(uint8_t mcid, hubus_update_result_t *res)
+{
+    update_image_ok(mcid, image(), res);
 }
 
 /* ---- tests ------------------------------------------------------------------------------------------------------- */
@@ -293,6 +311,77 @@ static void test_application_gets_another_mcid(void)
     expect_flash(d);
 }
 
+/* ---- LED strip --------------------------------------------------------------------------------------------------- */
+
+#define STRIP 11u
+#define STRIP_TYPE 0x84u
+#define STRIP_UPDATE_VARIANT 0x02u
+#define OP_PROG_WRITE 0x43
+#define OP_PROG_RUN 0x44
+#define STRIP_PROG_RUNNING 1u
+
+static uint8_t strip_app[FLASH_SIZE];
+
+static void expect_strip(uint8_t mcid)
+{
+    uint8_t variant = 0;
+
+    TEST_ASSERT_EQUAL_INT(STRIP_TYPE, hwid_type(mcid, &variant));
+    TEST_ASSERT_EQUAL_HEX8(STRIP_UPDATE_VARIANT, variant);
+}
+
+/* Byte 2 of the state of the strip: its program. */
+static uint8_t strip_program(void)
+{
+    hubus_slave_frame_t f;
+
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_request_state(&fx.master, STRIP, &f));
+    TEST_ASSERT_EQUAL_UINT8(3, f.len);
+    return f.payload[2];
+}
+
+/* The strip as shipped with update support: loaded into a fresh device with its MCID from the programmer, then replaced
+ * while an animation runs, so the hand-over (UPDATE_ENTER) comes in during an interruptible section. The new strip
+ * starts dark, without a program. */
+static void test_led_strip_is_replaced_while_it_animates(void)
+{
+    static const uint8_t prog[] = {LEDVM_I, LEDVM_K8, 10, LEDVM_ADD, LEDVM_K8, 0x20, LEDVM_K8, 0x30, LEDVM_RGB};
+    uint8_t args[1 + sizeof prog];
+    uint8_t run[4];
+    hubus_update_result_t res;
+    uint32_t len;
+    avr_slave_t *d = add_fresh(HEX("fw_updater"));
+
+    memset(strip_app, 0xFF, sizeof strip_app);
+    len = avr_read_hex(HEX("ex_ledstrip_update"), strip_app, sizeof strip_app);
+    TEST_ASSERT_TRUE(len > 0u && len <= INFO_ADDR);
+    avr_slave_eeprom_write(d, -1, STRIP);
+    boot();
+    update_image_ok(STRIP, image_of(strip_app, len), &res);
+    printf("LED strip: %u bytes, %u pages, %.1f s on the bus\n", (unsigned)len, res.pages, (double)fx.sim.time_ns / 1e9);
+    expect_strip(STRIP);
+    expect_flash_of(d, strip_app, len);
+
+    args[0] = 0;
+    memcpy(&args[1], prog, sizeof prog);
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, HUBUS_TARGET_LEN_EXACT, STRIP, OP_PROG_WRITE,
+                                                          args, sizeof args));
+    run[0] = sizeof prog;
+    run[1] = hubus_crc8(prog, sizeof prog);
+    run[2] = LEDVM_LAYOUT_GRB;
+    run[3] = 1; /* a frame every millisecond: the strip is sending most of the time */
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_send_command(&fx.master, HUBUS_TARGET_LEN_EXACT, STRIP, OP_PROG_RUN, run,
+                                                          sizeof run));
+    avr_bus_idle(&bus, 20u * MS);
+    TEST_ASSERT_EQUAL_UINT8(STRIP_PROG_RUNNING, strip_program());
+
+    update_image_ok(STRIP, image_of(strip_app, len), &res);
+    expect_strip(STRIP);
+    expect_flash_of(d, strip_app, len);
+    TEST_ASSERT_EQUAL_HEX8(STRIP, avr_slave_eeprom_read(d, -1));
+    TEST_ASSERT_EQUAL_UINT8(0, strip_program());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -302,5 +391,6 @@ int main(void)
     RUN_TEST(test_mcid_from_the_programmer);
     RUN_TEST(test_fresh_device_gets_its_mcid_over_the_bus);
     RUN_TEST(test_application_gets_another_mcid);
+    RUN_TEST(test_led_strip_is_replaced_while_it_animates);
     return UNITY_END();
 }

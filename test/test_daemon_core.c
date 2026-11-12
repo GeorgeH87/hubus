@@ -1870,17 +1870,23 @@ static void test_a_number_has_a_range_and_goes_to_on_set(void)
 
 static sim_dev_t *strip;
 
-static void strip_setup(void)
+/* The strip of HWID variant `variant` (2: with firmware update), with both of its modules. */
+static void strip_setup_variant(uint8_t variant)
 {
-    static const hubus_module_t *const modules[] = {&hubusd_ledstrip_module};
+    static const hubus_module_t *const modules[] = {&hubusd_ledstrip_module, &hubusd_ledstrip_update_module};
 
     load("mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 0\n  scan_interval_s: 0\n  readback: none\nslaves:\n  - mcid: 3\n");
-    dev_force_variant = 1;
+    dev_force_variant = variant;
     strip = add_dev(3, 0x84);
     start_daemon();
-    hubusd_set_modules(dmn, modules, 1);
+    hubusd_set_modules(dmn, modules, 2);
     settle();
     PUMP_UNTIL(last("hubus/slave/3/info") != NULL);
+}
+
+static void strip_setup(void)
+{
+    strip_setup_variant(1);
 }
 
 /* Steps until the slave has got `n` commands. A SHOW makes it blind for 4 ms, so the clock has to go on. */
@@ -1903,6 +1909,19 @@ static void test_the_strip_offers_a_lamp_an_animation_and_a_button(void)
     assert_contains("homeassistant/text/hubus_3_animation/config", "\"command_topic\":\"hubus/slave/3/animation/set\"");
     assert_contains("homeassistant/text/hubus_3_animation/config", "\"max\":95");
     assert_contains("homeassistant/binary_sensor/hubus_3_button/config", "\"state_topic\":\"hubus/slave/3/button/state\"");
+}
+
+/* Variant 2 is the same strip with firmware update: its own module, which states the update, and the same entities. */
+static void test_the_strip_with_update_gets_its_own_module(void)
+{
+    strip_setup_variant(2);
+    assert_contains("hubus/slave/3/info", "\"module\":\"ledstrip-update\"");
+    assert_contains("hubus/slave/3/info", "\"update\":true");
+    assert_contains("homeassistant/light/hubus_3_lamp/config", "\"rgb_command_topic\":\"hubus/slave/3/lamp/rgb/set\"");
+    say("hubus/slave/3/lamp/rgb/set", "255,10,20");
+    strip_until_commands(2);
+    TEST_ASSERT_EQUAL_HEX8(OP_FILL, strip->ops[0]);
+    TEST_ASSERT_EQUAL_HEX8(OP_SHOW, strip->ops[1]);
 }
 
 static void test_the_lamp_fills_the_strip_with_its_colour(void)
@@ -2528,6 +2547,7 @@ int main(void)
     RUN_TEST(test_discovery_of_lights_and_switches_without_commands);
     RUN_TEST(test_a_number_has_a_range_and_goes_to_on_set);
     RUN_TEST(test_the_strip_offers_a_lamp_an_animation_and_a_button);
+    RUN_TEST(test_the_strip_with_update_gets_its_own_module);
     RUN_TEST(test_the_lamp_fills_the_strip_with_its_colour);
     RUN_TEST(test_a_formula_is_compiled_and_sent_as_a_program);
     RUN_TEST(test_a_long_program_goes_in_pieces);

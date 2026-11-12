@@ -15,6 +15,7 @@ const hubus_module_t *const *hubusd_builtin_modules(size_t *count);
 
 /* The LED strip (docs/example-ledstrip.md): built in, and the one with functions (hubusd_ledstrip.c). */
 extern const hubus_module_t hubusd_ledstrip_module;
+extern const hubus_module_t hubusd_ledstrip_update_module; /* the same with firmware update (HWID variant 2) */
 
 /* The HC-SR04 distance sensor with a trigger distance (docs/example-distance.md), with functions (hubusd_distance.c). */
 extern const hubus_module_t hubusd_distance_module;

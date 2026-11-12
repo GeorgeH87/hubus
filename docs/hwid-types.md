@@ -11,6 +11,7 @@ The central table of the types in the hardware identifier ([§4.7](spec/04-frame
 | `0x83` | `1` | Temperature sensor that reports changes | `examples/slave-sensor` | `temperature` |
 | `0x83` | `2` | Temperature sensor that is only read | `examples/slave-sensor-passive` | `temperature-passive` |
 | `0x84` | `1` | LED strip and push button | `examples/slave-ledstrip` | `ledstrip` |
+| `0x84` | `2` | The same with firmware update | `example_ledstrip_update` | `ledstrip-update` |
 | `0x85` | `1` | Dimmer: only the [example of a plugin](master-library.md#loading-plugins), no firmware in this repository | – | `dimmer` |
 | `0x86` | `1` | Temperature and humidity sensor (DHT11), read only, with firmware update | `examples/slave-dht11` | `dht11` |
 | `0x87` | `1` | Distance sensor (HC-SR04) with a trigger distance, with firmware update | `examples/slave-distance` | `distance` |

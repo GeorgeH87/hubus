@@ -75,6 +75,11 @@ hubus_fw_example(ex_dht11           slave-dht11/dht11_example.c                 
 hubus_fw_example(ex_distance        slave-distance/distance_example.c              1      1
                  HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_FW_UPDATER_ADDR})
 
+# The LED strip (MCID 11) with update support, loaded while an animation runs.
+hubus_fw_example(ex_ledstrip_update slave-ledstrip/ledstrip_example.c              1      1
+                 HUBUS_TX_BUF_SIZE=3 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_FW_UPDATER_ADDR})
+target_sources(ex_ledstrip_update PRIVATE ${HUBUS_ROOT}/examples/slave-ledstrip/ledvm.c)
+
 # hubus_fw_updater(name mcid)
 function(hubus_fw_updater name mcid)
     add_executable(${name} ${HUBUS_ROOT}/updater/hubus_updater_avr.c ${HUBUS_ROOT}/updater/hubus_updater.c

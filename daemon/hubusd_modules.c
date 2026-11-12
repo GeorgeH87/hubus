@@ -189,7 +189,7 @@ static const hubus_module_t updater = {
 };
 
 static const hubus_module_t *const modules[] = {
-    &relay, &relay_simple, &switch_module, &switch_update, &temperature, &temperature_passive, &hubusd_ledstrip_module, &dht11, &motion, &hubusd_distance_module, &updater,
+    &relay, &relay_simple, &switch_module, &switch_update, &temperature, &temperature_passive, &hubusd_ledstrip_module, &hubusd_ledstrip_update_module, &dht11, &motion, &hubusd_distance_module, &updater,
 };
 
 const hubus_module_t *const *hubusd_builtin_modules(size_t *count)
