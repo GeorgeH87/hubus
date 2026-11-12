@@ -30,13 +30,23 @@
 
 /* ---- flash layout ------------------------------------------------------------------------------------------- */
 
-/* Byte address of the updater; the application area ends there. */
+/*
+ * Two layouts:
+ *
+ *   classic tinyAVR      application area from 0 up to the updater at the end of flash (HUBUS_UPD_ADDR), with the
+ *                        reset vector rule
+ *   tinyAVR 0/1/2-series updater in the boot section at 0 (HUBUS_UPD_ADDR 0), application area from the end of the
+ *                        boot section (HUBUS_UPD_APP_START, the BOOTEND fuse times 256) to the end of flash
+ *                        (HUBUS_UPD_APP_SIZE)
+ */
 #ifndef HUBUS_UPD_ADDR
 #error "Define HUBUS_UPD_ADDR, the byte address of the updater in flash"
 #endif
 #ifndef HUBUS_UPD_PAGE_SIZE
-#ifdef SPM_PAGESIZE
+#if defined(SPM_PAGESIZE)
 #define HUBUS_UPD_PAGE_SIZE SPM_PAGESIZE
+#elif defined(PROGMEM_PAGE_SIZE)
+#define HUBUS_UPD_PAGE_SIZE PROGMEM_PAGE_SIZE /* tinyAVR 0/1/2-series */
 #else
 #define HUBUS_UPD_PAGE_SIZE 64u
 #endif
@@ -44,19 +54,29 @@
 #ifndef HUBUS_UPD_APP_START
 #define HUBUS_UPD_APP_START 0u
 #endif
-/* Application area including the info page, its last page. */
-#define HUBUS_UPD_APP_SIZE ((uint16_t)(HUBUS_UPD_ADDR - HUBUS_UPD_APP_START))
-#define HUBUS_UPD_INFO_ADDR ((uint16_t)(HUBUS_UPD_APP_START + HUBUS_UPD_APP_SIZE - HUBUS_UPD_PAGE_SIZE))
-/* Time the master waits after UPDATE_WRITE: page erase and page write, 4.5 ms each on classic tinyAVR. */
+/* Application area including the info page, its last page. By default it ends at the updater. */
+#ifndef HUBUS_UPD_APP_SIZE
+#define HUBUS_UPD_APP_SIZE (HUBUS_UPD_ADDR - HUBUS_UPD_APP_START) /* no cast: also used in #if */
+#endif
+/* unsigned: the area may end at 32 KB, beyond the 16-bit int of AVR */
+#define HUBUS_UPD_INFO_ADDR \
+    ((uint16_t)((uint16_t)HUBUS_UPD_APP_START + (uint16_t)HUBUS_UPD_APP_SIZE - (uint16_t)HUBUS_UPD_PAGE_SIZE))
+/* Time the master waits after UPDATE_WRITE: page erase and page write, 4.5 ms each on classic tinyAVR, together
+ * about 4 ms on the tinyAVR 0/1/2-series. */
 #ifndef HUBUS_UPD_WRITE_MS
 #define HUBUS_UPD_WRITE_MS 10u
 #endif
 #define HUBUS_UPD_VERSION 1u
 
 /* Classic tinyAVR: the vector table at address 0 belongs to the application, and its reset vector jumps to the
- * updater (12-bit RJMP; wraps around on 8 KB devices). */
+ * updater (12-bit RJMP; wraps around on 8 KB devices). An application area further up has its own vector table, and
+ * the device starts in the updater by itself (the boot section of the tinyAVR 0/1/2-series). */
 #ifndef HUBUS_UPD_FLAGS
+#if HUBUS_UPD_APP_START == 0
 #define HUBUS_UPD_FLAGS HUBUS_UPD_FLAG_RESET_VECTOR
+#else
+#define HUBUS_UPD_FLAGS 0u
+#endif
 #endif
 #define HUBUS_UPD_RESET_RJMP ((uint16_t)(0xC000u | ((HUBUS_UPD_ADDR / 2u - 1u) & 0x0FFFu)))
 
@@ -70,8 +90,18 @@
 #if (HUBUS_UPD_FLAGS & HUBUS_UPD_FLAG_RESET_VECTOR) && HUBUS_UPD_APP_START != 0
 #error "The reset vector rule needs the application area at address 0"
 #endif
-#if HUBUS_UPD_ADDR % HUBUS_UPD_PAGE_SIZE || HUBUS_UPD_APP_START % HUBUS_UPD_PAGE_SIZE
-#error "Updater and application area must start on a page boundary"
+#if HUBUS_UPD_ADDR % HUBUS_UPD_PAGE_SIZE || HUBUS_UPD_APP_START % HUBUS_UPD_PAGE_SIZE || \
+    HUBUS_UPD_APP_SIZE % HUBUS_UPD_PAGE_SIZE
+#error "Updater and application area must start on a page boundary, and the area must be whole pages"
+#endif
+#if HUBUS_UPD_APP_SIZE < 2 * HUBUS_UPD_PAGE_SIZE
+#error "The application area needs at least one page and the info page"
+#endif
+#if HUBUS_UPD_ADDR >= HUBUS_UPD_APP_START && HUBUS_UPD_ADDR < HUBUS_UPD_APP_START + HUBUS_UPD_APP_SIZE
+#error "The updater must not lie inside the application area"
+#endif
+#if HUBUS_UPD_APP_START + HUBUS_UPD_APP_SIZE > 65536
+#error "The application area must end within the first 64 KB of flash"
 #endif
 
 /* Device signature for the master's image check. */

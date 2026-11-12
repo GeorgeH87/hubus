@@ -184,7 +184,7 @@ The updater is a slave like any other: same MCID, same protocol, no event buffer
 - Every other slave ignores these opcodes as unknown reserved opcodes ([§4.4](04-frames.md#44-command-opcodes)), so a misdirected command does no harm. An application without update support ignores `UPDATE_ENTER`; the updater ignores `0x10..0xFF`, and one without flag bit 1 ignores `UPDATE_SET_MCID`.
 - The exact addressing and the key keep a broadcast or a stray frame from switching slaves into their updaters. For `UPDATE_SET_MCID` the exact addressing keeps a group from getting one MCID for several slaves.
 - `UPDATE_WRITE` checks before writing: `addr` is the start of a page inside the application area, the CRC-16 ([below](#integrity)) of the whole page buffer equals `crc`, and with the reset vector rule the page at address 0 starts with the required jump. Otherwise nothing is written.
-- A flash write halts the CPU on classic tinyAVR devices. The updater writes only after the STOP, and the master keeps the bus quiet for the write time the updater announces: no clock, no transaction.
+- A flash write halts the CPU on tinyAVR devices, classic and 0/1/2-series. The updater writes only after the STOP, and the master keeps the bus quiet for the write time the updater announces: no clock, no transaction.
 
 ### Updater Information
 
@@ -218,6 +218,8 @@ The last page of the application area describes the application; the rest of the
 At every reset the updater checks the info page: the magic bytes, a length that fits in front of the info page, an entry inside the application, and the CRC-16 over the stored application. If all of it holds, it jumps to the entry; otherwise it stays and waits for the master. An application that is incomplete or damaged therefore never starts, and the slave always remains reachable through its updater.
 
 **Reset vector rule** (flag bit 0). On classic tinyAVR the interrupt vector table at address 0 belongs to the application, and the device always starts at address 0. The first word of the application area is therefore a relative jump (`RJMP`) to the updater, and the application's own reset target goes into the info page. The master replaces the first word of the image and computes the entry; the updater refuses a first page without this jump.
+
+**Boot section** (flag bit 0 clear). A device that starts in a protected boot section, such as the tinyAVR 0/1/2-series, carries the updater there, at the start of flash. The application area follows it and begins with the application's own vector table; the entry in the info page is the start of the area. The image is used as it is, and the master checks only its size against the area. An image is linked for the address of its area, so an image for another layout must not be loaded; the master can only check that where the image carries its address, as a HEX file does.
 
 ### Procedure
 

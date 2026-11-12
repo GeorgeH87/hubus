@@ -271,19 +271,23 @@ int main(int argc, char **argv)
         hubus_update_result_t res;
         FILE *fp = fopen(argv[i + 2], "rb");
         size_t n = fp ? fread(text, 1, sizeof text, fp) : 0;
-        uint32_t len;
+        uint32_t first, len;
 
         if (fp) {
             fclose(fp);
         }
-        if (!fp || n == sizeof text || hubus_ihex_parse(text, n, image, sizeof image, &len) != 0) {
+        if (!fp || n == sizeof text || hubus_ihex_parse(text, n, image, sizeof image, &first, &len) != 0) {
             fprintf(stderr, "update: cannot read Intel HEX file %s\n", argv[i + 2]);
             rc = 1;
             goto done;
         }
+        /* The file holds flash addresses; the image starts where the application is linked, which the updater checks
+         * against its application area (0 on classic tinyAVR, behind the boot section on the 0/1/2-series). */
         memset(&img, 0, sizeof img);
-        img.data = image;
-        img.len = len;
+        img.data = image + first;
+        img.len = len - first;
+        img.start = (uint16_t)first;
+        img.check_start = 1;
         img.modules = modules.module;
         img.n_modules = modules.n;
         s = hubus_master_update(&master, (uint8_t)number(argv[i + 1]), &img, print_progress, NULL, &res);

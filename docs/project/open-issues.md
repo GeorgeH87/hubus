@@ -30,7 +30,8 @@ What is still open. The specification is complete except for values that can onl
 ## Firmware Update
 
 - **Status:** implemented for classic tinyAVR, tested in the bus simulation ([§6.8](../spec/06-operation.md#68-firmware-update)) and on a simulated ATtiny85 (`simavr`, [AVR tests](../development.md#avr-tests)); not yet run on hardware.
-- **Open:** a hardware test (self-programming with `SELFPRGEN`, the hand-over from the application, the write time, the change of the MCID and its interruption); an updater for the tinyAVR 0/1/2-series, whose protected boot section at the start of flash changes the layout (application area after `BOOTEND`, no reset vector rule), with or without `UPDATE_SET_MCID`.
+- **tinyAVR 0/1/2-series:** implemented (`updater/hubus_updater_modern.c`): the updater in the boot section at 0, the application area behind it, no reset vector rule, with `UPDATE_SET_MCID`. Built and size-checked for every device of 8 KB and more; the protocol logic tested on the simulated bus with this layout. `simavr` has no cores for these devices, so the platform part has not run anywhere yet ([slave library](../slave-library.md#tinyavr-012-series)).
+- **Open:** hardware tests on both families: self-programming (`SELFPRGEN` on the ATtiny85, `NVMCTRL` from the boot section on the 0/1/2-series), the hand-over from the application, the write time, the change of the MCID and its interruption; on the 0/1/2-series also the start code without a C runtime and the clock of the updater (10 MHz from the 20 MHz oscillator, at 3.3 V within the limit of 2.7 V, while brown-out detection is at 2.6 V).
 
 ## MCID Assignment
 

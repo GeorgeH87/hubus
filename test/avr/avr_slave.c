@@ -336,7 +336,7 @@ uint32_t avr_read_hex(const char *path, uint8_t *flash, uint32_t size)
     n = fread(text, 1, sizeof text, f);
     fclose(f);
     TEST_ASSERT_TRUE_MESSAGE(n < sizeof text, path);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubus_ihex_parse(text, n, flash, size, &len), path);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubus_ihex_parse(text, n, flash, size, NULL, &len), path);
     return len;
 }
 

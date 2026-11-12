@@ -83,11 +83,15 @@ hubus_core_variant_test(test_slave_command_only test_slave_parts.c HUBUS_ENABLE_
 hubus_core_variant_test(test_slave_serial test_slave_serial.c HUBUS_ENABLE_SERIAL=1)
 
 # Firmware update end to end: master library, updater logic, and an application core with update support on one
-# simulated bus. The core and the master are compiled again for the updater configuration. Twice: with the change of
-# the MCID in the updater (UPDATE_SET_MCID) and without.
-foreach(variant "test_update;1" "test_update_no_set_mcid;0")
+# simulated bus. The core and the master are compiled again for the updater configuration. Three times: with the change
+# of the MCID in the updater (UPDATE_SET_MCID) and without, and with the layout of the tinyAVR 0/1/2-series (ATtiny1614:
+# updater in a boot section of 2 KB, application area behind it).
+set(layout_classic HUBUS_UPD_ADDR=0x1800)
+set(layout_boot HUBUS_UPD_ADDR=0 HUBUS_UPD_APP_START=0x800 HUBUS_UPD_APP_SIZE=0x3800 "HUBUS_UPD_SIGNATURE=0x1E,0x94,0x22")
+foreach(variant "test_update;1;classic" "test_update_no_set_mcid;0;classic" "test_update_boot_section;1;boot")
     list(GET variant 0 name)
     list(GET variant 1 set_mcid)
+    list(GET variant 2 layout)
     add_executable(${name} test_update.c support/update_app_core.c sim/hubus_sim.c
         ${HUBUS_CORE_SOURCES_ABS} ${PROJECT_SOURCE_DIR}/updater/hubus_updater.c
         ${PROJECT_SOURCE_DIR}/master/hubus_master.c ${PROJECT_SOURCE_DIR}/master/hubus_update.c
@@ -95,7 +99,7 @@ foreach(variant "test_update;1" "test_update_no_set_mcid;0")
     target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/master
         ${PROJECT_SOURCE_DIR}/updater sim support)
     target_compile_definitions(${name} PRIVATE
-        HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_ADDR=0x1800 HUBUS_UPD_SET_MCID=${set_mcid})
+        HUBUS_ENABLE_EVENTS=0 HUBUS_ENABLE_STATE=1 HUBUS_UPDATER=1 HUBUS_UPD_SET_MCID=${set_mcid} ${layout_${layout}})
     target_link_libraries(${name} PRIVATE unity)
     target_compile_options(${name} PRIVATE ${HUBUS_TEST_WARNINGS})
     add_test(NAME ${name} COMMAND ${name})

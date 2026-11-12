@@ -98,6 +98,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [ ] Determine concrete timing values and the pull-up value; update [§1.4](docs/spec/01-physical-layer.md#14-timing-parameters) ([H3](docs/project/open-issues.md#h3-concrete-timing-values)).
 - [ ] Multi-node test with mixed device families (`v0-multi` milestone).
 - [ ] Firmware update on an ATtiny85: install the updater, load an application over the bus, interrupt an update ([open issues](docs/project/open-issues.md#firmware-update)).
+- [ ] Firmware update on an ATtiny1614 (UPDI): fuses `BOOTEND`/`APPEND`, the updater in the boot section, an application behind it, the hand-over and the clock of the updater, an interrupted update, `UPDATE_SET_MCID` ([slave library](docs/slave-library.md#tinyavr-012-series)).
 - [ ] Optional: sigrok protocol decoder for HUBUS.
 
 ## 10. Master Daemon (`hubusd`, MQTT)
@@ -120,7 +121,7 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] Updater for classic tinyAVR (ATtiny85, 2 KB at the end of flash).
 - [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of the master example.
 - [x] Bus simulation test with bit errors and an interrupted update.
-- [ ] Updater for the tinyAVR 0/1/2-series (protected boot section).
+- [x] Updater for the tinyAVR 0/1/2-series (`updater/hubus_updater_modern.c`): the boot section at 0 (`HUBUS_UPDATER_BOOT_SIZE`, default 2 KB, fuse `BOOTEND`), the application area behind it, no reset vector rule; flash and EEPROM through `NVMCTRL`, no C runtime, with `UPDATE_SET_MCID` (2010 of 2048 bytes on the ATtiny1614, 2020 on the ATtiny3216). Built and size-checked for every 0/1/2 device of 8 KB and more, with an application linked behind it (`hubus_size_reference_update`); its layout on the simulated bus (`test_update_boot_section`). The master checks the start of a HEX image against the application area (`HUBUS_UPD_REASON_WRONG_START`). Not run on hardware or a simulator (`simavr` has no 0/1/2 cores), [slave library](docs/slave-library.md#tinyavr-012-series).
 - [x] Updates from hubusd: the image comes with the module, MQTT only triggers it ([hubusd](docs/daemon.md#firmware-updates)). The bus stands still meanwhile; a version in steps, so that other slaves are served, is open.
 
 ## 12. Master Modules and Hardware Identifier
@@ -164,7 +165,7 @@ Change over the bus (update mode):
 - [x] Specification [§6.8](docs/spec/06-operation.md#mcid): `UPDATE_SET_MCID` (`0x05`, `mcid ~mcid`, exact addressing only), flag bit 1 in the updater information. Takes effect at once (from the next transaction), answers nothing, leaves the state unchanged; the master asks the new MCID.
 - [x] The state after the change, documented: the updater keeps the MCID in the last EEPROM byte; an application with its own source ignores it, so the master checks under which MCID the application answers and undoes the change otherwise.
 - [x] Updater: `HUBUS_UPD_SET_MCID` (CMake `HUBUS_UPDATER_SET_MCID`, on for the ATtiny85 reference updater), range check, `eeprom_update_byte` through the platform function `hubus_upd_store_mcid()`, the new MCID in the running core. 60 bytes: 2040 instead of 1980 of 2048; the build also produces `hubus_updater_no_set_mcid` and checks both.
-- [x] The option is in the hardware-independent part of the updater (`updater/hubus_updater.c`); another updater only provides `hubus_upd_store_mcid()`, and the flag tells the master. The updater for the 0/1/2-series is still open (section 11).
+- [x] The option is in the hardware-independent part of the updater (`updater/hubus_updater.c`); another updater only provides `hubus_upd_store_mcid()`, and the flag tells the master. The updater for the 0/1/2-series has it too (section 11).
 - [x] Master library: `hubus_master_set_mcid(m, mcid, new_mcid, modules, n_modules, &res)`: refuses a taken MCID, enters the update mode, repeats the opcode until the updater answers to the new MCID, leaves the update mode under the new one; reasons `MCID_TAKEN`, `NO_SET_MCID`, `MCID_NOT_SET`, `MCID_NOT_KEPT` (with the change undone), `NO_SUPPORT` from the module.
 - [x] Master example: command `mcid <old> <new>`. Compiles; not run on a Raspberry Pi.
 - [x] hubusd: `hubus/slave/<n>/mcid` with the new MCID, result on `hubus/master/mcid`. It does not write its configuration: a configured new MCID goes into operation with its module, another one is reported as unknown, and the log says what the configuration has to follow; the old MCID goes offline.

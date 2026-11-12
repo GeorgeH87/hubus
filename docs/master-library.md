@@ -137,10 +137,15 @@ The master example (`examples/master`) warns after a `scan` when a slave slows d
 |---|---|
 | `hubus_master_update(m, mcid, &img, progress, ctx, &res)` | Switches the slave to its updater (`UPDATE_ENTER`, unless the updater already runs), checks the image against the updater information, invalidates the old application, writes every page with a readback of the result, writes the info page, and starts the new application. Blocks for the whole update, about 10 s for 6 KB with the default timing; nothing else runs on the bus meanwhile. Returns `HUBUS_OK` once the new application answers. |
 | `hubus_master_set_mcid(m, mcid, new_mcid, modules, n_modules, &res)` | Gives the slave another MCID through its updater (`UPDATE_SET_MCID`, [§6.8](spec/06-operation.md#mcid)): refuses a new MCID that already answers, switches the slave to its updater, sends the new MCID until the updater answers to it, and starts the application again, which then answers under the new MCID if it takes the stored one. A slave that waited in its updater stays there, under the new MCID. `modules` may be `NULL`, as for the update. Takes about a second with the default timing. |
-| `hubus_ihex_parse(text, len, out, size, &img_len)` | Reads an Intel HEX file (`avr-objcopy -O ihex`) into `out`, filled with `FF` where the file has no data; `img_len` is one past the highest address with data. Returns 0, or -1 for a malformed file or a bad checksum. |
+| `hubus_ihex_parse(text, len, out, size, &first, &end)` | Reads an Intel HEX file (`avr-objcopy -O ihex`) into `out` at the addresses of the file, filled with `FF` where the file has no data; `first` (may be `NULL`) is the lowest address with data, `end` one past the highest. Returns 0, or -1 for a malformed file or a bad checksum. The image of an application is then `out + first`, `end - first` bytes, linked for `first`. |
 | `hubus_update_reason_str(reason)` | Text of a failure reason. |
 
-`hubus_update_image_t` holds `data` and `len` (the image from the start of the application area; for the ATtiny85 the HEX file of the application as built), `signature` (three bytes such as `1E 93 0B`; all zero skips the check), and optionally `modules` and `n_modules`, the modules of the master. `progress(ctx, done, total)` is called after every page and may be `NULL`.
+`hubus_update_image_t` holds:
+
+- `data` and `len`: the image from the start of the application area, which is 0 on the ATtiny85 and the end of the boot section on the tinyAVR 0/1/2-series ([slave library](slave-library.md#tinyavr-012-series)).
+- `signature`: three bytes such as `1E 93 0B`; all zero skips the check.
+- optionally `start` with `check_start`: the address the image is linked for, from `hubus_ihex_parse()`. An image for another application area is refused before anything is written: its code would run at the wrong addresses. A module image has no such address; for it the signature is the check.
+- optionally `modules` and `n_modules`: the modules of the master. `progress(ctx, done, total)` is called after every page and may be `NULL`.
 
 `hubus_update_result_t` tells what happened: `reason` (below), `page` (the page that failed), `last_result` (the updater's last write result), `pages` (pages written, including the invalidated and the final info page), and `retries` (repeated pages). A page is tried `retry_budget + 1` times, at least three.
 
@@ -152,6 +157,7 @@ The master example (`examples/master`) warns after a `scan` when a slave slows d
 | `HUBUS_UPD_REASON_SIGNATURE` | The device signature differs from `img.signature`. |
 | `HUBUS_UPD_REASON_TOO_LARGE` | The image is empty or does not fit in front of the info page. |
 | `HUBUS_UPD_REASON_BAD_IMAGE` | With the reset vector rule: the image does not start with `RJMP`. |
+| `HUBUS_UPD_REASON_WRONG_START` | With `img.check_start`: the image is linked for another application area than the one the updater announces, for example an ATtiny85 image for a device with a boot section. Nothing was written; the slave waits in its updater. |
 | `HUBUS_UPD_REASON_WRITE` | A page failed every attempt. The slave stays in its updater; the update can be repeated. |
 | `HUBUS_UPD_REASON_NOT_STARTED` | After `UPDATE_LEAVE` the updater answered again: the application did not check out. |
 | `HUBUS_UPD_REASON_MCID_TAKEN` | `set_mcid`: another slave answers to the new MCID; nothing was sent. |
@@ -159,7 +165,7 @@ The master example (`examples/master`) warns after a `scan` when a slave slows d
 | `HUBUS_UPD_REASON_MCID_NOT_SET` | `set_mcid`: the updater did not answer to the new MCID within the attempts. |
 | `HUBUS_UPD_REASON_MCID_NOT_KEPT` | `set_mcid`: the application answered under the old MCID, it takes its MCID from elsewhere (pins, a constant). The master undid the change with `UPDATE_ENTER` and `UPDATE_LEAVE`, so that the updater keeps the MCID of the application. |
 
-These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are; `set_mcid` returns `HUBUS_ERR_ARG` for an MCID outside `1..63` or a new MCID equal to the old. The command line example has `hubus_master_example update <mcid> <file.hex>` and `hubus_master_example mcid <mcid> <new>`; with `--modules <dir>` it loads the plugins of that directory, prints the module of a slave for `scan` and `info`, and hands the modules to the update and the change of the MCID.
+These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are; `set_mcid` returns `HUBUS_ERR_ARG` for an MCID outside `1..63` or a new MCID equal to the old. The command line example has `hubus_master_example update <mcid> <file.hex>` (which checks the start of the file against the application area) and `hubus_master_example mcid <mcid> <new>`; with `--modules <dir>` it loads the plugins of that directory, prints the module of a slave for `scan` and `info`, and hands the modules to the update and the change of the MCID.
 
 ## Master Modules
 

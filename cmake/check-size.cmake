@@ -1,7 +1,9 @@
 # Prints the size of an AVR ELF and fails if it exceeds the budget.
-# Usage: cmake -DSIZE_TOOL=avr-size -DELF=app.elf -DMCU=attiny85 -DMAX_FLASH=n -DMAX_RAM=n [-DWARN_ONLY=ON] -P check-size.cmake
+# Usage: cmake -DSIZE_TOOL=avr-size -DELF=app.elf -DMCU=attiny85 -DMAX_FLASH=n -DMAX_RAM=n [-DWARN_ONLY=ON]
+#        [-DENFORCE=ON] -P check-size.cmake
 #
-# The budget only applies to the ATtiny85 reference build; other devices are
+# The budget applies to the ATtiny85 reference build, and with ENFORCE to any
+# device (a limit of the layout, such as the boot section); other devices are
 # reported but not limited. With WARN_ONLY an exceeded budget is a warning.
 
 execute_process(COMMAND ${SIZE_TOOL} --format=berkeley ${ELF}
@@ -21,7 +23,7 @@ math(EXPR ram "${data} + ${bss}")
 
 message(STATUS "${MCU}: flash ${flash} bytes, RAM ${ram} bytes (data ${data} + bss ${bss})")
 
-if(MCU STREQUAL "attiny85")
+if(MCU STREQUAL "attiny85" OR ENFORCE)
     if(WARN_ONLY)
         set(level WARNING)
     else()
@@ -29,14 +31,14 @@ if(MCU STREQUAL "attiny85")
     endif()
     set(ok TRUE)
     if(flash GREATER MAX_FLASH)
-        message(${level} "ATtiny85 flash budget exceeded: ${flash} > ${MAX_FLASH} bytes")
+        message(${level} "${MCU} flash budget exceeded: ${flash} > ${MAX_FLASH} bytes")
         set(ok FALSE)
     endif()
     if(ram GREATER MAX_RAM)
-        message(${level} "ATtiny85 RAM budget exceeded: ${ram} > ${MAX_RAM} bytes")
+        message(${level} "${MCU} RAM budget exceeded: ${ram} > ${MAX_RAM} bytes")
         set(ok FALSE)
     endif()
     if(ok)
-        message(STATUS "ATtiny85 budget ok (flash <= ${MAX_FLASH}, RAM <= ${MAX_RAM})")
+        message(STATUS "${MCU} budget ok (flash <= ${MAX_FLASH}, RAM <= ${MAX_RAM})")
     endif()
 endif()

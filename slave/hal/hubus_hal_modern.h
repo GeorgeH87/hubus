@@ -60,7 +60,32 @@ static inline void hubus_hal_irq_enable(void)
 }
 
 #if HUBUS_ENABLE_UPDATE
-#error "HUBUS_ENABLE_UPDATE: no updater for the tinyAVR 0/1/2-series yet (classic tinyAVR only)"
+#ifndef HUBUS_UPDATER_ADDR
+#define HUBUS_UPDATER_ADDR 0 /* the boot section (updater/hubus_updater_modern.c) */
+#endif
+#if HUBUS_UPDATER_ADDR != 0
+#error "On the tinyAVR 0/1/2-series the updater lies in the boot section at 0"
+#endif
+#include <avr/pgmspace.h>
+
+#include "hubus_proto.h"
+
+/*
+ * Hands over to the updater (docs/spec/06-operation.md section 6.8): key and MCID in GPIOR0 and GPIOR1, then a jump
+ * to address 0 with interrupts disabled. The updater sets up its own stack. Returns only if no updater is installed
+ * (erased flash at 0, a device without a boot section). The application must be linked to the end of the boot
+ * section (-Wl,--section-start=.text=<BOOTEND * 256>).
+ */
+static inline void hubus_hal_enter_updater(uint8_t mcid)
+{
+    if (pgm_read_word(0) == 0xFFFFu) {
+        return;
+    }
+    cli();
+    GPIOR0 = HUBUS_UPDATE_KEY0;
+    GPIOR1 = mcid;
+    __asm__ volatile("ijmp" ::"z"(0));
+}
 #endif
 
 #define HUBUS_ATOMIC_BEGIN()         \

@@ -46,6 +46,7 @@ const char *hubus_update_reason_str(hubus_update_reason_t r)
     case HUBUS_UPD_REASON_NO_SET_MCID: return "the updater of this slave cannot change its MCID";
     case HUBUS_UPD_REASON_MCID_NOT_SET: return "the updater did not take the new MCID";
     case HUBUS_UPD_REASON_MCID_NOT_KEPT: return "the application takes its MCID from elsewhere; the old MCID was restored";
+    case HUBUS_UPD_REASON_WRONG_START: return "image is linked for another application area";
     }
     return "unknown";
 }
@@ -311,6 +312,9 @@ hubus_status_t hubus_master_update(hubus_master_t *m, uint8_t mcid, const hubus_
     if (r != HUBUS_OK) {
         return r;
     }
+    if (img->check_start && img->start != u.app_start) {
+        return fail(&u, HUBUS_UPD_REASON_WRONG_START);
+    }
     if (img->len == 0u || img->len > (uint32_t)u.app_size - u.page) {
         return fail(&u, HUBUS_UPD_REASON_TOO_LARGE);
     }
@@ -505,14 +509,19 @@ static int hex_byte(const char *s)
     return lo < 0 ? -1 : hi << 4 | lo;
 }
 
-int hubus_ihex_parse(const char *text, size_t text_len, uint8_t *out, uint32_t out_size, uint32_t *len)
+int hubus_ihex_parse(const char *text, size_t text_len, uint8_t *out, uint32_t out_size, uint32_t *first,
+                     uint32_t *len)
 {
     const char *p = text, *end = text + text_len;
     uint32_t base = 0;
+    uint32_t lowest = UINT32_MAX;
     uint8_t rec[4 + 255 + 1];
 
     memset(out, 0xFF, out_size);
     *len = 0;
+    if (first) {
+        *first = 0;
+    }
     while (p < end) {
         int n, i, b;
         uint8_t sum = 0;
@@ -552,6 +561,12 @@ int hubus_ihex_parse(const char *text, size_t text_len, uint8_t *out, uint32_t o
             memcpy(&out[addr], &rec[4], (size_t)n);
             if (addr + (uint32_t)n > *len) {
                 *len = addr + (uint32_t)n;
+            }
+            if (n && addr < lowest) {
+                lowest = addr;
+                if (first) {
+                    *first = addr;
+                }
             }
             break;
         case 0x01:

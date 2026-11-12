@@ -21,9 +21,15 @@
 #include "hubus_module.h"
 
 typedef struct {
-    const uint8_t *data; /* application image, from the start of the application area (address 0 on classic tinyAVR) */
+    /* application image, from the start of the application area: address 0 on classic tinyAVR, the end of the boot
+     * section on the tinyAVR 0/1/2-series */
+    const uint8_t *data;
     uint32_t len;
     uint8_t signature[3]; /* expected device signature; all zero: not checked */
+    /* With check_start: the flash address the image is linked for (from hubus_ihex_parse()). An image for another
+     * application area is refused (HUBUS_UPD_REASON_WRONG_START): its code would run at the wrong addresses. */
+    uint8_t check_start;
+    uint16_t start;
     /* The modules of the master; may be NULL. With them an application whose module has no update support is told apart from
      * a slave without an updater, and gets no UPDATE_ENTER. */
     const hubus_module_t *const *modules;
@@ -43,7 +49,8 @@ typedef enum {
     HUBUS_UPD_REASON_MCID_TAKEN,    /* set_mcid: another slave answers to the new MCID already; nothing was sent */
     HUBUS_UPD_REASON_NO_SET_MCID,   /* set_mcid: the updater does not take UPDATE_SET_MCID; the slave is left as it was */
     HUBUS_UPD_REASON_MCID_NOT_SET,  /* set_mcid: the updater did not answer to the new MCID within the attempts */
-    HUBUS_UPD_REASON_MCID_NOT_KEPT  /* set_mcid: the application takes its MCID from elsewhere; the old one was restored */
+    HUBUS_UPD_REASON_MCID_NOT_KEPT, /* set_mcid: the application takes its MCID from elsewhere; the old one was restored */
+    HUBUS_UPD_REASON_WRONG_START    /* the image is linked for another application area (check_start); nothing written */
 } hubus_update_reason_t;
 
 typedef struct {
@@ -86,10 +93,15 @@ hubus_status_t hubus_master_set_mcid(hubus_master_t *m, uint8_t mcid, uint8_t ne
 
 /*
  * Parses Intel HEX text (`text`, `text_len` bytes) into `out` (`out_size` bytes, filled with 0xFF where the file
- * has no data). `*len` gets one past the highest address with data. Returns 0, or -1 for a malformed file, a bad
- * checksum, or data beyond `out_size`. Record types 00 (data), 01 (end), 02 and 04 (address extensions) are
- * understood, 03 and 05 (start address) ignored.
+ * has no data), at the addresses of the file. `*first` (may be NULL) gets the lowest address with data, 0 for a file
+ * without data, and `*len` one past the highest. Returns 0, or -1 for a malformed file, a bad checksum, or data beyond
+ * `out_size`. Record types 00 (data), 01 (end), 02 and 04 (address extensions) are understood, 03 and 05 (start
+ * address) ignored.
+ *
+ * The image of an application then starts at `out + *first` with `*len - *first` bytes; with `start = *first` and
+ * `check_start` the master checks that it is linked for the application area of the slave.
  */
-int hubus_ihex_parse(const char *text, size_t text_len, uint8_t *out, uint32_t out_size, uint32_t *len);
+int hubus_ihex_parse(const char *text, size_t text_len, uint8_t *out, uint32_t out_size, uint32_t *first,
+                     uint32_t *len);
 
 #endif /* HUBUS_UPDATE_H */

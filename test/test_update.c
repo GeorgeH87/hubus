@@ -6,6 +6,9 @@
  *
  * The change of the MCID (UPDATE_SET_MCID) as well: built twice, with and without HUBUS_UPD_SET_MCID. The
  * application of the model takes its MCID from the EEPROM byte of the updater, as the examples do, or a fixed one.
+ *
+ * Built a third time with the layout of the tinyAVR 0/1/2-series (ATtiny1614): the updater in the boot section at 0,
+ * the application area behind it, no reset vector rule.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -19,8 +22,15 @@
 #include "update_app_core.h"
 
 #define MCID 9u
-#define FLASH_SIZE 8192u
 #define PAGE HUBUS_UPD_PAGE_SIZE
+#define APP HUBUS_UPD_APP_START     /* first byte of the application area */
+#define APP_SIZE HUBUS_UPD_APP_SIZE /* including the info page */
+#define VECTOR (HUBUS_UPD_FLAGS & HUBUS_UPD_FLAG_RESET_VECTOR)
+#if VECTOR
+#define FLASH_SIZE 8192u /* the updater at the end */
+#else
+#define FLASH_SIZE (APP + APP_SIZE)
+#endif
 
 static hubus_sim_t sim;
 static hubus_master_t master;
@@ -45,7 +55,8 @@ uint8_t hubus_upd_flash_read(uint16_t addr)
 
 void hubus_upd_flash_write(uint16_t addr, const uint8_t *page)
 {
-    TEST_ASSERT_TRUE(addr % PAGE == 0 && addr + PAGE <= HUBUS_UPD_ADDR);
+    /* inside the application area; below it the difference wraps around */
+    TEST_ASSERT_TRUE(addr % PAGE == 0 && (uint32_t)(addr - APP) + PAGE <= APP_SIZE);
     memcpy(&flash[addr], page, PAGE);
     flash_writes++;
 }
@@ -143,7 +154,8 @@ static void hal_delay_ns(void *ctx, uint32_t ns)
 static uint8_t image_a[1000];
 static uint8_t image_b[1500];
 
-/* An application image: RJMP to word `entry` at address 0, then pseudo-random bytes. */
+/* An application image: with the reset vector rule an RJMP to word `entry` at address 0, then pseudo-random bytes.
+ * Without it the application starts at the start of its area, its own vector table. */
 static void make_image(uint8_t *img, size_t len, uint16_t entry, unsigned seed)
 {
     size_t i;
@@ -152,9 +164,16 @@ static void make_image(uint8_t *img, size_t len, uint16_t entry, unsigned seed)
         seed = seed * 1103515245u + 12345u;
         img[i] = (uint8_t)(seed >> 16);
     }
+#if VECTOR
     img[0] = (uint8_t)(entry - 1u);
     img[1] = (uint8_t)(0xC0u | ((entry - 1u) >> 8));
+#else
+    (void)entry;
+#endif
 }
+
+/* The word address the updater jumps to for an image made with `entry`. */
+#define ENTRY(entry) (VECTOR ? (uint16_t)(entry) : (uint16_t)(APP / 2u))
 
 static hubus_update_image_t image(const uint8_t *data, uint32_t len)
 {
@@ -168,12 +187,17 @@ static hubus_update_image_t image(const uint8_t *data, uint32_t len)
 
 static void assert_flash_holds(const uint8_t *img, size_t len, uint16_t entry)
 {
+#if VECTOR
     TEST_ASSERT_EQUAL_HEX8(HUBUS_UPD_RESET_RJMP & 0xFF, flash[0]);
     TEST_ASSERT_EQUAL_HEX8(HUBUS_UPD_RESET_RJMP >> 8, flash[1]);
     TEST_ASSERT_EQUAL_MEMORY(img + 2, flash + 2, len - 2);
+#else
+    TEST_ASSERT_EQUAL_MEMORY(img, flash + APP, len);
+    TEST_ASSERT_EACH_EQUAL_HEX8(0xFF, flash, APP); /* the boot section stays as it was */
+#endif
     TEST_ASSERT_EQUAL_HEX8(HUBUS_UPD_MAGIC0, flash[HUBUS_UPD_INFO_ADDR]);
     TEST_ASSERT_FALSE(in_updater);
-    TEST_ASSERT_EQUAL_UINT16(entry, booted_entry);
+    TEST_ASSERT_EQUAL_UINT16(ENTRY(entry), booted_entry);
 }
 
 /* ---- fault injection -------------------------------------------------------------------------------------------- */
@@ -252,10 +276,18 @@ static void test_updater_announces_itself(void)
     TEST_ASSERT_EQUAL_UINT8(HUBUS_RX_BUF_SIZE, p[HUBUS_UPD_INFO_MAX_CMD]);
     TEST_ASSERT_EQUAL_HEX8(0x1E, p[HUBUS_UPD_INFO_SIGNATURE]);
     TEST_ASSERT_EQUAL_UINT8(PAGE, p[HUBUS_UPD_INFO_PAGE]);
+#if VECTOR
+    TEST_ASSERT_EQUAL_HEX8(0x93, p[HUBUS_UPD_INFO_SIGNATURE + 1]); /* ATtiny85 */
+    TEST_ASSERT_EQUAL_HEX8(0x00, p[HUBUS_UPD_INFO_APP_START]);
     TEST_ASSERT_EQUAL_HEX8(0x18, p[HUBUS_UPD_INFO_APP_SIZE]); /* 0x1800 */
-    TEST_ASSERT_EQUAL_HEX8(HUBUS_UPD_FLAG_RESET_VECTOR | (HUBUS_UPD_SET_MCID ? HUBUS_UPD_FLAG_SET_MCID : 0),
-                           p[HUBUS_UPD_INFO_FLAGS]);
-    TEST_ASSERT_EQUAL_HEX8(0x18, p[HUBUS_UPD_INFO_UPDATER]);
+    TEST_ASSERT_EQUAL_HEX8(0x18, p[HUBUS_UPD_INFO_UPDATER]);  /* at 0x1800 */
+#else
+    TEST_ASSERT_EQUAL_HEX8(0x94, p[HUBUS_UPD_INFO_SIGNATURE + 1]); /* ATtiny1614 */
+    TEST_ASSERT_EQUAL_HEX8(0x08, p[HUBUS_UPD_INFO_APP_START]);     /* 0x0800, behind the boot section */
+    TEST_ASSERT_EQUAL_HEX8(0x38, p[HUBUS_UPD_INFO_APP_SIZE]);      /* 0x3800, to the end of flash */
+    TEST_ASSERT_EQUAL_HEX8(0x00, p[HUBUS_UPD_INFO_UPDATER]);       /* at 0 */
+#endif
+    TEST_ASSERT_EQUAL_HEX8(VECTOR | (HUBUS_UPD_SET_MCID ? HUBUS_UPD_FLAG_SET_MCID : 0), p[HUBUS_UPD_INFO_FLAGS]);
 }
 
 static void test_update_from_updater_then_from_application(void)
@@ -300,8 +332,7 @@ static void test_image_checks(void)
 {
     hubus_update_image_t img = image(image_a, sizeof image_a);
     hubus_update_result_t res;
-    static uint8_t big[0x1800];
-    uint8_t first;
+    static uint8_t big[APP_SIZE];
     unsigned writes;
 
     img.signature[0] = 0x1E;
@@ -311,20 +342,35 @@ static void test_image_checks(void)
     TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_SIGNATURE, res.reason);
 
     make_image(big, sizeof big, 0x0F, 3);
-    img = image(big, 0x1800 - PAGE + 1); /* one byte into the info page */
+    img = image(big, APP_SIZE - PAGE + 1); /* one byte into the info page */
     TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_update(&master, MCID, &img, NULL, NULL, &res));
     TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_TOO_LARGE, res.reason);
-    img = image(big, 0x1800 - PAGE); /* the largest application fits */
+    img = image(big, APP_SIZE - PAGE); /* the largest application fits */
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &img, NULL, NULL, &res));
 
     writes = flash_writes;
-    first = image_a[1];
-    image_a[1] = 0x94; /* JMP instead of RJMP */
+#if VECTOR
+    {
+        uint8_t first = image_a[1];
+
+        image_a[1] = 0x94; /* JMP instead of RJMP */
+        img = image(image_a, sizeof image_a);
+        TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_update(&master, MCID, &img, NULL, NULL, &res));
+        TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_BAD_IMAGE, res.reason);
+        image_a[1] = first;
+    }
+#endif
+    /* An image from a HEX file linked for another area: for 0 on the boot section layout, for 0x800 on classic. */
     img = image(image_a, sizeof image_a);
+    img.check_start = 1;
+    img.start = APP ? 0u : 0x800u;
     TEST_ASSERT_EQUAL(HUBUS_ERR_UPDATE, hubus_master_update(&master, MCID, &img, NULL, NULL, &res));
-    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_BAD_IMAGE, res.reason);
-    image_a[1] = first;
+    TEST_ASSERT_EQUAL(HUBUS_UPD_REASON_WRONG_START, res.reason);
     TEST_ASSERT_EQUAL_UINT(writes, flash_writes); /* nothing written for a refused image */
+
+    img.start = APP; /* linked for this area */
+    TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &img, NULL, NULL, &res));
+    assert_flash_holds(image_a, sizeof image_a, 0x0F);
 }
 
 static void test_bit_errors_are_retried(void)
@@ -366,7 +412,7 @@ static void test_interrupted_update_leaves_the_updater(void)
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &a, NULL, NULL, &res));
     /* Power fails while image B is written: after the invalidation and a few pages. */
     flash[HUBUS_UPD_INFO_ADDR] = 0xFF;
-    memcpy(flash + 3 * PAGE, image_b + 3 * PAGE, PAGE);
+    memcpy(flash + APP + 3 * PAGE, image_b + 3 * PAGE, PAGE);
     boot();
     TEST_ASSERT_TRUE(in_updater);
     TEST_ASSERT_EQUAL(HUBUS_OK, hubus_master_update(&master, MCID, &b, NULL, NULL, &res));
@@ -389,10 +435,16 @@ static void test_updater_refuses_bad_pages(void)
     }
     crc = hubus_crc16(page, PAGE);
 
-    /* the updater itself, a misaligned address, the first page without RJMP, a wrong CRC */
     {
+#if VECTOR
+        /* the updater itself, a misaligned address, the first page without RJMP, a wrong CRC */
         static const uint16_t addrs[] = {HUBUS_UPD_ADDR, 0x0041, 0x0000, 0x0040};
         static const uint8_t results[] = {HUBUS_UPD_ERR_ADDR, HUBUS_UPD_ERR_ADDR, HUBUS_UPD_ERR_VECTOR, HUBUS_UPD_ERR_CRC};
+#else
+        /* the boot section with the updater, a misaligned address, behind the end of the area, a wrong CRC */
+        static const uint16_t addrs[] = {APP - PAGE, APP + 1u, APP + APP_SIZE, APP + PAGE};
+        static const uint8_t results[] = {HUBUS_UPD_ERR_ADDR, HUBUS_UPD_ERR_ADDR, HUBUS_UPD_ERR_ADDR, HUBUS_UPD_ERR_CRC};
+#endif
         unsigned i;
 
         for (i = 0; i < 4; i++) {
@@ -724,19 +776,30 @@ static void test_ihex(void)
                               ":0400000001020304F2\r\n"
                               ":02000600AABB93\n"
                               ":00000001FF\n";
+    static const char at_0x800[] = ":02080000AABB91\n"
+                                   ":00000001FF\n";
     uint8_t out[16];
-    uint32_t len;
+    static uint8_t flash_out[0x1000];
+    uint32_t first, len;
 
-    TEST_ASSERT_EQUAL_INT(0, hubus_ihex_parse(hex, sizeof hex - 1, out, sizeof out, &len));
+    TEST_ASSERT_EQUAL_INT(0, hubus_ihex_parse(hex, sizeof hex - 1, out, sizeof out, &first, &len));
+    TEST_ASSERT_EQUAL_UINT32(0, first);
     TEST_ASSERT_EQUAL_UINT32(8, len);
     TEST_ASSERT_EQUAL_HEX8(0x01, out[0]);
     TEST_ASSERT_EQUAL_HEX8(0x04, out[3]);
     TEST_ASSERT_EQUAL_HEX8(0xFF, out[4]);
     TEST_ASSERT_EQUAL_HEX8(0xAA, out[6]);
     TEST_ASSERT_EQUAL_HEX8(0xBB, out[7]);
-    TEST_ASSERT_EQUAL_INT(-1, hubus_ihex_parse(":0400000001020304F3\n", 20, out, sizeof out, &len)); /* checksum */
-    TEST_ASSERT_EQUAL_INT(-1, hubus_ihex_parse(":02000F000102EC\n", 16, out, sizeof out, &len));    /* too far */
-    TEST_ASSERT_EQUAL_INT(-1, hubus_ihex_parse("0400000001020304F2\n", 19, out, sizeof out, &len)); /* no colon */
+    TEST_ASSERT_EQUAL_INT(-1, hubus_ihex_parse(":0400000001020304F3\n", 20, out, sizeof out, NULL, &len)); /* checksum */
+    TEST_ASSERT_EQUAL_INT(-1, hubus_ihex_parse(":02000F000102EC\n", 16, out, sizeof out, NULL, &len)); /* too far */
+    TEST_ASSERT_EQUAL_INT(-1, hubus_ihex_parse("0400000001020304F2\n", 19, out, sizeof out, NULL, &len)); /* no colon */
+
+    /* an application linked behind a boot section of 2 KB */
+    TEST_ASSERT_EQUAL_INT(0, hubus_ihex_parse(at_0x800, sizeof at_0x800 - 1, flash_out, sizeof flash_out, &first, &len));
+    TEST_ASSERT_EQUAL_UINT32(0x800, first);
+    TEST_ASSERT_EQUAL_UINT32(0x802, len);
+    TEST_ASSERT_EQUAL_HEX8(0xAA, flash_out[0x800]);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, flash_out[0x7FF]);
 }
 
 int main(void)

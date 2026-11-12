@@ -150,7 +150,14 @@ Build options, set on the compiler command line; the CMake build takes them as c
 
 ## Firmware Update
 
-A slave can receive new firmware over the bus if it carries the updater ([§6.8](spec/06-operation.md#68-firmware-update)). This is an optional part: the updater takes 2 KB of flash, so it suits devices with 8 KB or more. It exists for classic tinyAVR devices, built and tested for the ATtiny85; the tinyAVR 0/1/2-series has no updater yet, and `HUBUS_ENABLE_UPDATE` stops the build there.
+A slave can receive new firmware over the bus if it carries the updater ([§6.8](spec/06-operation.md#68-firmware-update)). This is an optional part: the updater takes 2 KB of flash, so it suits devices with 8 KB or more. There are two:
+
+| Updater | Devices | Layout |
+|---|---|---|
+| `updater/hubus_updater_avr.c` | ATtiny85 (classic tinyAVR) | updater at the end of flash, application from 0, reset vector rule |
+| `updater/hubus_updater_modern.c` | tinyAVR 0/1/2-series with 8 KB or more: ATtiny804/814/824, 1604/1614/1616/1624 and the other 16 KB parts, 3216/3217/3224 | updater in the boot section at 0, application behind it ([below](#tinyavr-012-series)) |
+
+Both share the protocol part (`updater/hubus_updater.c`) and are built and size-checked for every device of the [matrix](#supported-devices). The ATtiny85 updater also runs on a simulated device; the 0/1/2-series cannot be simulated, so its updater is tested as protocol logic on the simulated bus with its layout (`test_update_boot_section`). Neither has run on hardware.
 
 | ATtiny85 flash | Content |
 |---|---|
@@ -177,6 +184,48 @@ sh tools/flash-avr.sh build/avr-attiny85/updater/hubus_updater.hex 5
 The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master under MCID 5, and `hubus_master_example update 5 example_switch_update.hex` loads the switch ([master library](master-library.md#firmware-update)), which starts under the same MCID, since it reads the same byte. A device programmed without an MCID waits under 63; `hubus_master_example mcid 63 5` gives it its MCID over the bus first ([below](#changing-the-mcid-over-the-bus)). Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
 
 A firmware update over the bus writes the flash only: the MCID in the EEPROM survives it.
+
+### tinyAVR 0/1/2-Series
+
+These devices have a boot section in hardware, at the start of flash, and always start there. The updater is that boot section; the application follows it with its own vector table, which the CPU uses there by itself. Only code in the boot section can write the application area, and nothing can write the boot section, so an application can never damage its updater. No reset vector rule is needed (flag bit 0 is `0`), and the updater announces the area behind it.
+
+| ATtiny1614 flash | Content |
+|---|---|
+| `0x0000..0x07FF` | boot section: updater (2010 bytes; 1938 without `UPDATE_SET_MCID`) |
+| `0x0800..0x3FBF` | application, at most 14272 bytes, linked to `0x0800` |
+| `0x3FC0..0x3FFF` | info page |
+
+The 32 KB devices have 128-byte pages, so their info page is `0x7F80..0x7FFF`. The updater build prints the fuse values it needs.
+
+| CMake option | Meaning |
+|---|---|
+| `HUBUS_UPDATER_BOOT_SIZE` | Size of the boot section in bytes, a multiple of 256 (default 2048): the updater must fit, the application starts behind it. Fuse `BOOTEND` = this value / 256. |
+
+**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and link it to the end of the boot section, `-Wl,--section-start=.text=0x800` (`ld` reads the address as hexadecimal). On `UPDATE_ENTER` the library jumps to address 0 with the MCID in `GPIOR1`. `hubus_size_reference_update` in the AVR build is the reference firmware built this way, with a check that it fits. An image from `avr-objcopy -O ihex` starts at `0x0800`; `hubus_master_example update` reads the start from the file and refuses an image for another area ([master library](master-library.md#firmware-update)). A module image (`avr-objcopy -O binary`) starts at the start of the area by itself.
+
+**Updater.** `build/avr-attiny1614/updater/hubus_updater.hex`, linked to 0. It differs from the one for classic devices in a few points:
+
+- **No C runtime.** It has no vector table, since it uses no interrupts. That saves 124 bytes of the 2 KB on devices with 16 KB and more. Its start code sets the stack pointer itself, because the application also jumps there.
+- **Flash and EEPROM writes.** It writes the flash through `NVMCTRL`, with the page buffer filled through the mapped flash, and the MCID through the mapped EEPROM. Both share the page buffer, so a page write waits for a pending EEPROM write.
+- **Clock.** It starts a valid application at the reset clock (20 or 16 MHz divided by 6), which the application expects. If it stays, it runs from the internal oscillator divided by 2 (10 or 8 MHz) to poll the bus.
+- **When the application hands over.** It switches the watchdog off and returns the ports, including `PINnCTRL` with pull-ups and pin interrupts, to their reset state.
+- **Reset.** After `UPDATE_LEAVE` it uses the software reset.
+
+**Installing.** Over UPDI, once: the fuses, the updater, and its MCID.
+
+```sh
+avrdude -c serialupdi -P /dev/ttyUSB0 -p t1614 -U bootend:w:0x08:m -U append:w:0x00:m -U syscfg0:w:0xF7:m -U bodcfg:w:0x45:m
+sh tools/flash-avr.sh -m attiny1614 -c serialupdi -P /dev/ttyUSB0 build/avr-attiny1614/updater/hubus_updater.hex 5
+```
+
+| Fuse | Value | Why |
+|---|---|---|
+| `bootend` (fuse 8) | `0x08` | boot section of 8 × 256 bytes: the updater (`HUBUS_UPDATER_BOOT_SIZE` / 256) |
+| `append` (fuse 7) | `0x00` | the application code section reaches to the end of flash, so the updater may write all of it |
+| `syscfg0` (fuse 5) | `0xF7` | the default `0xF6` with `EESAVE`: a chip erase keeps the EEPROM and with it the MCID; the `UPDI` pin stays the programming pin |
+| `bodcfg` (fuse 1) | `0x45` | brown-out detection at 2.6 V, active and in sleep, against a sinking supply during flash and EEPROM writes ([§8.10](spec/08-faults.md#810-power-loss-during-a-firmware-update)) |
+
+`wdtcfg` (fuse 0) must not lock the watchdog on, because the updater switches it off. As on the ATtiny85, the device then waits in its updater under its MCID, and the master loads the application over the bus. An application written with the programmer would not start: its info page is missing.
 
 ## Assigning the MCID
 
@@ -210,7 +259,7 @@ This is only possible in update mode, so only for firmware with `HUBUS_ENABLE_UP
 
 ### Fuses
 
-The fuses of a slave with the updater, in one place (ATtiny85, internal 8 MHz oscillator):
+The fuses of a slave with the updater, in one place (ATtiny85, internal 8 MHz oscillator; the tinyAVR 0/1/2-series [above](#tinyavr-012-series)):
 
 | Fuse | Value | Why |
 |---|---|---|
