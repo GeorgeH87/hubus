@@ -101,5 +101,5 @@ Which parts each device needs is described in [§7.4](spec/07-slave.md#74-option
 | Protocol core (CRC, frames, arbitration, slave state machine), shared by master, slaves, and tests | `core/` | this specification |
 | Slave library for tinyAVR | `slave/` | [slave library](slave-library.md) |
 | Master on a HAL, with the libgpiod HAL for the Raspberry Pi | `master/` | `master/hubus_master.h` |
-| `hubusd`, the master as an MQTT service with Home Assistant integration | `daemon/` | [hubusd](daemon.md) |
+| `hubusd`, the master as an MQTT service; its modules can announce their devices to Home Assistant | `daemon/` | [hubusd](daemon.md) |
 | Tests, bus simulation, fault injection | `test/` | [development](development.md#tests) |
