@@ -427,6 +427,18 @@ static void publish_state(hubusd_t *d, int force)
         jw_uint(&w, "limited_by", hubus_master_speed_limit(&d->master));
     }
     jw_obj_end(&w);
+    /* a firmware update keeps the bus: what needs it is refused meanwhile */
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        const hubusd_slave_t *s = &d->slave[mcid];
+
+        if (s->updating) {
+            jw_obj_begin(&w, "update");
+            jw_uint(&w, "mcid", mcid);
+            jw_str(&w, "module", s->update_module ? s->update_module->name : "");
+            jw_uint(&w, "percent", d->update_percent);
+            jw_obj_end(&w);
+        }
+    }
     jw_obj_end(&w);
     if (!jw_ok(&w)) {
         d->stats.publish_errors++;
@@ -2298,11 +2310,68 @@ static void route_message(hubusd_t *d, const hubusd_request_t *q)
 
 /* ---- firmware update from a module -------------------------------------------------------------------------------- */
 
+static void exec_request(hubusd_t *d, const hubusd_request_t *q);
+
+/* The bus thread only gets here between two pages of an update. What needs the bus or a module is refused at once, with the
+ * reason, instead of waiting for seconds and then acting on what may be stale by then; what needs neither is done. Changes of
+ * the configuration wait in their own list. */
+static void refuse_during_update(hubusd_t *d, unsigned mcid)
+{
+    hubusd_request_t q;
+    unsigned n = queue_depth(d);
+    char what[HUBUSD_SUBTOPIC_LEN + 40];
+
+    while (n-- > 0 && dequeue(d, &q)) {
+        switch (q.kind) {
+        case HUBUSD_REQ_REJECT:
+        case HUBUSD_REQ_STATS:
+        case HUBUSD_REQ_STALE:
+            exec_request(d, &q);
+            continue;
+        case HUBUSD_REQ_MESSAGE:
+            snprintf(what, sizeof what, "'%s' for slave %u", q.topic, q.prefix);
+            break;
+        case HUBUSD_REQ_RAW:
+            if (q.target_len == HUBUS_TARGET_LEN_EXACT) {
+                snprintf(what, sizeof what, "command 0x%02x for slave %u", q.opcode, q.prefix);
+            } else {
+                snprintf(what, sizeof what, "command 0x%02x for group %u/%u", q.opcode, q.prefix, q.target_len);
+            }
+            break;
+        case HUBUSD_REQ_CAPTURE:
+            snprintf(what, sizeof what, "capture of slave %u", q.prefix);
+            break;
+        case HUBUSD_REQ_READ:
+            snprintf(what, sizeof what, "read of slave %u", q.prefix);
+            break;
+        case HUBUSD_REQ_PROBE:
+            snprintf(what, sizeof what, "probe of MCID %u", q.prefix);
+            break;
+        case HUBUSD_REQ_UPDATE:
+            snprintf(what, sizeof what, "update of slave %u", q.prefix);
+            break;
+        case HUBUSD_REQ_SET_MCID:
+            snprintf(what, sizeof what, "change of the MCID of slave %u", q.prefix);
+            break;
+        case HUBUSD_REQ_SCAN:
+            snprintf(what, sizeof what, "scan");
+            break;
+        default:
+            continue;
+        }
+        reject(d, "the bus is busy with the firmware update of slave %u: %s refused", mcid, what);
+    }
+}
+
 static void update_progress(void *ctx, uint16_t done, uint16_t total)
 {
+    hubusd_t *d = ((void **)ctx)[0];
     const hubusd_request_t *q = ((void **)ctx)[1];
 
-    publish_firmware(((void **)ctx)[0], q->prefix, 1, total ? (int)((unsigned)done * 100u / total) : 0);
+    d->update_percent = total ? (unsigned)done * 100u / total : 0u;
+    publish_firmware(d, q->prefix, 1, (int)d->update_percent);
+    publish_state(d, 0);
+    refuse_during_update(d, q->prefix);
 }
 
 /* The module a trigger means. NULL if it cannot be used: reported. A slave that runs an application takes only its own module:
@@ -2379,14 +2448,18 @@ static void run_update(hubusd_t *d, const hubusd_request_t *q)
               (unsigned)m->firmware_version, (unsigned)m->firmware_len);
     s->update_module = m;
     s->updating = 1;
+    d->update_percent = 0;
     sync_instances(d);
     publish_firmware(d, mcid, 1, 0);
+    publish_state(d, 0);
+    refuse_during_update(d, mcid);
 
     ctx[0] = d;
     ctx[1] = (void *)q;
     r = hubus_master_update(&d->master, (uint8_t)mcid, &img, update_progress, ctx, &res);
 
     s->updating = 0;
+    publish_state(d, 0);
     if (r == HUBUS_OK) {
         s->update_module = NULL;
         d->stats.commands_executed++;

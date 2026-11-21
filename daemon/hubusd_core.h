@@ -171,6 +171,7 @@ typedef struct hubusd {
     int started;          /* initial startup, scan, and probe done */
     uint8_t speed_limit;       /* the slave that slows down the bus, as last reported (hubus_master_speed_limit()) */
     uint8_t speed_limit_class; /* and its speed class */
+    unsigned update_percent;   /* progress of the firmware update that runs (a slave with `updating`) */
 
     hubusd_slave_t slave[HUBUS_MCID_MAX + 1u];
     hubusd_stats_t stats;

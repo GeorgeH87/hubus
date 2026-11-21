@@ -32,6 +32,7 @@ static uint8_t in_updater;
 static unsigned flash_writes;
 static uint8_t app_hwid[] = {0xF4, 0x01, OLD_VERSION, 0x00, 0x09};
 static int cut_after_writes; /* a power cut: from this many writes on the page writes get lost; 0: never */
+static void (*on_first_write)(void); /* called at the first page write, while the update keeps the bus */
 
 uint8_t hubus_upd_flash_read(uint16_t addr)
 {
@@ -42,6 +43,9 @@ void hubus_upd_flash_write(uint16_t addr, const uint8_t *page)
 {
     TEST_ASSERT_TRUE(addr % PAGE == 0 && addr + PAGE <= HUBUS_UPD_ADDR);
     flash_writes++;
+    if (flash_writes == 1u && on_first_write) {
+        on_first_write();
+    }
     if (cut_after_writes && flash_writes >= (unsigned)cut_after_writes) {
         return;
     }
@@ -332,6 +336,7 @@ void setUp(void)
     reset_requested = 0;
     flash_writes = 0;
     cut_after_writes = 0;
+    on_first_write = NULL;
     n_msgs = 0;
     clock_ms = 100000;
     app_hwid[HUBUS_HWID_VERSION] = OLD_VERSION;
@@ -410,6 +415,48 @@ static void test_a_trigger_loads_the_image_of_the_module(void)
     settle();
     TEST_ASSERT_EQUAL_INT(1, dmn->slave[MCID].online);
     TEST_ASSERT_EQUAL_INT(HUBUSD_BUS_OK, dmn->bus);
+}
+
+static unsigned rejected_at_first_write;
+
+/* What arrives over MQTT while the update keeps the bus. say() is defined further down. */
+static void say(const char *topic, const char *payload);
+
+static void requests_during_the_update(void)
+{
+    rejected_at_first_write = dmn->stats.commands_rejected;
+    say("hubus/slave/9/cmd", "0x10 1");
+    say("hubus/slave/9/first/set", "1");
+    say("hubus/group/0/0/cmd", "0x11");
+    say("hubus/master/cmd/scan", "");
+    say("hubus/master/cmd/stats", "");
+}
+
+static void test_requests_during_an_update_are_refused_with_the_reason(void)
+{
+    unsigned executed, stats_before;
+
+    start(1);
+    wait_for_live_instances(1);
+    n_msgs = 0;
+    after_update_new_version();
+    on_first_write = requests_during_the_update;
+    executed = dmn->stats.commands_executed;
+    stats_before = count_containing("hubus/master/stats", "");
+    say("hubus/slave/9/update", "");
+    settle();
+
+    assert_contains("hubus/slave/9/firmware", "\"installed_version\":\"8\"");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/state", "\"update\":{\"mcid\":9,\"module\":\"app\",\"percent\":") >= 2u);
+    TEST_ASSERT_NULL(strstr(last("hubus/master/state"), "\"update\""));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "slave 9: command 0x10 for slave 9 refused"));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "'first/set' for slave 9 refused"));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "command 0x11 for group 0/0 refused"));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "slave 9: scan refused"));
+    TEST_ASSERT_EQUAL_UINT(rejected_at_first_write + 4u, dmn->stats.commands_rejected);
+    TEST_ASSERT_EQUAL_UINT(executed + 1u, dmn->stats.commands_executed); /* the update alone */
+    TEST_ASSERT_TRUE(count_containing("hubus/master/stats", "") > stats_before); /* needs no bus: done meanwhile */
+    TEST_ASSERT_EQUAL_UINT(0, dmn->stats.queue_full);
 }
 
 static void test_the_payload_of_home_assistant_names_the_module(void)
@@ -680,6 +727,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_the_module_offers_its_image_to_home_assistant);
     RUN_TEST(test_a_trigger_loads_the_image_of_the_module);
+    RUN_TEST(test_requests_during_an_update_are_refused_with_the_reason);
     RUN_TEST(test_the_payload_of_home_assistant_names_the_module);
     RUN_TEST(test_a_slave_on_the_version_of_the_image_gets_no_update);
     RUN_TEST(test_an_older_image_can_be_loaded_on_purpose);

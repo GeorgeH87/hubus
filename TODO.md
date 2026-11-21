@@ -123,7 +123,7 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of the master example.
 - [x] Bus simulation test with bit errors and an interrupted update.
 - [x] Updater for the tinyAVR 0/1/2-series (`updater/hubus_updater_modern.c`): the boot section at 0 (`HUBUS_UPDATER_BOOT_SIZE`, default 2 KB, fuse `BOOTEND`), the application area behind it, no reset vector rule; flash and EEPROM through `NVMCTRL`, no C runtime, with `UPDATE_SET_MCID` (2010 of 2048 bytes on the ATtiny1614, 2020 on the ATtiny3216). Built and size-checked for every 0/1/2 device of 8 KB and more, with an application linked behind it (`hubus_size_reference_update`); its layout on the simulated bus (`test_update_boot_section`). The master checks the start of a HEX image against the application area (`HUBUS_UPD_REASON_WRONG_START`). Not run on hardware or a simulator (`simavr` has no 0/1/2 cores), [slave library](docs/slave-library.md#tinyavr-012-series).
-- [x] Updates from hubusd: the image comes with the module, MQTT only triggers it ([hubusd](docs/daemon.md#firmware-updates)). The bus stands still meanwhile; a version in steps, so that other slaves are served, is open.
+- [x] Updates from hubusd: the image comes with the module, MQTT only triggers it ([hubusd](docs/daemon.md#firmware-updates)). The bus stands still meanwhile, by decision: requests that need the bus are refused with the reason, and `hubus/master/state` shows the update ([decisions](docs/project/decisions.md#master-modules)).
 
 ## 12. Master Modules and Hardware Identifier
 
