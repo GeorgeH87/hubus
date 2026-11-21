@@ -18,3 +18,4 @@ Thumbs.db
 *.lst
 *.o
 *.a
+__pycache__/
