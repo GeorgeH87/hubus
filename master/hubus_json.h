@@ -2,8 +2,8 @@
  * Tiny JSON writer into a caller-provided buffer. Overflow is sticky: after
  * the first overflow every call is ignored and jw_ok() returns 0.
  */
-#ifndef HUBUSD_JSON_H
-#define HUBUSD_JSON_H
+#ifndef HUBUS_JSON_H
+#define HUBUS_JSON_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -32,4 +32,4 @@ void jw_bool(jw_t *w, const char *key, int value);
 void jw_double(jw_t *w, const char *key, double value, int decimals);
 void jw_null(jw_t *w, const char *key);
 
-#endif /* HUBUSD_JSON_H */
+#endif /* HUBUS_JSON_H */

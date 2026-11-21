@@ -1,5 +1,5 @@
 /* The name of a_good for another device. */
-#include "hubus_module.h"
+#include "hubus_module_ha.h"
 
 static const hubus_module_rule_t rules[] = {
     {.pattern = {0x91}, .mask = {0xFF}, .len = 1},
@@ -11,6 +11,7 @@ static const hubus_module_t module = {
     .rules = rules,
     .n_rules = HUBUS_MODULE_LEN(rules),
     .max_command = 1,
+    HUBUS_HA_FUNCTIONS,
 };
 
 const hubus_module_t *hubus_module_entry(void)

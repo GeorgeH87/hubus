@@ -171,10 +171,12 @@ These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAU
 
 `master/hubus_module.h` is the typed interface of the modules that come with a slave firmware image ([§6.10](spec/06-operation.md#610-master-modules)), and their selection by the hardware identifier ([§4.7](spec/04-frames.md#hardware-identifier-hwid)). hubusd selects the module of every slave with it and calls its functions ([hubusd](daemon.md#module-functions)).
 
-A module is a constant structure. A device whose bytes and commands can be described as data needs no code:
+A module is a constant structure: what the bus thread of a master needs is data (rules, properties, blind times), everything else is up to four functions. Every slave that goes into operation gets an **instance** of its module, and the instance decides which topics below the slave it takes and what it publishes there; the master only passes messages, frames, and commands between the instance, the broker, and the bus.
+
+Most devices are described by a table of entities of Home Assistant, and `master/hubus_module_ha.h` turns such a table into topics, values, and discovery messages. Such a module needs no code of its own:
 
 ```c
-#include "hubus_module.h"
+#include "hubus_module_ha.h"
 
 static const hubus_module_rule_t rules[] = {
     {.pattern = {0x83}, .mask = {0xFF}, .len = 1},
@@ -191,6 +193,8 @@ static const hubus_entity_t entities[] = {
     },
 };
 
+static const hubus_ha_t table = {entities, HUBUS_MODULE_LEN(entities), NULL};
+
 static const hubus_module_t module = {
     HUBUS_MODULE_INIT,
     .name = "temperature",
@@ -199,42 +203,72 @@ static const hubus_module_t module = {
     .max_command = 1,
     .has_state = true,
     .has_events = true,
-    .entities = entities,
-    .n_entities = HUBUS_MODULE_LEN(entities),
+    .data = &table,
+    HUBUS_HA_FUNCTIONS,
 };
 
 const hubus_module_t *hubus_module_entry(void) { return &module; }
 ```
 
-Built as a plugin with `gcc -shared -fPIC -I master -I core -o temperature.so temperature.c`. The keys of the entities are part of MQTT topics, so they have only letters, digits, `_` and `-` (at most 23), and a module has at most 8 entities. A device that needs code adds functions to the structure:
+Built as a plugin together with the helper library, which a plugin links in: `gcc -shared -fPIC -I master -I core -o temperature.so temperature.c master/hubus_module_ha.c master/hubus_module_topic.c master/hubus_json.c` (in the CMake build: `target_link_libraries(... hubus_module_ha)`, as in `examples/plugin-dimmer`).
+
+### Functions and Host
+
+Every module has all four functions; `hubus_module_validate()` refuses one without them:
 
 | Function | Purpose |
 |---|---|
-| `create(host)`, `destroy(self)` | The state of the module for one slave, `hubus_module_instance_t`. Optional, but they come together. `create` returns `NULL` if it cannot. |
-| `on_frame(self, host, kind, data, len, gap)` | A frame of the slave. `gap`: frames were lost before it. |
-| `on_set(self, host, entity, value)` | A value for an entity without fixed commands, as a typed `hubus_value_t`: a bool, RGB, text, or a number within the range of the entity. Returns `HUBUS_MODULE_REJECTED` for a value it does not take. |
+| `create(host)` | The instance for one slave, `hubus_module_instance_t`, or `NULL` if it cannot. It usually subscribes to its topics and publishes its discovery messages. |
+| `destroy(self)` | Ends the instance; its topics go with it. |
+| `on_frame(self, host, kind, data, len, gap)` | A frame of the slave, an event or a state that was read. `gap`: frames were lost before it. |
+| `on_message(self, host, topic, payload, len)` | A message on a topic the instance subscribed to: the topic below the slave, and `len` bytes, followed by a NUL that is not counted. |
 
 A master calls them on a thread of the module, never on its bus thread, and one after the other for one module. A function has to return in a short time: in hubusd a call that takes longer than `modules.call_timeout_ms` stops the module ([hubusd](daemon.md#module-functions)). A function reaches the master only through `hubus_module_host_t`, which it may also keep until `destroy` has returned:
 
 | Function | Purpose |
 |---|---|
 | `host->send(host, opcode, args, len)` | Queues a command to this slave. Opcode `0` or `0x10..0xFF`, at most 31 bytes with the opcode. |
-| `host->set_state(host, key, text)` | Publishes the value of an entity of this slave that no frame reports, such as the state of a light. |
-| `host->log(host, text)` | A line for the log of the master, for example why a value was refused. |
+| `host->subscribe(host, topic)`, `host->unsubscribe(host, topic)` | Takes a topic below the slave, or gives it up; `on_message` gets what arrives there. `+` and `#` as in MQTT, but not in the first level; at most 16 topics per instance. |
+| `host->publish(host, topic, payload, len, retain)` | Publishes up to 1023 bytes on a topic below the slave. A retained message is published again when the master reconnects, and removed when the slave leaves the configuration or gets another module; an empty one removes the topic. hubusd keeps up to 40 retained topics per slave, discovery messages included; it publishes more, but logs that it cannot publish them again. |
+| `host->discovery(host, component, object, json)` | A discovery message of Home Assistant, retained, on `<prefix>/<component>/hubus_<n>_<object>/config`. The master adds `unique_id`, the availability, and the device of the slave, and publishes it only while discovery is on. |
+| `host->topic(host, topic, out, size)` | The full name of a topic of this slave, `<base>/slave/<n>/<topic>`, for a discovery message. |
+| `host->log(host, text)`, `host->reject(host, text)` | A line for the log of the master; `reject` says why a message was not taken and counts it as a rejected command. |
+| `host->setting(host, key, out, size)`, `host->save(host, key, value)` | Settings: short texts the master keeps for this slave and module across its restarts (hubusd: in its [runtime file](daemon.md#configuration-over-mqtt)), such as a value the user chose that the slave forgets at a power-up. `setting` copies the value to `out` and returns its length, 0 if there is none; it answers at once with what the instance saved last, or what the master had at `create`. `save` keeps a value, `NULL` removes the key; only a change is written. Keys like a topic level, at most 23 characters, not `module`; values of at most 95 printable characters; at most 8 per slave (`hubus_module_setting_valid()`). They go with the slave, and another module of the slave does not get them. |
+| `host->readback` | What the master does after a command ([readback](daemon.md#state-after-a-command-readback)): `HUBUS_READBACK_CACHE` asks the module to publish the state its command establishes. |
 
-They only queue, so they return at once, with `HUBUS_MODULE_REJECTED` for what is never allowed and `HUBUS_MODULE_FAILED` if the queue is full. What depends on the bus shows up in the log only. `test/test_module.c` and `daemon/hubusd_ledstrip.c` have complete examples.
+A topic below the slave has levels of letters, digits, `_` and `-`, separated by `/`, at most 63 characters. Its first level is none of those the master has for itself: `availability`, `capture`, `cmd`, `config`, `data`, `firmware`, `info`, `mcid`, `read`, `stats`, `update` (`hubus_module_topic_valid()`). The functions of the host only queue, so they return at once, with `HUBUS_MODULE_REJECTED` for what is never allowed and `HUBUS_MODULE_FAILED` if the queue is full. What depends on the bus shows up in the log only; `setting` is the one that answers.
+
+### Entities of Home Assistant
+
+`hubus_module_ha.h` describes a slave by a table `hubus_ha_t` in `hubus_module_t.data`: entities with a key, a name, a kind (`sensor`, `binary_sensor`, `switch`, `light`, `text`, `number`), a unit and device class, where the value lies in a frame (`decode`), for a number its range, and for a switch the commands for `ON` and `OFF`. Keys are a level of a topic: letters, digits, `_` and `-`, at most 23, and none of the reserved first levels; a table has at most 8 entities. For each entity the library uses
+
+- `<key>/state`, retained: the value, from every frame that holds it, or from the module with `hubus_ha_publish_state()`;
+- `<key>/set`: a switch, a light, a text, or a number takes values here; `<key>/rgb/set` the colour of a light, `r,g,b`.
+
+`HUBUS_HA_FUNCTIONS` are the four functions of a module that is all table. A switch with fixed commands needs nothing else; with `readback: cache` the library also publishes the state the command establishes. A switch without fixed commands, a light, a text, and a number need `on_set` in the table: it gets the value parsed and checked (a bool, RGB, text, or a number within the range) and returns `HUBUS_MODULE_REJECTED` for one it does not take. A module with more to do calls `hubus_ha_announce()`, `hubus_ha_on_frame()`, and `hubus_ha_on_message()` from its own functions, as `daemon/hubusd_ledstrip.c`, `daemon/hubusd_distance.c`, and `examples/plugin-dimmer` do.
+
+| Function | Purpose |
+|---|---|
+| `hubus_ha_valid(module)` | Checks the table: keys, kinds, values, commands within the command size of the module, and `on_set` where an entity needs it. `hubus_ha_announce()` refuses a table that fails. |
+| `hubus_ha_announce(host)` | Subscribes to the topics of the entities that take values and publishes their discovery messages. |
+| `hubus_ha_publish_state(host, key, text)` | The value of an entity that no frame reports, such as the state of a light. |
+| `hubus_ha_find_entity(table, key)` | Index of the entity with this key, or `-1`. |
+| `hubus_entity_decode(entity, data, len, out, size)` | The value of an entity in a frame as text: a number with the decimals of the entity for a sensor, otherwise `ON` or `OFF`. Returns 0 if the frame is too short or the entity has no value in a frame. |
+
+### Selection and Checks
 
 | Function | Purpose |
 |---|---|
 | `hubus_hwid_form(hwid, len)` | `HUBUS_HWID_SHORT`, `HUBUS_HWID_FULL`, `HUBUS_HWID_UPDATER`, or `HUBUS_HWID_INVALID`, with the length checked against the form. |
-| `hubus_module_validate(module)` | Checks a module before its first use: interface version, rules, properties, blind times, entities, functions. The compiler cannot check what comes from a plugin. |
+| `hubus_module_validate(module)` | Checks a module before its first use: interface version, rules, properties, blind times, functions, firmware image. The compiler cannot check what comes from a plugin. |
 | `hubus_module_select(modules, n, hwid, len, &out)` | `HUBUS_MODULE_FOUND` with the module of the rule with the most mask bits, `HUBUS_MODULE_UNKNOWN`, `HUBUS_MODULE_INVALID`, or `HUBUS_MODULE_CONFLICT`. |
 | `hubus_module_select_info(modules, n, payload, len, &out)` | The same from a `SLAVE_INFO` payload; a protocol version this master does not know counts as invalid. |
-| `hubus_module_find_entity(module, key)` | Index of the entity with this key, or `-1`. |
-| `hubus_entity_decode(entity, data, len, out, size)` | The value of an entity in a frame as text: a number with the decimals of the entity for a sensor, otherwise `ON` or `OFF`. Returns 0 if the frame is too short or the entity has no value in a frame. |
 | `hubus_module_conflicts(a, b)` | Whether rules of two modules have the same number of mask bits and can match the same HWID: `select` would find no winner. |
 | `hubus_module_has_blind_time(module)` | Whether the slave can be blind after any command; it then keeps quiet until the master ends that phase. |
 | `hubus_module_blind_ms(module, opcode)` | The blind time after a command: the value for the opcode, otherwise the general one ([§7.8](spec/07-slave.md#78-blind-sections)). |
+| `hubus_module_topic_valid(topic, filter)`, `hubus_module_topic_matches(filter, topic)` | The rules for topics below a slave, and MQTT matching of `+` and `#`. |
+
+`test/test_module.c`, `test/test_module_ha.c`, and `daemon/hubusd_ledstrip.c` have complete examples.
 
 ### Firmware Image in a Module
 
@@ -278,7 +312,7 @@ Every module is checked before it joins the set, and a plugin that fails is clos
 
 `hubus_module_set_load_dir()` reads the files ending in `.so` in the order of their names, so that the module that loses a conflict is always the same, and calls `report` for each file. `hubus_module_set_unload()` closes the plugins; do it after the last use of a module. `hubus_module_set_load_file()` goes by the file itself, not by its name: a file that is loaded gives the same module in a second set, and a file that was replaced gives a new one next to the old, so that a master can load a new set before it gives up the old one. `hubus_module_set_keep()` keeps a plugin in memory for good, for a module whose code a thread that cannot be stopped may still run. `set.trust_all` skips the permission check, for tests on file systems that have no permissions.
 
-A plugin is built with `gcc -shared -fPIC -I master -I core -o temperature.so temperature.c`. `examples/plugin-dimmer/dimmer_plugin.c` is a complete one with functions, a light for a dimmer; the build makes it, and `cmake --install` puts it into `lib/hubus/modules`, the directory in the example of [`modules.dir`](daemon.md#configuration). `test/plugins/a_good.c` is one with data only.
+A plugin is built as [above](#master-modules), with the helper library if it uses a table of entities. `examples/plugin-dimmer/dimmer_plugin.c` is a complete one with functions of its own, a light for a dimmer; the build makes it, and `cmake --install` puts it into `lib/hubus/modules`, the directory in the example of [`modules.dir`](daemon.md#configuration). `test/plugins/a_good.c` is one that is all table.
 
 A plugin is machine code, so it is built per architecture: for 32-bit Raspberry Pi OS (`armhf`), for 64-bit Raspberry Pi OS (`arm64`), each with the compiler of that system or a matching cross compiler such as `arm-linux-gnueabihf-gcc` or `aarch64-linux-gnu-gcc`. The kernel can be 64-bit under a 32-bit system, so what counts is the architecture of hubusd (`file $(which hubusd)`). A plugin of the wrong architecture is refused at load time with `HUBUS_LOAD_OPEN`, and `detail` says so. Build it against the headers of the same version as hubusd; `hubus_module_validate()` refuses another interface version.
 

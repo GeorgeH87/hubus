@@ -112,6 +112,7 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] `libmosquitto` binding, reconnect, last will, retained state; end-to-end test with a real broker on the simulated bus.
 - [x] Readback from the cache for slaves that cannot be read back; periodic state reads (`poll_interval_s`).
 - [x] systemd unit, installation notes.
+- [x] Configuration over MQTT: the main file for what is fixed (GPIO, timing, broker, modules), a runtime file that hubusd writes for the rest (slaves, `bus`, `mqtt.stats_interval_s`, `discovery`, `discovery_cleanup`, settings of the modules); `hubus/master/config/set`, `hubus/slave/<n>/config/set`, `.../config/remove`, state on `hubus/master/config`, result on `hubus/master/config/result`. Settings of modules (`host->setting()`, `host->save()`), used by the distance sensor for its trigger distance; a change of the MCID moves the entry of the slave ([hubusd](docs/daemon.md#configuration-over-mqtt), [decisions](docs/project/decisions.md)).
 - [ ] End-to-end test on hardware (Raspberry Pi, relay ATtiny, button ATtiny) and Home Assistant.
 
 ## 11. Firmware Update
@@ -144,6 +145,7 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 - [x] Reload modules on `SIGHUP`: an unchanged plugin stays with its thread and instances, a replaced one becomes a new module once no function of the old one runs, and a reload that would leave a slave without a module changes nothing.
 - [x] Master example with modules (`--modules`): it names the module of a slave, and `hubus_master_update()` tells an application without update support (`HUBUS_UPD_REASON_NO_SUPPORT`) from a missing updater.
 - [x] Example plugin in the build (`examples/plugin-dimmer`), installed to `lib/hubus/modules`, with notes for 32 and 64 bit Raspberry Pi OS.
+- [x] Module API version 3: the instance of a module owns its topics below the slave (`subscribe`, `publish`, `discovery` through its host, `on_message`); hubusd keeps what it publishes retained, publishes it again on reconnect, and removes it with the slave or module. The entities of Home Assistant are a library of the module (`master/hubus_module_ha.h`, `HUBUS_HA_FUNCTIONS`); every module has all four functions. Discovery cleanup takes the retained messages from the broker ([decisions](docs/project/decisions.md), [master library](docs/master-library.md#functions-and-host)).
 
 Open:
 

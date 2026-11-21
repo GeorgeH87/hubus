@@ -17,6 +17,8 @@ AmbientCapabilities=CAP_SYS_NICE
 CapabilityBoundingSet=CAP_SYS_NICE
 NoNewPrivileges=true
 ProtectSystem=strict
+# /var/lib/hubus, writable for the service: the runtime file (runtime_file), what changes over MQTT
+StateDirectory=hubus
 ProtectHome=true
 PrivateTmp=true
 

@@ -1,5 +1,7 @@
 #include "hubusd_modules.h"
 
+#include "hubus_module_ha.h"
+
 #include <stdio.h>
 
 #define RULE_VARIANT(type, variant) {.pattern = {(type), (variant)}, .mask = {0xFF, 0xFF}, .len = 2}
@@ -42,7 +44,8 @@ static const hubus_entity_t temperature_entities[] = {{
     .decode = {.offset = 0, .len = 2, .big_endian = true, .scale = 1.0, .add = -273.0},
 }};
 
-#define ENTITIES(array) .entities = (array), .n_entities = HUBUS_MODULE_LEN(array)
+/* A module that is all table (hubus_module_ha.h). */
+#define ENTITIES(array) .data = &(const hubus_ha_t){(array), HUBUS_MODULE_LEN(array), NULL}, HUBUS_HA_FUNCTIONS
 
 static const hubus_module_rule_t relay_rules[] = {RULE_VARIANT(0x81, 0x01)};
 static const hubus_module_t relay = {
@@ -186,6 +189,7 @@ static const hubus_module_t updater = {
     .n_rules = HUBUS_MODULE_LEN(updater_rules),
     .max_command = HUBUS_MAX_PAYLOAD,
     .has_state = true,
+    HUBUS_HA_FUNCTIONS, /* no entities: an instance that does nothing */
 };
 
 static const hubus_module_t *const modules[] = {
@@ -228,52 +232,3 @@ void hubusd_report_module(void *ctx, const char *path, const hubus_load_result_t
     fprintf(stderr, "\n");
 }
 
-const char *hubusd_component_name(hubus_component_t component)
-{
-    switch (component) {
-    case HUBUS_COMPONENT_SENSOR: return "sensor";
-    case HUBUS_COMPONENT_BINARY_SENSOR: return "binary_sensor";
-    case HUBUS_COMPONENT_SWITCH: return "switch";
-    case HUBUS_COMPONENT_LIGHT: return "light";
-    case HUBUS_COMPONENT_TEXT: return "text";
-    case HUBUS_COMPONENT_NUMBER: return "number";
-    case HUBUS_COMPONENT_COUNT: break;
-    }
-    return "sensor";
-}
-
-const char *hubusd_device_class_name(hubus_device_class_t device_class)
-{
-    switch (device_class) {
-    case HUBUS_DEVICE_CLASS_TEMPERATURE: return "temperature";
-    case HUBUS_DEVICE_CLASS_HUMIDITY: return "humidity";
-    case HUBUS_DEVICE_CLASS_ILLUMINANCE: return "illuminance";
-    case HUBUS_DEVICE_CLASS_PRESSURE: return "pressure";
-    case HUBUS_DEVICE_CLASS_POWER: return "power";
-    case HUBUS_DEVICE_CLASS_VOLTAGE: return "voltage";
-    case HUBUS_DEVICE_CLASS_CURRENT: return "current";
-    case HUBUS_DEVICE_CLASS_MOTION: return "motion";
-    case HUBUS_DEVICE_CLASS_DOOR: return "door";
-    case HUBUS_DEVICE_CLASS_DISTANCE: return "distance";
-    case HUBUS_DEVICE_CLASS_NONE:
-    case HUBUS_DEVICE_CLASS_COUNT: break;
-    }
-    return NULL;
-}
-
-const char *hubusd_unit_text(hubus_unit_t unit)
-{
-    switch (unit) {
-    case HUBUS_UNIT_CELSIUS: return "\xC2\xB0" "C";
-    case HUBUS_UNIT_PERCENT: return "%";
-    case HUBUS_UNIT_LUX: return "lx";
-    case HUBUS_UNIT_HECTOPASCAL: return "hPa";
-    case HUBUS_UNIT_WATT: return "W";
-    case HUBUS_UNIT_VOLT: return "V";
-    case HUBUS_UNIT_AMPERE: return "A";
-    case HUBUS_UNIT_CENTIMETER: return "cm";
-    case HUBUS_UNIT_NONE:
-    case HUBUS_UNIT_COUNT: break;
-    }
-    return NULL;
-}

@@ -1,0 +1,38 @@
+# hubusd runtime configuration: what can change over MQTT (docs/daemon.md, "Configuration").
+# hubusd writes this file itself, to runtime_file of the main configuration (/var/lib/hubus/runtime.yaml),
+# after every change over MQTT. To start with a list of slaves, copy it there before the first start, or send
+# it to hubus/master/config/set as JSON. Edit the file by hand only while hubusd is stopped, or send SIGHUP
+# (systemctl reload hubusd) right after saving it: the next change over MQTT writes over the edit.
+
+bus:
+  readback: slave         # state reported after a command: slave (default: ask the slave with REQUEST_STATE,
+                          # or STATUS_CAPTURE without a state), cache (the state the command establishes,
+                          # slave is not contacted), none
+  ping_interval_s: 30     # availability check per slave, 0 = off
+  ping_failures: 3        # missed checks before a slave is offline
+  scan_interval_s: 300    # look for unconfigured slaves, 0 = only at start
+  startup_retry_s: 10     # retry after a line fault
+
+mqtt:
+  stats_interval_s: 60    # 0 = only on request
+  discovery: true         # Home Assistant MQTT discovery
+  discovery_cleanup: false # on every connection, remove discovery entries of unconfigured MCIDs
+
+slaves:
+  - mcid: 3
+    name: Garden relay
+  - mcid: 5
+    name: Door button
+  - mcid: 7
+    name: Cellar temperature
+    readback: cache       # per-slave override of bus.readback (slave | cache | none | default)
+  - mcid: 4
+    name: Pump relay      # examples/slave-relay-simple: no state to read back, so its state comes from the cache
+  - mcid: 8
+    name: Attic temperature
+    poll_interval_s: 60   # examples/slave-sensor-passive never announces changes: read its state every minute, 0 = off
+  - mcid: 10
+    name: Garage distance
+    settings:             # written by the module of the slave (here: the trigger distance the user chose);
+      module: distance    # they belong to this module, and only it gets them
+      threshold: "45"

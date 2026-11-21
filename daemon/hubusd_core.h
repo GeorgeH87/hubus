@@ -22,13 +22,18 @@
 
 #define HUBUSD_VERSION "0.1.0"
 #define HUBUSD_QUEUE_LEN 32
-#define HUBUSD_TEXT_LEN (HUBUS_MODULE_TEXT_MAX + 1u)
-#define HUBUSD_KEY_LEN (HUBUS_ENTITY_KEY_MAX + 1u)
+#define HUBUSD_TEXT_LEN (HUBUS_MODULE_MESSAGE_MAX + 1u)
+#define HUBUSD_RETAINED_MAX 40u /* retained messages of the module of one slave, discovery included */
+#define HUBUSD_FULL_TOPIC_LEN 200u
 
 typedef struct {
     void *ctx;
     /* Publish a message; returns 0 on success. Called from the bus thread only. */
     int (*publish)(void *ctx, const char *topic, const char *payload, size_t len, int retain);
+    /* Subscribe to a topic filter, and give it up, while connected; return 0 on success. Called from the bus thread only. The
+     * client subscribes again to what hubusd_subscriptions() lists on every connection; hubusd does so for the rest. */
+    int (*subscribe)(void *ctx, const char *filter);
+    int (*unsubscribe)(void *ctx, const char *filter);
 } hubusd_mqtt_t;
 
 typedef struct {
@@ -47,7 +52,7 @@ typedef enum {
 
 typedef enum {
     HUBUSD_REQ_NONE,
-    HUBUSD_REQ_SET,      /* text from the `set` topic of an entity (key) */
+    HUBUSD_REQ_MESSAGE,  /* a message on `topic` below the slave, for its module */
     HUBUSD_REQ_RAW,      /* opcode and arguments */
     HUBUSD_REQ_CAPTURE,  /* STATUS_CAPTURE */
     HUBUSD_REQ_READ,     /* REQUEST_STATE: read the live state of one slave */
@@ -56,7 +61,8 @@ typedef enum {
     HUBUSD_REQ_SET_MCID, /* new MCID (args[0]) for one slave (prefix), through its updater */
     HUBUSD_REQ_SCAN,
     HUBUSD_REQ_STATS,
-    HUBUSD_REQ_REJECT    /* message that was invalid in the MQTT thread; reported by the bus thread */
+    HUBUSD_REQ_REJECT,   /* message that was invalid in the MQTT thread; reported by the bus thread */
+    HUBUSD_REQ_STALE     /* a retained discovery message (topic in text) that may belong to an unconfigured slave */
 } hubusd_cmd_kind_t;
 
 typedef struct {
@@ -66,8 +72,8 @@ typedef struct {
     uint8_t opcode;
     uint8_t n_args;
     uint8_t args[HUBUS_MAX_PAYLOAD];
-    uint8_t rgb;              /* SET: the text is a colour, from `<key>/rgb/set` */
-    char key[HUBUSD_KEY_LEN]; /* SET: the entity */
+    char topic[HUBUSD_SUBTOPIC_LEN]; /* MESSAGE: below the slave */
+    size_t text_len;                /* MESSAGE: bytes in text */
     char text[HUBUSD_TEXT_LEN];
 } hubusd_request_t;
 
@@ -87,12 +93,44 @@ typedef struct {
     uint32_t scans;
 } hubusd_stats_t;
 
+/* A retained message of the module of a slave, published again on reconnect and removed with the module. */
+typedef struct hubusd_retained {
+    struct hubusd_retained *next;
+    uint8_t discovery; /* a discovery message: published only while discovery is on, with the device added (payload: the JSON of the module) */
+    char topic[HUBUSD_FULL_TOPIC_LEN];
+    char *payload;
+    size_t len, cap;
+} hubusd_retained_t;
+
+/* A change of the configuration over MQTT, waiting for the bus thread. */
+typedef enum {
+    HUBUSD_CONFIG_SET,         /* master/config/set: the runtime part, in `text` */
+    HUBUSD_CONFIG_SET_SLAVE,   /* slave/<mcid>/config/set: the options of one slave */
+    HUBUSD_CONFIG_REMOVE_SLAVE /* slave/<mcid>/config/remove */
+} hubusd_config_kind_t;
+
+typedef struct hubusd_config_req {
+    struct hubusd_config_req *next;
+    hubusd_config_kind_t kind;
+    unsigned mcid;
+    size_t len;
+    char text[]; /* with a terminator */
+} hubusd_config_req_t;
+
+#define HUBUSD_CONFIG_PAYLOAD_MAX 262144u /* bytes of a change of the configuration: what hubus/master/config can hold */
+#define HUBUSD_CONFIG_PENDING_MAX 16u    /* changes that wait for the bus thread */
+
 typedef struct {
     uint8_t configured;
     uint8_t cfg_index;
     const hubus_module_t *module;    /* selected by the HWID; NULL: unknown, not taken into operation */
     const hubus_module_t *inst_module; /* the module whose worker has an instance for this slave (or is to get one) */
+    uint8_t no_instance;             /* its create returned NULL: the module has no instance for it */
     uint8_t jobs_lost;               /* a frame was not passed to the module: the next one says so */
+    char topics[HUBUS_MODULE_TOPICS_MAX][HUBUSD_SUBTOPIC_LEN]; /* the instance takes these (subscribed while connected) */
+    uint8_t n_topics;
+    hubusd_retained_t *retained;     /* what the module published retained */
+    unsigned n_retained;
     uint8_t updating;                /* its firmware is being updated: no instance */
     const hubus_module_t *update_module; /* the last update that did not finish came from this module; NULL: none */
     int online;                      /* -1 unknown, 0 offline, 1 online */
@@ -102,7 +140,6 @@ typedef struct {
     uint64_t last_seen_ms;
     uint64_t next_ping_ms;
     uint64_t next_poll_ms;           /* next periodic state read (slave option poll_interval_s) */
-    char last_state[HUBUS_MODULE_ENTITIES_MAX][HUBUSD_TEXT_LEN]; /* published value per entity of the module */
     uint8_t unknown_seen;            /* present on the bus but not configured */
     uint8_t unknown_logged;
     uint8_t needs_refresh;           /* came online: read its state (REQUEST_STATE, or STATUS_CAPTURE without a state) */
@@ -142,8 +179,15 @@ typedef struct hubusd {
     hubusd_request_t queue[HUBUSD_QUEUE_LEN];
     unsigned q_head, q_count;
     int republish;        /* set by hubusd_on_connect() */
+    uint64_t configured;  /* bit n: MCID n is configured; for the MQTT thread, which sorts out discovery messages */
     int reload_pending;
     hubusd_config_t *reload_cfg;
+    int discovery_cleanup;               /* mqtt.discovery_cleanup, for the MQTT thread */
+    hubusd_config_req_t *config_head;    /* changes of the configuration over MQTT, oldest first */
+    hubusd_config_req_t **config_tail;
+    unsigned n_config;
+
+    int config_dirty; /* a module saved a setting: the runtime file and hubus/master/config are behind */
 } hubusd_t;
 
 /* The configuration is copied. Nothing is sent before hubusd_step(). */
@@ -193,11 +237,14 @@ void hubusd_handle_message(hubusd_t *d, const char *topic, const void *payload, 
 /* MQTT thread: connection (re-)established; retained state is republished by the bus thread. */
 void hubusd_on_connect(hubusd_t *d);
 
-/* Any thread: replace the slave list with a new configuration (SIGHUP). Takes ownership. */
+/* Any thread: replace the runtime part with a new configuration (SIGHUP). Takes ownership. */
 void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg);
 
+/* Test support, on the bus thread: true while a module has work queued or output that a step has not taken yet. */
+int hubusd_modules_busy(hubusd_t *d);
+
 /* Topics the MQTT client has to subscribe to; calls `fn` for every topic filter. */
-void hubusd_subscriptions(const hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx);
+void hubusd_subscriptions(hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx);
 
 /* Topic of the master availability (last will). Returns the length. */
 size_t hubusd_status_topic(const hubusd_t *d, char *out, size_t out_size);

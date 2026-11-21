@@ -12,7 +12,7 @@ Example setup: a Raspberry Pi, a relay (MCID 3), and a push button (MCID 5).
 cmake --preset host && cmake --build --preset host   # builds build/host/daemon/hubusd
 sudo install build/host/daemon/hubusd /usr/local/bin/
 sudo install -D daemon/hubusd.example.yaml /etc/hubus/hubusd.yaml
-sudo install daemon/hubusd.service /etc/systemd/system/
+sudo install daemon/hubusd.service /etc/systemd/system/    # StateDirectory: /var/lib/hubus for the runtime file
 sudo install -d -m 755 /usr/local/lib/hubus/modules   # optional: module plugins, see modules.dir
 sudo useradd -r -G gpio hubus
 hubusd --check -c /etc/hubus/hubusd.yaml       # validates the file and prints warnings
@@ -27,16 +27,21 @@ Without hardware, `build/host/test/hubusd_sim -c config.yaml` runs the same daem
 
 ## Configuration
 
-One YAML file, `/etc/hubus/hubusd.yaml` by default (`-c` overrides it); `daemon/hubusd.example.yaml` documents every option. It holds the GPIO chip and lines, the real-time priority, the timing minimums and retry budget of the master, the MQTT broker (host, port, credentials, TLS, base topic, discovery prefix, client id), intervals, the slaves.
+Two YAML files:
 
-- The file is validated at start. Errors name the line, and the daemon refuses to start; unknown keys are warnings.
+- **The main file**, `/etc/hubus/hubusd.yaml` by default (`-c` overrides it), holds what is fixed while hubusd runs: the GPIO chip and lines, the real-time priority, the timing minimums and retry budget of the master, the MQTT broker (host, port, credentials, TLS, base topic, discovery prefix, client id), the modules, and the path of the runtime file. `daemon/hubusd.example.yaml` documents it. hubusd never writes it.
+- **The runtime file**, `runtime_file` of the main file (default `/var/lib/hubus/runtime.yaml`), holds what can change [over MQTT](#configuration-over-mqtt): the slaves (`mcid`, `name`, `readback`, `poll_interval_s`), the `bus` section (readback, intervals), `mqtt.stats_interval_s`, `mqtt.discovery`, `mqtt.discovery_cleanup`, and the settings of the modules. `daemon/hubusd.runtime.example.yaml` documents it. hubusd writes it after every change: to a new file next to it that then replaces the old one, so that a crash leaves one of the two. `runtime_file: ""` keeps no file; changes over MQTT are then lost at a restart. The service unit has `StateDirectory=hubus`, so that the service may write `/var/lib/hubus` despite `ProtectSystem=strict`.
+
+What the runtime file has replaces the same part of the main file, the list of slaves as a whole. As long as there is no runtime file, the main file may hold the runtime part as start values; hubusd warns once the runtime file overrides them, since edits there would have no effect.
+
+- Both files are validated at start. Errors name the file and the line, and the daemon refuses to start; unknown keys are warnings. A key of the main file in the runtime file is an error.
 - The MQTT password can come from `password`, `password_file`, or the environment variable `HUBUSD_MQTT_PASSWORD` (which wins), so the main file can be shared.
 - `modules.dir` names a directory of module plugins (`*.so`, [master library](master-library.md#loading-plugins)) for slaves that are not among the built-in ones. They are read at the start and on `SIGHUP`, in the order of their names. A plugin that is invalid, whose name is in use, whose rules conflict with a module that was loaded before, or that others could have changed is refused and logged. Root or the user of the service must own the directory and the files, and nobody else may write them: a plugin runs with the rights of the service. `hubusd --check` loads the plugins too and reports the same.
 - `modules.call_timeout_ms` (default 1000, 10 to 60000) is the time limit for one call of a [module function](#module-functions).
-- `SIGHUP` (`systemctl reload hubusd`) reloads the slave list, the `bus` section (readback, intervals), `mqtt.stats_interval_s`, `mqtt.discovery`, and the modules. GPIO, timing, and the broker connection need a restart.
+- `SIGHUP` (`systemctl reload hubusd`) reads both files again and uses the runtime part and the modules. GPIO, timing, and the broker connection need a restart. Edit the runtime file by hand only while hubusd is stopped, or send `SIGHUP` right after saving it: the next change over MQTT writes over the edit.
 - **Reloading the modules:** a plugin whose file is unchanged stays as it is, with its thread and instances. A new or replaced file becomes a new module: hubusd waits until no function of the old one runs (at most 2 s, then it leaves its thread alone), destroys its instances, and creates new ones; its slaves keep running, and their entities are published anew. If a slave would be left without a module, because its plugin is gone or no longer valid, the modules stay as they are and the log says so. Replace a plugin with `install` or `mv` and do not write into it: a file that is written while it is loaded changes the code of the running module, as with any shared library. A module that has failed comes back only with a new file or a restart.
 
-Minimal file for the example:
+Minimal main file for the example; the slaves come over MQTT, or as start values in the main file:
 
 ```yaml
 gpio:
@@ -44,12 +49,28 @@ gpio:
   data: 27
 mqtt:
   host: localhost
-slaves:
-  - mcid: 3
-    name: Garden relay
-  - mcid: 5
-    name: Door button
 ```
+
+```sh
+mosquitto_pub -t hubus/slave/3/config/set -m '{"name":"Garden relay"}'
+mosquitto_pub -t hubus/slave/5/config/set -m '{"name":"Door button"}'
+```
+
+### Configuration over MQTT
+
+Everything in the runtime file can be read and changed over MQTT. Nothing else can: GPIO, timing, the broker connection, and the modules have no interface at all at runtime; the code that takes a change only ever sees the runtime part. A change is checked like the file, but strictly: a key hubusd does not know, a value out of range, or a key of the main file is an error, and then nothing of the message is used. A valid change takes effect at once, as with `SIGHUP`, and is written to the runtime file. The payload is JSON; YAML works as well.
+
+| Topic | Payload | Effect |
+|---|---|---|
+| `hubus/master/config/set` | a part of the runtime file: `{"bus":{"ping_interval_s":10},"mqtt":{"discovery":false}}` | Changes what it names, the rest stays. `slaves` replaces the whole list. |
+| `hubus/slave/<n>/config/set` | the options of one slave: `{"name":"Pump","readback":"cache","poll_interval_s":60}` | Adds slave `n` if it is not configured, otherwise changes what the message names. `readback: default` goes back to `bus.readback`. An empty payload adds a slave with the defaults. |
+| `hubus/slave/<n>/config/remove` | any | Removes slave `n`, with its entities and settings. |
+| `hubus/master/config` | published, retained | The runtime part as JSON, in the form `master/config/set` takes, so that a client can change it and send it back. No password, nothing of the main file. |
+| `hubus/master/config/result` | published | After each change: `topic`, `result` (`ok` or `error`), `error` with the reason, `saved` (`false`: no runtime file, or it could not be written, see the log), `ts`. A refused change is also logged and counted in `commands_rejected`. |
+
+The **settings** of a slave belong to its module (`host->save()`, [master library](master-library.md#functions-and-host)), such as the trigger distance of the [distance sensor](example-distance.md): the module sets them over its own topics, and `hubus/master/config` shows them under `settings`, with the name of the module. They are read only here: `master/config/set` keeps them as they are, whatever the message has. They go with the slave when it is removed, and a new module of the slave does not get them.
+
+Whoever can publish on the broker can change the configuration, as they can switch the slaves and start updates; restrict the topics `hubus/slave/+/config/#` and `hubus/master/config/set` with the access control of the broker where that matters.
 
 ### Timing
 
@@ -99,8 +120,7 @@ A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](sp
 
 | Topic | Payload | Effect |
 |---|---|---|
-| `hubus/slave/<n>/<key>/set` | `ON` / `OFF`, a number, or text | Command to the entity `<key>` of the slave. A switch sends the command stated by its module (relay: opcode `0x10`), and the state is published according to `readback` (below). A switch without fixed commands, a light, a text entity (any text, at most 95 characters), and a number entity (a number within the range of the entity; anything else is refused by hubusd) go to the [functions of the module](#module-functions). |
-| `hubus/slave/<n>/<key>/rgb/set` | `r,g,b` | The colour of a light, three numbers `0..255`. |
+| `hubus/slave/<n>/<topic>` | up to 255 bytes | A topic that the [module of the slave](#module-functions) took; hubusd subscribes to it while the instance of the module has it, and passes the message on. With [entities](#entities): `<key>/set` (`ON` / `OFF`, a number within the range of the entity, or text of at most 95 characters) and `<key>/rgb/set` (`r,g,b`, the colour of a light, three numbers `0..255`). A switch with fixed commands sends the command of its module (relay: opcode `0x10`), and the state is published according to `readback` (below). |
 | `hubus/slave/<n>/cmd` | `0x10 1 2` | Raw command: opcode, then argument bytes (numbers, separated by spaces or commas). Opcode `0x00` (status capture) or `0x10..0xFF`. |
 | `hubus/slave/<n>/capture` | any | `STATUS_CAPTURE`: the slave writes its status, the daemon collects and publishes it. |
 | `hubus/slave/<n>/read` | any | `REQUEST_STATE`: reads the live state of a slave that has one in one transaction and publishes it. Rejected for slaves without a state. |
@@ -110,6 +130,7 @@ A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](sp
 | `hubus/master/cmd/scan` | any | Commissioning scan ([§6.4](spec/06-operation.md#64-commissioning-scan-and-duplicate-mcids)); result on `hubus/master/scan`. |
 | `hubus/master/cmd/probe` | MCID `1..63` | One `REQUEST_INFO` to a single MCID, configured or not; result on `hubus/master/probe`. There is no function that polls all 63 MCIDs. |
 | `hubus/master/cmd/stats` | any | Publish the statistics now. |
+| `hubus/master/config/set`, `hubus/slave/<n>/config/set`, `hubus/slave/<n>/config/remove` | JSON | [Configuration over MQTT](#configuration-over-mqtt): change the runtime part, add, change, or remove a slave. |
 
 Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, payload size against the maximum its module states). Slaves never acknowledge commands; an invalid command or one that cannot be executed is reported on `hubus/master/log` and counted in `commands_rejected`.
 
@@ -126,9 +147,11 @@ Every command is validated (MCID range, `TARGET_LEN`, a module for the slave, pa
 | `hubus/master/probe` | no | result of the last probe: `mcid`, `state` (`present`, `absent`, `suspect` after repeated CRC failures), `configured`, device type, `module`, `state_capable` |
 | `hubus/master/mcid` | no | result of the last change of an MCID: `mcid`, `new_mcid`, `result` (`ok`, or why not), timestamp |
 | `hubus/master/log` | no | `{level, msg, ts}` for recoveries, offline slaves, rejected commands, unknown slaves |
+| `hubus/master/config` | yes | the runtime part of the configuration ([Configuration over MQTT](#configuration-over-mqtt)) |
+| `hubus/master/config/result` | no | result of the last change of the configuration |
 | `hubus/slave/<n>/availability` | yes | `online` / `offline` |
-| `hubus/slave/<n>/info` | yes | from the bus: protocol version, speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), the whole `hwid`, device type, and for the full form `variant`, `firmware`, `revision`, `serial`; `updater`: the updater runs. From the module: `module`, `events`, `status_capture`, `state`, `update`, `max_command`, `blind` ([§7.8](spec/07-slave.md#78-blind-sections)), `module_failed` ([module functions](#module-functions)). And the keys of its `entities`. |
-| `hubus/slave/<n>/<key>/state` | yes | value of the entity `<key>` (`ON`/`OFF`, a number), so clients get the last value after a reconnect |
+| `hubus/slave/<n>/info` | yes | from the bus: protocol version, speed class (`speed_class`, [§1.5](spec/01-physical-layer.md#15-speed-classes)), the whole `hwid`, device type, and for the full form `variant`, `firmware`, `revision`, `serial`; `updater`: the updater runs. From the module: `module`, `events`, `status_capture`, `state`, `update`, `max_command`, `blind` ([§7.8](spec/07-slave.md#78-blind-sections)), `module_failed` ([module functions](#module-functions)). And the `topics` its instance takes. |
+| `hubus/slave/<n>/<topic>` | as the module says | what the module publishes. With [entities](#entities): `<key>/state`, retained, the value of the entity (`ON`/`OFF`, a number), so clients get the last value after a reconnect. hubusd keeps what a module published retained (up to 40 topics per slave, discovery included) and publishes it again after a reconnect; it removes it when the slave leaves the configuration or gets another module |
 | `hubus/slave/<n>/data` | no | every received frame except duplicates: hex bytes, `gen`, `more`, `result` (`baseline`, `normal`, `wrapped`, `gap`, or `state` for a state read), `lost` buffer contents, timestamp |
 | `hubus/slave/<n>/stats` | no | frames, duplicates, gaps, lost contents, CRC errors, missing responses, consecutive failures, last seen |
 
@@ -136,14 +159,14 @@ Try it:
 
 ```sh
 mosquitto_sub -v -t 'hubus/#'
-mosquitto_pub -t hubus/slave/3/set -m ON          # relay on; state ON follows once read back
+mosquitto_pub -t hubus/slave/3/relay/set -m ON    # relay on; state ON follows once read back
 mosquitto_pub -t hubus/slave/5/capture -n         # read the button state now (STATUS_CAPTURE)
 mosquitto_pub -t hubus/slave/7/read -n            # read the live state of the sensor (REQUEST_STATE)
 mosquitto_pub -t hubus/master/cmd/probe -m 12     # is anybody at MCID 12?
 mosquitto_pub -t hubus/master/cmd/stats -n
 ```
 
-A button press needs no request: the slave announces it, the daemon collects it in a burst, and `hubus/slave/5/state` becomes `ON`, with the frame on `hubus/slave/5/data`.
+A button press needs no request: the slave announces it, the daemon collects it in a burst, and `hubus/slave/5/button/state` becomes `ON`, with the frame on `hubus/slave/5/data`.
 
 ## State After a Command (`readback`)
 
@@ -188,16 +211,16 @@ A slave without an event buffer, for example a sensor that is only read, never a
 
 With `mqtt.discovery: true` (default) the daemon publishes retained discovery messages under `<discovery prefix>/<component>/<object>/config` (prefix `homeassistant` by default):
 
-- one entity per entity of the module, of the kind it states: `switch`, `binary_sensor`, `sensor`, `light` (the default schema with `rgb_command_topic`), `text`, or `number` (with `min`, `max`, `step` and a box input), with unit and device class where it has them. Its object id is `hubus_<n>_<key>`; a module with one entity gives it the name of the device, one with several gives each its own name;
+- what the module of a slave announces, under the object id `hubus_<n>_<object>`. hubusd adds `unique_id`, the availability, and the device of the slave, and publishes the messages again with the device as it is now, for example after a reload that renames the slave. With [entities](#entities): one per entity, of the kind it states: `switch`, `binary_sensor`, `sensor`, `light` (the default schema with `rgb_command_topic`), `text`, or `number` (with `min`, `max`, `step` and a box input), with unit and device class where it has them, object id `hubus_<n>_<key>`; a module with one entity gives it the name of the device, one with several gives each its own name;
 - an `update` entity for a slave whose module has a [firmware image](#firmware-updates), with version, progress, and an install button;
 - each slave is a device with MCID, firmware version, and serial number, grouped under the **HUBUS master** device and available only while master and slave are online;
 - the master device has diagnostic sensors: uptime, bus errors, retries, duplicate frames, lost buffer contents, rejected commands, bus state. The diagnosis is on `hubus/master/diagnosis`.
 
-Removing a slave from the configuration and sending `SIGHUP` removes its entities. `mqtt.discovery_cleanup: true` also clears discovery entries of unconfigured MCIDs at every start.
+Removing a slave from the configuration (`hubus/slave/<n>/config/remove`, or the runtime file and `SIGHUP`) removes its entities, and so does a new module for the slave; switching discovery off removes the discovery messages, those of the master included, and keeps the rest. `mqtt.discovery_cleanup: true` also removes discovery messages of MCIDs that are not configured: hubusd subscribes to `<discovery prefix>/+/+/config` and removes every retained message the broker sends back whose object id starts with `hubus_<n>` for such an MCID. That happens on every connection to the broker; it also removes the entries `hubus_<n>` of earlier versions, which no module has.
 
 ## Entities
 
-The protocol does not define what payload bytes mean. The module of a slave does: it lists the **entities** of the slave, each with a key, a name, a kind of Home Assistant entity (`switch`, `binary_sensor`, `sensor`, `light`, `text`, `number`), a unit and device class, where its value lies in a frame (offset, 1 or 2 bytes, byte order, sign, `value = raw * scale + add`, decimals), for a number its range, and for a switch the commands for `ON` and `OFF` ([§6.10](spec/06-operation.md#610-master-modules), [master library](master-library.md#master-modules)). hubusd turns every entity into topics under `hubus/slave/<n>/<key>/` and, with discovery, into an entity of Home Assistant. Nothing is configured for it: a new device brings a module with its entities, as a [plugin](master-library.md#loading-plugins).
+The protocol does not define what payload bytes mean. The module of a slave does ([§6.10](spec/06-operation.md#610-master-modules)): its instance takes topics below the slave and publishes there ([master library](master-library.md#functions-and-host)). Most modules describe their slave by a table of **entities** and leave the rest to `hubus_module_ha.h` ([master library](master-library.md#entities-of-home-assistant)): each entity has a key, a name, a kind of Home Assistant entity (`switch`, `binary_sensor`, `sensor`, `light`, `text`, `number`), a unit and device class, where its value lies in a frame (offset, 1 or 2 bytes, byte order, sign, `value = raw * scale + add`, decimals), for a number its range, and for a switch the commands for `ON` and `OFF`. It becomes the topics `hubus/slave/<n>/<key>/state` and, if it takes values, `.../<key>/set`, and with discovery an entity of Home Assistant. Nothing is configured for it: a new device brings a module with its entities, as a [plugin](master-library.md#loading-plugins).
 
 The modules of the examples are built in:
 
@@ -207,23 +230,24 @@ The modules of the examples are built in:
 | `switch`, `switch-update` | `button`, a binary sensor (the first byte of the state) |
 | `ledstrip`, `ledstrip-update` | `button` as above, `lamp`, a light, and `animation`, a text entity for a formula ([LED strip](example-ledstrip.md#master-side)) |
 | `dht11` | `temperature` (°C) and `humidity` (%), sensors read from the state, and `fault`, a binary sensor (`1`: no good reading yet or the last readings failed; [DHT11](example-dht11.md)) |
-| `distance` | `distance` (cm, device class `distance`), `near`, a binary sensor, and `threshold`, a number from 0 to 400 cm (default 30) that the module sends to the slave ([distance sensor](example-distance.md)) |
+| `distance` | `distance` (cm, device class `distance`), `near`, a binary sensor, and `threshold`, a number from 0 to 400 cm (default 30) that the module sends to the slave and keeps as a [setting](#configuration-over-mqtt) across restarts of hubusd ([distance sensor](example-distance.md)) |
 | `motion` | `motion`, a binary sensor with device class `motion` (one byte per event: `1` motion, `0` none; [motion sensor](example-motion.md)) |
 | `temperature`, `temperature-passive` | `temperature`, a sensor in °C with device class `temperature`: the raw ADC value of the ATtiny85 internal sensor as `raw - 273`; accurate values need a calibration per device |
 
-A slave without entities stays usable through the raw topics (`data`, `cmd`, `capture`, `read`). The entities of earlier versions had the topics `hubus/slave/<n>/state` and `hubus/slave/<n>/set`; the discovery entries they left are removed by `mqtt.discovery_cleanup: true` at the next start.
+A slave without entities stays usable through the raw topics (`data`, `cmd`, `capture`, `read`). The entities of earlier versions had the topics `hubus/slave/<n>/state` and `hubus/slave/<n>/set`; the discovery entries they left are removed by `mqtt.discovery_cleanup: true` at the next connection to the broker.
 
 ### Module Functions
 
-What cannot be described as data is code: a module may have the functions `create`, `destroy`, `on_frame`, and `on_set` ([master library](master-library.md#master-modules)). They are plugin code and could take any time, so they never run on the bus thread.
+Every module has the functions `create`, `destroy`, `on_frame`, and `on_message` ([master library](master-library.md#functions-and-host)); a module that is all table takes those of `hubus_module_ha.h`. They are plugin code and could take any time, so they never run on the bus thread.
 
-- **One thread per module that has functions**, started with its first instance; modules without functions cost no thread. The calls of one module run one after the other, in the order of the events. Different modules do not wait for each other.
-- **An instance per slave:** created when a slave is configured and its module is known; destroyed when the slave is removed, its module changes, or hubusd stops.
+- **One thread per module**, started with its first instance. The calls of one module run one after the other, in the order of the events. Different modules do not wait for each other.
+- **An instance per slave:** created when a slave is configured and its module is known; destroyed when the slave is removed, its module changes, or hubusd stops. Its topics go with it, and when the slave leaves the configuration or gets another module, so does what it published retained. If `create` returns `NULL`, what it published is removed again and messages for the slave are rejected.
 - **`on_frame`** gets every new frame of the slave, also what is read back. A repeated frame is left out. `gap` says that frames were lost before this one, on the bus or in the queue of the module.
-- **`on_set`** gets the value of a `set` topic, parsed: a bool for a switch without fixed commands and for the on/off of a light, RGB for the colour of a light, text for a text entity, a number within `min`..`max` for a number entity. A value that cannot be parsed, or that the function refuses, is reported on `hubus/master/log` and counted in `commands_rejected`.
-- **A function reaches hubusd only through its host:** `send()`, `set_state()`, and `log()` append to a queue of 64 entries that the bus thread empties. A command then goes through the command queue like any other, with its checks and blind times; while that queue is full, the commands wait in the queue of the module, so a long series is not lost. A function learns from `HUBUS_MODULE_FAILED` that the queue of its module is full.
-- **Each module has a queue of 32 jobs.** When it is full, a frame is dropped, counted in `module_jobs_dropped`, and the next frame of that slave has `gap` set; a `set` is rejected. `create` and `destroy` wait for room and are never dropped.
-- **A function that does not return within `modules.call_timeout_ms`** stops its module: it is logged, and `module_failed` in `hubus/slave/<n>/info` becomes `true` for all its slaves. The module gets no more calls, so `set` for an entity that needs a function is rejected. What is data keeps working: decoding the entities, fixed commands, blind times. A thread cannot be stopped safely, so it is left alone; only a new plugin file with `SIGHUP` or a restart brings the module back.
+- **`on_message`** gets a message on a topic the instance took, with the topic below the slave. A message that no instance took, or that the module refuses (`reject()`), is reported on `hubus/master/log` and counted in `commands_rejected`. With entities, the library parses the value: a bool for a switch without fixed commands and for the on/off of a light, RGB for the colour of a light, text for a text entity, a number within `min`..`max` for a number entity; anything else is refused before the module sees it.
+- **Settings** of a slave (`setting()`, `save()`) are kept in the [runtime file](#configuration): a module saves what the slave forgets at a power-up, or what a user chose, and gets it back with `create` after a restart of hubusd. `setting()` answers at once from the copy of the instance; a save is written only if it changes something.
+- **A function reaches hubusd only through its host:** `send()`, `subscribe()`, `publish()`, `discovery()`, `log()`, `reject()`, and `save()` append to a queue of 64 entries that the bus thread empties. A command then goes through the command queue like any other, with its checks and blind times; while that queue is full, the commands wait in the queue of the module, so a long series is not lost. A function learns from `HUBUS_MODULE_FAILED` that the queue of its module is full. Every message to a module goes through the command queue as well, so it keeps its order with the commands of the slave.
+- **Each module has a queue of 32 jobs.** When it is full, a frame is dropped, counted in `module_jobs_dropped`, and the next frame of that slave has `gap` set; a message is rejected. `create` and `destroy` wait for room and are never dropped.
+- **A function that does not return within `modules.call_timeout_ms`** stops its module: it is logged, and `module_failed` in `hubus/slave/<n>/info` becomes `true` for all its slaves. The module gets no more calls, so every message for its slaves is rejected, the fixed commands of a switch included, and its states are no longer updated; the raw topics and the blind times keep working. A thread cannot be stopped safely, so it is left alone; only a new plugin file with `SIGHUP` or a restart brings the module back.
 - **A crash in a function** ends the service, since plugins run in its process; systemd restarts it, and the startup sequence recovers the bus ([§8.9](spec/08-faults.md#89-master-stops-mid-transaction)).
 
 ## Firmware Updates
@@ -246,7 +270,7 @@ mosquitto_pub -t hubus/slave/63/mcid -m 12   # a fresh device under the default 
 ```
 
 - **What happens:** hubusd refuses a new MCID that already answers, switches the slave to its updater, gives it the new MCID, and starts its application again. The bus stands still for about a second. The result is on `hubus/master/mcid` and `hubus/master/log`.
-- **hubusd does not write its configuration.** It takes the slave under the new MCID as the configuration has it there: a configured MCID goes into operation with the module of the slave, an MCID outside the configuration is reported as an unknown slave in `hubus/master/state`, with a hint on `hubus/master/log`. The old MCID goes offline; if it is configured, the log says that the configuration still has it. Move the slave in the configuration and reload hubusd (`systemctl reload hubusd`, [above](#configuration)), or add the new MCID before the change, so that the slave goes into operation at once.
+- **The configuration goes with the slave** if only the old MCID is configured: its entry, with name, options, and the settings of its module, moves to the new MCID, and hubusd writes the [runtime file](#configuration). Otherwise hubusd takes the slave under the new MCID as the configuration has it there: a configured new MCID goes into operation with the module of the slave, and a configured old MCID goes offline and stays in the configuration (the log says so); if neither is configured, the new MCID is reported as an unknown slave in `hubus/master/state`, with a hint on `hubus/master/log` to add it with `hubus/slave/<n>/config/set`.
 - **An application that takes its MCID from elsewhere** (pins, a constant) does not take the new one: hubusd reports `the application takes its MCID from elsewhere`, and the slave keeps its old MCID.
 - **A slave in its updater** stays there, under the new MCID; an update that broke off goes on there: `mosquitto_pub -t hubus/slave/12/update -m my-module`.
 - Without update support in its module, or with an updater that cannot change the MCID, the slave stays as it was and the reason is reported.

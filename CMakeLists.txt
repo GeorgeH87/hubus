@@ -56,6 +56,23 @@ target_include_directories(hubus_master PUBLIC master)
 target_link_libraries(hubus_master PUBLIC hubus_core ${CMAKE_DL_LIBS})
 target_compile_options(hubus_master PRIVATE ${HUBUS_WARNINGS})
 
+# A tiny JSON writer, and the entities of Home Assistant for modules: linked into hubusd and into module plugins.
+add_library(hubus_json STATIC master/hubus_json.c)
+target_include_directories(hubus_json PUBLIC master)
+set_target_properties(hubus_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(hubus_json PRIVATE ${HUBUS_WARNINGS})
+
+add_library(hubus_module_topic STATIC master/hubus_module_topic.c)
+target_include_directories(hubus_module_topic PUBLIC master core)
+set_target_properties(hubus_module_topic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(hubus_module_topic PRIVATE ${HUBUS_WARNINGS})
+
+add_library(hubus_module_ha STATIC master/hubus_module_ha.c)
+target_include_directories(hubus_module_ha PUBLIC master core)
+target_link_libraries(hubus_module_ha PUBLIC hubus_json hubus_module_topic)
+set_target_properties(hubus_module_ha PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(hubus_module_ha PRIVATE ${HUBUS_WARNINGS})
+
 add_subdirectory(master)
 add_subdirectory(daemon)
 add_subdirectory(examples/plugin-dimmer)

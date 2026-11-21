@@ -54,7 +54,7 @@ The module `distance` has three entities:
 | `near` | binary sensor | byte 0 |
 | `threshold` | number, 0 to 400 cm, step 1 | the trigger distance; `0` switches the events off |
 
-The module sends the trigger distance to the slave. The **default is 30 cm**, until the user sets another value (Home Assistant, or `hubus/slave/<n>/threshold/set`). Every frame of the slave carries its trigger distance; whenever it differs from the value of the module, the module sends it again. After a power-up of the slave it is `0`, so the slave gets its value back with the first event, and a slave that missed a command gets it with the next frame. The user's value is kept as long as hubusd runs; after a restart of hubusd the default applies again.
+The module sends the trigger distance to the slave. The **default is 30 cm**, until the user sets another value (Home Assistant, or `hubus/slave/<n>/threshold/set`). Every frame of the slave carries its trigger distance; whenever it differs from the value of the module, the module sends it again. After a power-up of the slave it is `0`, so the slave gets its value back with the first event, and a slave that missed a command gets it with the next frame. The module saves the user's value as a setting of the slave (`threshold`), which hubusd keeps in its [runtime file](daemon.md#configuration-over-mqtt): after a restart of hubusd the slave gets it again, not the default.
 
 ## Firmware update
 

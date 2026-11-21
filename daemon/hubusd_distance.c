@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hubus_module_ha.h"
 #include "hubusd_modules.h"
 
 #define OP_SET_THRESHOLD 0x40u
@@ -34,17 +35,31 @@ static void publish_threshold(const hubus_module_instance_t *self, const hubus_m
     char text[8];
 
     snprintf(text, sizeof text, "%u", self->threshold_cm);
-    (void)host->set_state(host, "threshold", text);
+    (void)hubus_ha_publish_state(host, "threshold", text);
+}
+
+/* The trigger distance the user chose last, which the master keeps across its restarts; the default if there is none. */
+static uint16_t saved_threshold(const hubus_module_host_t *host)
+{
+    char text[16], *end;
+    unsigned long cm;
+
+    if (host->setting(host, "threshold", text, sizeof text) == 0u) {
+        return DEFAULT_CM;
+    }
+    cm = strtoul(text, &end, 10);
+    return *end == '\0' && cm <= MAX_CM ? (uint16_t)cm : DEFAULT_CM;
 }
 
 static hubus_module_instance_t *distance_create(const hubus_module_host_t *host)
 {
-    hubus_module_instance_t *self = calloc(1, sizeof *self);
+    hubus_module_instance_t *self;
 
-    if (self) {
-        self->threshold_cm = DEFAULT_CM;
-        publish_threshold(self, host);
+    if (hubus_ha_announce(host) != HUBUS_MODULE_OK || (self = calloc(1, sizeof *self)) == NULL) {
+        return NULL;
     }
+    self->threshold_cm = saved_threshold(host);
+    publish_threshold(self, host);
     return self;
 }
 
@@ -70,6 +85,14 @@ static hubus_module_status_t distance_on_set(hubus_module_instance_t *self, cons
         return st;
     }
     publish_threshold(self, host);
+    {
+        char text[8];
+
+        snprintf(text, sizeof text, "%u", self->threshold_cm);
+        if (host->save(host, "threshold", text) != HUBUS_MODULE_OK) {
+            (void)host->log(host, "the trigger distance is not kept: the queue of the module is full");
+        }
+    }
     return HUBUS_MODULE_OK;
 }
 
@@ -83,8 +106,7 @@ static void distance_on_frame(hubus_module_instance_t *self, const hubus_module_
 {
     uint16_t mm;
 
-    (void)kind;
-    (void)gap;
+    hubus_ha_on_frame(self, host, kind, data, len, gap);
     if (len < STATE_LEN) {
         return;
     }
@@ -123,6 +145,8 @@ static const hubus_entity_t distance_entities[] = {
     },
 };
 
+static const hubus_ha_t distance_ha = {distance_entities, HUBUS_MODULE_LEN(distance_entities), distance_on_set};
+
 const hubus_module_t hubusd_distance_module = {
     HUBUS_MODULE_INIT,
     .name = "distance",
@@ -133,10 +157,9 @@ const hubus_module_t hubusd_distance_module = {
     .has_events = true,
     .has_status_capture = true,
     .has_update = true,
-    .entities = distance_entities,
-    .n_entities = HUBUS_MODULE_LEN(distance_entities),
+    .data = &distance_ha,
     .create = distance_create,
     .destroy = distance_destroy,
     .on_frame = distance_on_frame,
-    .on_set = distance_on_set,
+    .on_message = hubus_ha_on_message,
 };

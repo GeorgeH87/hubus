@@ -7,12 +7,13 @@
  *   0x10 SET_LEVEL  level     0..255
  *   state           [0] level
  *
- * Install it where hubusd looks for plugins (modules.dir). The instance remembers the level, so that ON returns to the level
- * before OFF; the first frame of the slave tells it what the slave shows.
+ * The entity of Home Assistant comes from the table of hubus_module_ha.h, which the plugin links in. Install it where hubusd
+ * looks for plugins (modules.dir). The instance remembers the level, so that ON returns to the level before OFF; the first
+ * frame of the slave tells it what the slave shows.
  */
 #include <stdlib.h>
 
-#include "hubus_module.h"
+#include "hubus_module_ha.h"
 
 #define OP_SET_LEVEL 0x10u
 #define FULL 255u
@@ -23,12 +24,12 @@ struct hubus_module_instance {
 
 static hubus_module_instance_t *dimmer_create(const hubus_module_host_t *host)
 {
-    hubus_module_instance_t *self = malloc(sizeof *self);
+    hubus_module_instance_t *self;
 
-    (void)host;
-    if (self) {
-        self->level = FULL;
+    if (hubus_ha_announce(host) != HUBUS_MODULE_OK || (self = malloc(sizeof *self)) == NULL) {
+        return NULL; /* the subscription and the discovery go with the instance */
     }
+    self->level = FULL;
     return self;
 }
 
@@ -79,7 +80,7 @@ static void dimmer_on_frame(hubus_module_instance_t *self, const hubus_module_ho
     if (data[0] != 0u) {
         self->level = data[0];
     }
-    (void)host->set_state(host, "light", data[0] != 0u ? "ON" : "OFF");
+    (void)hubus_ha_publish_state(host, "light", data[0] != 0u ? "ON" : "OFF");
 }
 
 static const hubus_module_rule_t rules[] = {
@@ -90,6 +91,8 @@ static const hubus_entity_t entities[] = {
     {.key = "light", .name = "Light", .component = HUBUS_COMPONENT_LIGHT},
 };
 
+static const hubus_ha_t table = {entities, HUBUS_MODULE_LEN(entities), dimmer_on_set};
+
 static const hubus_module_t module = {
     HUBUS_MODULE_INIT,
     .name = "dimmer",
@@ -97,12 +100,11 @@ static const hubus_module_t module = {
     .n_rules = HUBUS_MODULE_LEN(rules),
     .max_command = 2,
     .has_state = true,
-    .entities = entities,
-    .n_entities = HUBUS_MODULE_LEN(entities),
+    .data = &table,
     .create = dimmer_create,
     .destroy = dimmer_destroy,
     .on_frame = dimmer_on_frame,
-    .on_set = dimmer_on_set,
+    .on_message = hubus_ha_on_message,
 };
 
 const hubus_module_t *hubus_module_entry(void)

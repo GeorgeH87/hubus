@@ -19,6 +19,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "hubus_module_ha.h"
 #include "hubus_sim.h"
 #include "hubusd_run.h"
 
@@ -89,17 +90,17 @@ static const hubus_entity_t temperature_entity[] = {{
 static const hubus_module_t relay_module = {
     HUBUS_MODULE_INIT, .name = "relay", .rules = relay_rules, .n_rules = 1, .max_command = 31,
     .has_state = true, .has_events = true, .has_status_capture = true,
-    .entities = relay_entity, .n_entities = 1,
+    .data = &(const hubus_ha_t){relay_entity, 1, NULL}, HUBUS_HA_FUNCTIONS,
 };
 static const hubus_module_t button_module = {
     HUBUS_MODULE_INIT, .name = "button", .rules = button_rules, .n_rules = 1, .max_command = 31,
     .has_events = true, .has_status_capture = true,
-    .entities = button_entity, .n_entities = 1,
+    .data = &(const hubus_ha_t){button_entity, 1, NULL}, HUBUS_HA_FUNCTIONS,
 };
 static const hubus_module_t temperature_module = {
     HUBUS_MODULE_INIT, .name = "temperature", .rules = temperature_rules, .n_rules = 1, .max_command = 31,
     .has_state = true, .has_events = true, .has_status_capture = true,
-    .entities = temperature_entity, .n_entities = 1,
+    .data = &(const hubus_ha_t){temperature_entity, 1, NULL}, HUBUS_HA_FUNCTIONS,
 };
 static const hubus_module_t *const sim_modules[] = {&relay_module, &button_module, &temperature_module};
 

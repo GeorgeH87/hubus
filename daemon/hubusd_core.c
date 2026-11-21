@@ -12,7 +12,7 @@
 
 #include "hubus_frame.h"
 #include "hubus_update.h"
-#include "hubusd_json.h"
+#include "hubus_json.h"
 
 #define PAYLOAD_MAX 1024
 #define MODULE_STOP_WAIT_MS 2000u
@@ -113,7 +113,7 @@ static void hex(const uint8_t *data, unsigned n, char *out)
 
 static const char *slave_name(const hubusd_t *d, unsigned mcid)
 {
-    return d->slave[mcid].configured ? d->cfg.slaves[d->slave[mcid].cfg_index].name : "unconfigured";
+    return d->slave[mcid].configured ? d->cfg.rt.slaves[d->slave[mcid].cfg_index].name : "unconfigured";
 }
 
 /* The type byte of the hardware identifier. */
@@ -159,11 +159,6 @@ static int info_has_state(const hubusd_slave_t *s)
 
 /* ---- module functions ------------------------------------------------------------------------------------------- */
 
-static int module_has_functions(const hubus_module_t *m)
-{
-    return m->create != NULL || m->on_frame != NULL || m->on_set != NULL;
-}
-
 /* The worker of a module, started on demand. NULL if the module has none (yet). */
 static hubusd_worker_t *worker_of(hubusd_t *d, const hubus_module_t *m, int start)
 {
@@ -180,8 +175,20 @@ static hubusd_worker_t *worker_of(hubusd_t *d, const hubus_module_t *m, int star
     if (!start || d->stopping || slot == HUBUS_MODULE_SET_MAX) {
         return NULL;
     }
-    d->worker[slot] = hubusd_worker_start(m);
+    d->worker[slot] = hubusd_worker_start(m, d->cfg.mqtt.base_topic);
     return d->worker[slot];
+}
+
+int hubusd_modules_busy(hubusd_t *d)
+{
+    size_t k;
+
+    for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
+        if (d->worker[k] && hubusd_worker_busy(d->worker[k])) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int module_failed(hubusd_t *d, const hubus_module_t *m)
@@ -194,16 +201,26 @@ static int module_failed(hubusd_t *d, const hubus_module_t *m)
 static int slave_readback(const hubusd_t *d, unsigned mcid)
 {
     const hubusd_slave_t *s = &d->slave[mcid];
-    int rb = s->configured ? d->cfg.slaves[s->cfg_index].readback : -1;
+    int rb = s->configured ? d->cfg.rt.slaves[s->cfg_index].readback : -1;
 
     if (rb < 0) {
-        rb = d->cfg.bus.readback;
+        rb = d->cfg.rt.bus.readback;
     }
     /* A slave with neither a state nor STATUS_CAPTURE cannot be read back: its state exists only in the cache. */
     if (rb == HUBUSD_READBACK_SLAVE && !info_has_state(s) && !info_can_capture(s)) {
         rb = HUBUSD_READBACK_CACHE;
     }
     return rb;
+}
+
+/* The same for the module of the slave: whether it has to publish the state its command establishes. */
+static hubus_module_readback_t module_readback(const hubusd_t *d, unsigned mcid)
+{
+    switch (slave_readback(d, mcid)) {
+    case HUBUSD_READBACK_SLAVE: return HUBUS_READBACK_SLAVE;
+    case HUBUSD_READBACK_CACHE: return HUBUS_READBACK_CACHE;
+    default: return HUBUS_READBACK_NONE;
+    }
 }
 
 /* Blind time after a command in milliseconds (docs/spec/06-operation.md section 6.9): the value of the module plus one
@@ -595,7 +612,7 @@ static void publish_firmware(hubusd_t *d, unsigned mcid, int in_progress, int pe
 
 static void publish_slave_info(hubusd_t *d, unsigned mcid)
 {
-    char buf[640];
+    char buf[1800];
     uint8_t i;
     char t[160];
     char hwid[2 * HUBUS_MAX_PAYLOAD + 1];
@@ -637,9 +654,9 @@ static void publish_slave_info(hubusd_t *d, unsigned mcid)
         jw_bool(&w, "module_failed", module_failed(d, m));
     }
     jw_bool(&w, "updater", info_device_type(s) == HUBUS_HWID_TYPE_UPDATER);
-    jw_arr_begin(&w, "entities");
-    for (i = 0; m && i < m->n_entities; i++) {
-        jw_str(&w, NULL, m->entities[i].key);
+    jw_arr_begin(&w, "topics"); /* what its module takes */
+    for (i = 0; i < s->n_topics; i++) {
+        jw_str(&w, NULL, s->topics[i]);
     }
     jw_arr_end(&w);
     jw_obj_end(&w);
@@ -661,16 +678,6 @@ static void master_identifier(const hubusd_t *d, char *out, size_t size)
 
     sanitize_id(d->cfg.mqtt.client_id, id, sizeof id);
     snprintf(out, size, "hubusd_%s", id);
-}
-
-static int entity_has_discovery(const hubus_entity_t *e)
-{
-    return e->component < HUBUS_COMPONENT_COUNT;
-}
-
-static void entity_object(unsigned mcid, const hubus_entity_t *e, char *out, size_t size)
-{
-    snprintf(out, size, "hubus_%u_%s", mcid, e->key);
 }
 
 /* What every discovery message of a slave ends with, in an open object: when it is available, and the device it belongs to. */
@@ -699,7 +706,7 @@ static void jw_slave_device(hubusd_t *d, jw_t *w, unsigned mcid)
     jw_arr_end(w);
     jw_str(w, "name", slave_name(d, mcid));
     jw_str(w, "manufacturer", "HUBUS");
-    jw_str(w, "model", s->module->name);
+    jw_str(w, "model", s->module ? s->module->name : "");
     if (info_field(s, HUBUS_HWID_VERSION) >= 0) {
         snprintf(fw, sizeof fw, "%d", info_field(s, HUBUS_HWID_VERSION));
         jw_str(w, "sw_version", fw);
@@ -709,65 +716,6 @@ static void jw_slave_device(hubusd_t *d, jw_t *w, unsigned mcid)
     }
     jw_str(w, "via_device", master);
     jw_obj_end(w);
-}
-
-static void publish_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_entity_t *e)
-{
-    char buf[1400];
-    char t[160], tt[160], object[64];
-    const hubusd_slave_t *s = &d->slave[mcid];
-    const char *text;
-    jw_t w;
-
-    entity_object(mcid, e, object, sizeof object);
-
-    jw_init(&w, buf, sizeof buf);
-    jw_obj_begin(&w, NULL);
-    if (s->module->n_entities == 1u) {
-        jw_null(&w, "name"); /* the entity carries the name of the device */
-    } else {
-        jw_str(&w, "name", e->name);
-    }
-    jw_bool(&w, "has_entity_name", 1);
-    jw_str(&w, "unique_id", object);
-    topic(d, t, sizeof t, "slave/%u/%s/state", mcid, e->key);
-    jw_str(&w, "state_topic", t);
-    if (e->component == HUBUS_COMPONENT_SWITCH || e->component == HUBUS_COMPONENT_LIGHT ||
-        e->component == HUBUS_COMPONENT_TEXT || e->component == HUBUS_COMPONENT_NUMBER) {
-        topic(d, t, sizeof t, "slave/%u/%s/set", mcid, e->key);
-        jw_str(&w, "command_topic", t);
-    }
-    if (e->component == HUBUS_COMPONENT_LIGHT) {
-        topic(d, t, sizeof t, "slave/%u/%s/rgb/set", mcid, e->key);
-        jw_str(&w, "rgb_command_topic", t);
-    }
-    if ((text = hubusd_unit_text(e->unit)) != NULL) {
-        jw_str(&w, "unit_of_measurement", text);
-    }
-    if ((text = hubusd_device_class_name(e->device_class)) != NULL) {
-        jw_str(&w, "device_class", text);
-    }
-    if (e->component == HUBUS_COMPONENT_SENSOR) {
-        jw_str(&w, "state_class", "measurement");
-    } else if (e->component == HUBUS_COMPONENT_TEXT) {
-        jw_uint(&w, "max", HUBUS_MODULE_TEXT_MAX);
-    } else if (e->component == HUBUS_COMPONENT_NUMBER) {
-        jw_double(&w, "min", e->min, 3);
-        jw_double(&w, "max", e->max, 3);
-        jw_double(&w, "step", e->step > 0.0 ? e->step : 1.0, 3);
-        jw_str(&w, "mode", "box");
-    } else {
-        jw_str(&w, "payload_on", "ON");
-        jw_str(&w, "payload_off", "OFF");
-        if (e->component == HUBUS_COMPONENT_SWITCH) {
-            jw_str(&w, "state_on", "ON");
-            jw_str(&w, "state_off", "OFF");
-        }
-    }
-    jw_slave_device(d, &w, mcid);
-    jw_obj_end(&w);
-    discovery_topic(d, tt, sizeof tt, hubusd_component_name(e->component), object);
-    pub_json(d, &w, 1, tt);
 }
 
 /* The update entity of Home Assistant: its install command sends the name of the module to the trigger. */
@@ -795,20 +743,13 @@ static void publish_firmware_discovery(hubusd_t *d, unsigned mcid)
     pub_json(d, &w, 1, tt);
 }
 
+/* The discovery that hubusd itself owns for a slave: the update entity of a module with a firmware image. The module of the
+ * slave publishes the rest. */
 static void publish_slave_discovery(hubusd_t *d, unsigned mcid)
 {
     const hubusd_slave_t *s = &d->slave[mcid];
-    uint8_t i;
 
-    if (!d->cfg.mqtt.discovery || !s->configured || !s->module) {
-        return;
-    }
-    for (i = 0; i < s->module->n_entities; i++) {
-        if (entity_has_discovery(&s->module->entities[i])) {
-            publish_entity_discovery(d, mcid, &s->module->entities[i]);
-        }
-    }
-    if (s->module->firmware) {
+    if (d->cfg.rt.mqtt.discovery && s->configured && s->module && s->module->firmware) {
         publish_firmware_discovery(d, mcid);
     }
 }
@@ -822,67 +763,297 @@ static void remove_firmware_discovery(hubusd_t *d, unsigned mcid)
     pub(d, tt, "", 1);
 }
 
-static void remove_entity_discovery(hubusd_t *d, unsigned mcid, const hubus_entity_t *e)
-{
-    char tt[160], object[64];
-
-    entity_object(mcid, e, object, sizeof object);
-    discovery_topic(d, tt, sizeof tt, hubusd_component_name(e->component), object);
-    pub(d, tt, "", 1);
-}
-
-/* True if an entity of the same kind and key came earlier in the list of modules. */
-static int entity_listed_before(const hubusd_t *d, size_t k, uint8_t i)
-{
-    const hubus_entity_t *e = &d->modules[k]->entities[i];
-    size_t k2;
-    uint8_t i2;
-
-    for (k2 = 0; k2 <= k; k2++) {
-        for (i2 = 0; i2 < d->modules[k2]->n_entities && (k2 < k || i2 < i); i2++) {
-            const hubus_entity_t *o = &d->modules[k2]->entities[i2];
-
-            if (o->component == e->component && strcmp(o->key, e->key) == 0) {
-                return 1;
-            }
-        }
-    }
-    return 0;
-}
-
-/* The discovery entries of a slave. Without a module (an MCID nobody configured) every entity that any module could have
- * published, and the single entry per slave that earlier versions published. */
+/* The discovery entries hubusd owns for a slave with module `m`. Without a module (an MCID nobody configured) also the
+ * single entry per slave that early versions published; what modules published is found by remove_stale_discovery(). */
 static void remove_slave_discovery(hubusd_t *d, unsigned mcid, const hubus_module_t *m)
 {
     static const char *const legacy[] = {"switch", "binary_sensor", "sensor"};
     char tt[160], object[48];
-    size_t k;
     uint8_t i;
 
-    if (!d->cfg.mqtt.discovery) {
+    if (!d->cfg.rt.mqtt.discovery) {
         return;
     }
     if (m) {
-        for (i = 0; i < m->n_entities; i++) {
-            remove_entity_discovery(d, mcid, &m->entities[i]);
-        }
         if (m->firmware) {
             remove_firmware_discovery(d, mcid);
         }
         return;
     }
     remove_firmware_discovery(d, mcid);
-    for (k = 0; k < d->n_modules; k++) {
-        for (i = 0; i < d->modules[k]->n_entities; i++) {
-            if (!entity_listed_before(d, k, i)) {
-                remove_entity_discovery(d, mcid, &d->modules[k]->entities[i]);
-            }
-        }
-    }
     snprintf(object, sizeof object, "hubus_%u", mcid);
     for (i = 0; i < sizeof legacy / sizeof legacy[0]; i++) {
         discovery_topic(d, tt, sizeof tt, legacy[i], object);
         pub(d, tt, "", 1);
+    }
+}
+
+/* The slave of a discovery topic "<prefix>/<component>/<object>/config" whose object is hubus_<n> or hubus_<n>_<something>;
+ * 0 for any other topic. `legacy`: the object is hubus_<n>, the single entity of early versions, which no module has. */
+static unsigned discovery_mcid(const hubusd_t *d, const char *full, int *legacy)
+{
+    size_t pl = strlen(d->cfg.mqtt.discovery_prefix);
+    const char *object, *config;
+    unsigned long mcid;
+    char *end;
+
+    if (strncmp(full, d->cfg.mqtt.discovery_prefix, pl) != 0 || full[pl] != '/' ||
+        (object = strchr(full + pl + 1u, '/')) == NULL || strncmp(object + 1, "hubus_", 6) != 0 ||
+        !isdigit((unsigned char)object[7])) {
+        return 0;
+    }
+    mcid = strtoul(object + 7, &end, 10);
+    config = strchr(end, '/');
+    if ((*end != '_' && *end != '/') || !config || strcmp(config, "/config") != 0 || mcid < HUBUS_MCID_MIN ||
+        mcid > HUBUS_MCID_MAX) {
+        return 0;
+    }
+    *legacy = *end == '/';
+    return (unsigned)mcid;
+}
+
+/* A retained discovery message on the broker (mqtt.discovery_cleanup): one of an MCID that is not configured is removed, and
+ * one of early versions. */
+static void remove_stale_discovery(hubusd_t *d, const char *full)
+{
+    int legacy = 0;
+    unsigned mcid = discovery_mcid(d, full, &legacy);
+
+    if (d->cfg.rt.mqtt.discovery && mcid && (legacy || !d->slave[mcid].configured)) {
+        pub(d, full, "", 1);
+    }
+}
+
+/* ---- what the module of a slave publishes, and the topics it takes -------------------------------------------------------- */
+
+static hubusd_retained_t *retained_find(const hubusd_slave_t *s, const char *full)
+{
+    hubusd_retained_t *r;
+
+    for (r = s->retained; r; r = r->next) {
+        if (strcmp(r->topic, full) == 0) {
+            return r;
+        }
+    }
+    return NULL;
+}
+
+static void retained_free(hubusd_retained_t *r)
+{
+    free(r->payload);
+    free(r);
+}
+
+/* Keeps a retained message to publish it again; an empty one forgets the topic. A payload that grows needs memory once, so a
+ * state that changes with every frame costs no allocation. 0 if it cannot be kept: too many topics, or no memory. */
+static int retained_put(hubusd_slave_t *s, const char *full, const char *payload, size_t len, int discovery)
+{
+    hubusd_retained_t *r = retained_find(s, full), **p;
+
+    if (len == 0u) {
+        for (p = &s->retained; r && *p; p = &(*p)->next) {
+            if (*p == r) {
+                *p = r->next;
+                retained_free(r);
+                s->n_retained--;
+                break;
+            }
+        }
+        return 1;
+    }
+    if (!r) {
+        if (s->n_retained >= HUBUSD_RETAINED_MAX || !(r = calloc(1, sizeof *r))) {
+            return 0;
+        }
+        snprintf(r->topic, sizeof r->topic, "%s", full);
+        r->next = s->retained;
+        s->retained = r;
+        s->n_retained++;
+    }
+    if (len + 1u > r->cap) {
+        char *grown = realloc(r->payload, len + 1u);
+
+        if (!grown) {
+            return 0;
+        }
+        r->payload = grown;
+        r->cap = len + 1u;
+    }
+    memcpy(r->payload, payload, len);
+    r->payload[len] = '\0';
+    r->len = len;
+    r->discovery = (uint8_t)discovery;
+    return 1;
+}
+
+/* A discovery message of the module of a slave on `tt` ("<prefix>/<component>/hubus_<n>_<object>/config"): hubusd adds the
+ * unique id, availability, and the device of the slave, as they are now (name, firmware version). */
+static void pub_discovery(hubusd_t *d, unsigned mcid, const char *tt, const char *json, size_t len)
+{
+    char id[HUBUSD_FULL_TOPIC_LEN], tail[1024], buf[HUBUS_MODULE_PAYLOAD_MAX + sizeof tail];
+    const char *end = strrchr(tt, '/'), *start = end;
+    jw_t w;
+
+    while (start > tt && start[-1] != '/') {
+        start--;
+    }
+    snprintf(id, sizeof id, "%.*s", (int)(end - start), start);
+    jw_init(&w, tail, sizeof tail);
+    jw_obj_begin(&w, NULL);
+    jw_str(&w, "unique_id", id);
+    jw_slave_device(d, &w, mcid);
+    jw_obj_end(&w);
+    if (!jw_ok(&w)) {
+        d->stats.publish_errors++;
+        return;
+    }
+    /* `json` is "{...}": its members, then those of the tail */
+    snprintf(buf, sizeof buf, "%.*s%s%s", (int)(len - 1u), json, len > 2u ? "," : "", tail + 1);
+    pub(d, tt, buf, 1);
+}
+
+/* Everything the module of a slave published retained, again; discovery only while it is on. */
+static void publish_module_retained(hubusd_t *d, unsigned mcid)
+{
+    const hubusd_retained_t *r;
+
+    for (r = d->slave[mcid].retained; r; r = r->next) {
+        if (!r->discovery) {
+            pub(d, r->topic, r->payload, 1);
+        } else if (d->cfg.rt.mqtt.discovery) {
+            pub_discovery(d, mcid, r->topic, r->payload, r->len);
+        }
+    }
+}
+
+/* Takes back what the module of a slave published retained: its slave left the configuration, or it has another module. */
+static void retained_clear(hubusd_t *d, unsigned mcid)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+
+    while (s->retained) {
+        hubusd_retained_t *r = s->retained;
+
+        s->retained = r->next;
+        pub(d, r->topic, "", 1);
+        retained_free(r);
+    }
+    s->n_retained = 0;
+}
+
+/* Removes the discovery messages of the module of a slave from the broker, but keeps them: discovery was switched off. */
+static void retained_hide_discovery(hubusd_t *d, unsigned mcid)
+{
+    const hubusd_retained_t *r;
+
+    for (r = d->slave[mcid].retained; r; r = r->next) {
+        if (r->discovery) {
+            pub(d, r->topic, "", 1);
+        }
+    }
+}
+
+static void module_publish(hubusd_t *d, unsigned mcid, const char *sub, const char *payload, size_t len, int retain)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+    char t[HUBUSD_FULL_TOPIC_LEN];
+
+    topic(d, t, sizeof t, "slave/%u/%s", mcid, sub);
+    if (retain && !retained_put(s, t, payload, len, 0)) {
+        log_event(d, 1, "module %s, slave %u: more than %u retained topics, '%s' is not kept", s->module->name, mcid,
+                  HUBUSD_RETAINED_MAX, sub);
+    }
+    if (d->mqtt.publish(d->mqtt.ctx, t, payload, len, retain) != 0) {
+        d->stats.publish_errors++;
+    }
+}
+
+/* A discovery message of the module of a slave. The cache keeps what the module wrote: the device part can change. */
+static void module_discovery(hubusd_t *d, unsigned mcid, const char *component, const char *object, const char *json,
+                             size_t len)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+    char tt[HUBUSD_FULL_TOPIC_LEN], id[96];
+
+    snprintf(id, sizeof id, "hubus_%u_%s", mcid, object);
+    discovery_topic(d, tt, sizeof tt, component, id);
+    if (!retained_put(s, tt, json, len, 1)) {
+        log_event(d, 1, "module %s, slave %u: more than %u retained topics, the discovery of '%s' is not kept",
+                  s->module->name, mcid, HUBUSD_RETAINED_MAX, object);
+    }
+    if (d->cfg.rt.mqtt.discovery) {
+        pub_discovery(d, mcid, tt, json, len);
+    }
+}
+
+static int slave_topic_index(const hubusd_slave_t *s, const char *sub)
+{
+    uint8_t i;
+
+    for (i = 0; i < s->n_topics; i++) {
+        if (strcmp(s->topics[i], sub) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void mqtt_subscribe(hubusd_t *d, unsigned mcid, const char *sub, int on)
+{
+    char t[HUBUSD_FULL_TOPIC_LEN];
+    int (*fn)(void *, const char *) = on ? d->mqtt.subscribe : d->mqtt.unsubscribe;
+
+    topic(d, t, sizeof t, "slave/%u/%s", mcid, sub);
+    if (fn && fn(d->mqtt.ctx, t) != 0) {
+        d->stats.publish_errors++;
+    }
+}
+
+/* The instance of a slave takes a topic. The worker has checked it and keeps the same list. */
+static void slave_subscribe(hubusd_t *d, unsigned mcid, const char *sub)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+
+    if (slave_topic_index(s, sub) >= 0 || s->n_topics >= HUBUS_MODULE_TOPICS_MAX) {
+        return;
+    }
+    snprintf(s->topics[s->n_topics++], sizeof s->topics[0], "%s", sub);
+    mqtt_subscribe(d, mcid, sub, 1);
+}
+
+static void slave_unsubscribe(hubusd_t *d, unsigned mcid, const char *sub)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+    int i = slave_topic_index(s, sub);
+
+    if (i < 0) {
+        return;
+    }
+    mqtt_subscribe(d, mcid, sub, 0);
+    s->n_topics--;
+    memmove(s->topics[i], s->topics[i + 1], (size_t)(s->n_topics - i) * sizeof s->topics[0]);
+}
+
+/* The instance of a slave goes away, and its topics with it. */
+static void slave_drop_topics(hubusd_t *d, unsigned mcid)
+{
+    hubusd_slave_t *s = &d->slave[mcid];
+
+    while (s->n_topics) {
+        slave_unsubscribe(d, mcid, s->topics[s->n_topics - 1u]);
+    }
+}
+
+/* After a new connection: the topics of all instances; the broker forgot them. */
+static void resubscribe_all(hubusd_t *d)
+{
+    unsigned mcid;
+    uint8_t i;
+
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
+        for (i = 0; i < d->slave[mcid].n_topics; i++) {
+            mqtt_subscribe(d, mcid, d->slave[mcid].topics[i], 1);
+        }
     }
 }
 
@@ -911,7 +1082,7 @@ static void publish_master_discovery(hubusd_t *d)
     char t[160], tt[200], master[96], object[160];
     unsigned i;
 
-    if (!d->cfg.mqtt.discovery) {
+    if (!d->cfg.rt.mqtt.discovery) {
         return;
     }
     master_identifier(d, master, sizeof master);
@@ -956,29 +1127,151 @@ static void publish_master_discovery(hubusd_t *d)
     }
 }
 
+static void remove_master_discovery(hubusd_t *d)
+{
+    char tt[200], master[96], object[160];
+    unsigned i;
+
+    master_identifier(d, master, sizeof master);
+    for (i = 0; i < sizeof master_sensors / sizeof master_sensors[0]; i++) {
+        snprintf(object, sizeof object, "%s_%s", master, master_sensors[i].key);
+        discovery_topic(d, tt, sizeof tt, "sensor", object);
+        pub(d, tt, "", 1);
+    }
+}
+
+/* ---- the runtime part of the configuration over MQTT ---------------------------------------------------------- */
+
+#define CONFIG_JSON_MAX (4096u + HUBUSD_MAX_SLAVES * (400u + HUBUS_MODULE_SETTINGS_MAX * (2u * HUBUS_MODULE_SETTING_MAX + 40u)))
+
+static const char *readback_name(int readback)
+{
+    return readback == HUBUSD_READBACK_NONE ? "none" : readback == HUBUSD_READBACK_CACHE ? "cache" : "slave";
+}
+
+/* hubus/master/config: the runtime part, in the form master/config/set takes. */
+static void publish_config(hubusd_t *d)
+{
+    char *buf = malloc(CONFIG_JSON_MAX);
+    char t[160];
+    unsigned i, k;
+    jw_t w;
+
+    if (!buf) {
+        log_event(d, 2, "out of memory: hubus/master/config not published");
+        return;
+    }
+    jw_init(&w, buf, CONFIG_JSON_MAX);
+    jw_obj_begin(&w, NULL);
+    jw_obj_begin(&w, "bus");
+    jw_str(&w, "readback", readback_name(d->cfg.rt.bus.readback));
+    jw_uint(&w, "ping_interval_s", d->cfg.rt.bus.ping_interval_s);
+    jw_uint(&w, "ping_failures", d->cfg.rt.bus.ping_failures);
+    jw_uint(&w, "scan_interval_s", d->cfg.rt.bus.scan_interval_s);
+    jw_uint(&w, "startup_retry_s", d->cfg.rt.bus.startup_retry_s);
+    jw_obj_end(&w);
+    jw_obj_begin(&w, "mqtt");
+    jw_uint(&w, "stats_interval_s", d->cfg.rt.mqtt.stats_interval_s);
+    jw_bool(&w, "discovery", d->cfg.rt.mqtt.discovery);
+    jw_bool(&w, "discovery_cleanup", d->cfg.rt.mqtt.discovery_cleanup);
+    jw_obj_end(&w);
+    jw_arr_begin(&w, "slaves");
+    for (i = 0; i < d->cfg.rt.n_slaves; i++) {
+        const hubusd_slave_cfg_t *sl = &d->cfg.rt.slaves[i];
+
+        jw_obj_begin(&w, NULL);
+        jw_uint(&w, "mcid", sl->mcid);
+        jw_str(&w, "name", sl->name);
+        jw_str(&w, "readback", sl->readback < 0 ? "default" : readback_name(sl->readback));
+        jw_uint(&w, "poll_interval_s", sl->poll_interval_s);
+        if (sl->settings.n) {
+            jw_obj_begin(&w, "settings"); /* read only: they belong to the module */
+            jw_str(&w, "module", sl->settings.module);
+            for (k = 0; k < sl->settings.n; k++) {
+                jw_str(&w, sl->settings.item[k].key, sl->settings.item[k].value);
+            }
+            jw_obj_end(&w);
+        }
+        jw_obj_end(&w);
+    }
+    jw_arr_end(&w);
+    jw_obj_end(&w);
+    topic(d, t, sizeof t, "master/config");
+    pub_json(d, &w, 1, t);
+    free(buf);
+}
+
+/* Writes the runtime file. 1 if it is written, 0 if hubusd keeps no runtime file or it cannot be written (logged). */
+static int persist_config(hubusd_t *d)
+{
+    char err[300];
+
+    if (!d->cfg.runtime_file[0]) {
+        return 0;
+    }
+    if (hubusd_config_write_runtime(&d->cfg.rt, d->cfg.runtime_file, err, sizeof err) != 0) {
+        log_event(d, 2, "the runtime configuration is not saved: %s", err);
+        return 0;
+    }
+    return 1;
+}
+
+/* A module saved a setting of its slave. A setting of another module goes: the slave has a new module. */
+static void save_setting(hubusd_t *d, unsigned mcid, const hubus_module_t *m, const char *key, const char *value)
+{
+    hubusd_slave_cfg_t *sl = hubusd_config_slave(&d->cfg.rt, mcid);
+    hubusd_settings_t *st;
+    unsigned k;
+
+    if (!sl) {
+        return;
+    }
+    st = &sl->settings;
+    if (strcmp(st->module, m->name) != 0) {
+        memset(st, 0, sizeof *st);
+        snprintf(st->module, sizeof st->module, "%s", m->name);
+    }
+    for (k = 0; k < st->n && strcmp(st->item[k].key, key) != 0; k++) {
+    }
+    if (!value) {
+        if (k < st->n) {
+            st->n--;
+            memmove(&st->item[k], &st->item[k + 1u], (st->n - k) * sizeof st->item[0]);
+        }
+    } else if (k < st->n || st->n < HUBUS_MODULE_SETTINGS_MAX) {
+        if (k == st->n) {
+            snprintf(st->item[st->n++].key, sizeof st->item[0].key, "%s", key);
+        }
+        snprintf(st->item[k].value, sizeof st->item[0].value, "%s", value);
+    }
+    d->config_dirty = 1;
+}
+
+/* What modules saved goes to the runtime file and to hubus/master/config. */
+static void config_changed(hubusd_t *d)
+{
+    d->config_dirty = 0;
+    (void)persist_config(d);
+    publish_config(d);
+}
+
 static void publish_all_retained(hubusd_t *d)
 {
     unsigned mcid;
-    uint8_t i;
 
     publish_master_status(d, 1);
+    publish_config(d);
     publish_master_discovery(d);
     publish_state(d, 1);
     publish_diagnosis(d, 1);
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
-        const hubusd_slave_t *s = &d->slave[mcid];
-
-        if (!s->configured) {
+        if (!d->slave[mcid].configured) {
             continue;
         }
         publish_availability(d, mcid);
         publish_slave_info(d, mcid);
         publish_slave_discovery(d, mcid);
-        for (i = 0; s->module && i < s->module->n_entities; i++) {
-            if (s->last_state[i][0]) {
-                pub_topic(d, 1, s->last_state[i], "slave/%u/%s/state", mcid, s->module->entities[i].key);
-            }
-        }
+        publish_module_retained(d, mcid);
     }
 }
 
@@ -1014,12 +1307,20 @@ static int post_lifecycle(hubusd_t *d, hubusd_worker_t *w, hubusd_job_kind_t kin
     memset(&job, 0, sizeof job);
     job.kind = kind;
     job.mcid = (uint8_t)mcid;
+    job.readback = module_readback(d, mcid);
+    if (kind == HUBUSD_JOB_CREATE && d->slave[mcid].configured) {
+        const hubusd_settings_t *st = &d->cfg.rt.slaves[d->slave[mcid].cfg_index].settings;
+
+        if (strcmp(st->module, hubusd_worker_module(w)->name) == 0) {
+            job.settings = *st; /* only for the module that saved them */
+        }
+    }
     return hubusd_worker_post(w, &job) || hubusd_worker_failed(w) || d->stopping;
 }
 
-/* Keeps one instance per slave whose module has functions: creates the ones that are missing, destroys the ones whose slave
- * or module is gone. Only queues jobs; the worker does the work. A create or destroy never gets lost: what does not fit into
- * a queue now is done in a later step. */
+/* Keeps one instance per slave in operation: creates the ones that are missing, destroys the ones whose slave or module is
+ * gone, and with them their topics. Only queues jobs; the worker does the work. A create or destroy never gets lost: what does
+ * not fit into a queue now is done in a later step. */
 static void sync_instances(hubusd_t *d)
 {
     unsigned mcid;
@@ -1027,7 +1328,7 @@ static void sync_instances(hubusd_t *d)
     d->sync_again = 0;
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
         hubusd_slave_t *s = &d->slave[mcid];
-        const hubus_module_t *want = (!d->stopping && !s->updating && s->configured && s->module && module_has_functions(s->module)) ? s->module : NULL;
+        const hubus_module_t *want = (!d->stopping && !s->updating && s->configured && s->module) ? s->module : NULL;
         hubusd_worker_t *w;
 
         if (want == s->inst_module) {
@@ -1039,6 +1340,7 @@ static void sync_instances(hubusd_t *d)
             continue;
         }
         s->inst_module = NULL;
+        slave_drop_topics(d, mcid);
         if (!want) {
             continue;
         }
@@ -1049,6 +1351,7 @@ static void sync_instances(hubusd_t *d)
             log_event(d, 2, "module %s: no instance for slave %u: the module has failed", want->name, mcid);
         } else if (post_lifecycle(d, w, HUBUSD_JOB_CREATE, mcid)) {
             s->inst_module = want;
+            s->no_instance = 0;
         } else {
             d->sync_again = 1;
         }
@@ -1061,13 +1364,14 @@ static void post_frame(hubusd_t *d, hubusd_slave_t *s, const hubus_slave_frame_t
     hubusd_worker_t *w;
     hubusd_job_t job;
 
-    if (!s->inst_module || !s->inst_module->on_frame || strcmp(result, "duplicate") == 0 ||
-        !(w = worker_of(d, s->inst_module, 0)) || hubusd_worker_failed(w)) {
+    if (!s->inst_module || strcmp(result, "duplicate") == 0 || !(w = worker_of(d, s->inst_module, 0)) ||
+        hubusd_worker_failed(w)) {
         return;
     }
     memset(&job, 0, sizeof job);
     job.kind = HUBUSD_JOB_FRAME;
     job.mcid = f->mcid;
+    job.readback = module_readback(d, f->mcid);
     job.frame_kind = strcmp(result, "state") == 0 ? HUBUS_FRAME_STATE : HUBUS_FRAME_EVENT;
     job.gap = lost > 0u || strcmp(result, "gap") == 0 || s->jobs_lost;
     job.len = f->len;
@@ -1080,13 +1384,14 @@ static void post_frame(hubusd_t *d, hubusd_slave_t *s, const hubus_slave_frame_t
     }
 }
 
-/* The commands and states that module functions have produced since the last step. Returns 1 if there were any. What does not
- * fit into the command queue stays with the worker until the next step: a module gets told only when its own queue is full. */
+/* What module functions have produced since the last step: commands, messages, topics. Returns 1 if there was any. What does
+ * not fit into the command queue stays with the worker until the next step: a module gets told only when its own queue is
+ * full. */
 static int drain_modules(hubusd_t *d)
 {
     int busy = 0;
     size_t k;
-    hubusd_out_t o;
+    static hubusd_out_t o; /* large; the bus thread is the only one here */
 
     for (k = 0; k < HUBUS_MODULE_SET_MAX; k++) {
         hubusd_worker_t *w = d->worker[k];
@@ -1113,28 +1418,47 @@ static int drain_modules(hubusd_t *d)
                 enqueue(d, &r); /* like any command: in order, and after the blind time of the slave */
                 break;
             }
-            case HUBUSD_OUT_STATE:
-                if (o.entity < m->n_entities) {
-                    snprintf(s->last_state[o.entity], sizeof s->last_state[o.entity], "%s", o.text);
-                    pub_topic(d, 1, o.text, "slave/%u/%s/state", o.mcid, m->entities[o.entity].key);
+            case HUBUSD_OUT_PUBLISH:
+                module_publish(d, o.mcid, o.topic, o.payload, o.len, o.retain);
+                break;
+            case HUBUSD_OUT_SUBSCRIBE:
+                if (s->inst_module == m) { /* not from an instance that is on its way out */
+                    slave_subscribe(d, o.mcid, o.topic);
+                    publish_slave_info(d, o.mcid);
                 }
                 break;
-            case HUBUSD_OUT_LOG:
-                log_event(d, 1, "module %s, slave %u: %s", m->name, o.mcid, o.text);
+            case HUBUSD_OUT_UNSUBSCRIBE:
+                slave_unsubscribe(d, o.mcid, o.topic);
+                publish_slave_info(d, o.mcid);
                 break;
-            case HUBUSD_OUT_SET_REFUSED:
-                reject(d, "module %s %s the value for entity '%s' of slave %u", m->name,
-                       o.status == HUBUS_MODULE_REJECTED ? "rejected" : "could not use", m->entities[o.entity].key, o.mcid);
+            case HUBUSD_OUT_DISCOVERY:
+                module_discovery(d, o.mcid, o.component, o.topic, o.payload, o.len);
+                break;
+            case HUBUSD_OUT_LOG:
+                log_event(d, 1, "module %s, slave %u: %s", m->name, o.mcid, o.payload);
+                break;
+            case HUBUSD_OUT_REJECT:
+                reject(d, "slave %u: %s", o.mcid, o.payload);
                 break;
             case HUBUSD_OUT_NOT_RUNNING:
-                reject(d, "module %s has no instance for slave %u yet; entity '%s' was not set", m->name, o.mcid,
-                       m->entities[o.entity].key);
+                reject(d, "module %s has no instance for slave %u yet; '%s' was not taken", m->name, o.mcid, o.topic);
                 break;
             case HUBUSD_OUT_CREATE_FAILED:
+                slave_drop_topics(d, o.mcid);
+                s->no_instance = 1;
+                retained_clear(d, o.mcid); /* what it published before it gave up has nothing behind it */
                 log_event(d, 2, "module %s could not create an instance for slave %u", m->name, o.mcid);
+                break;
+            case HUBUSD_OUT_SAVE:
+                if (s->inst_module == m) {
+                    save_setting(d, o.mcid, m, o.topic, o.n ? NULL : o.payload);
+                }
                 break;
             }
         }
+    }
+    if (d->config_dirty) {
+        config_changed(d);
     }
     return busy;
 }
@@ -1201,8 +1525,8 @@ const char *hubusd_modules_missing(const hubusd_t *d, const hubusd_config_t *cfg
 {
     unsigned i;
 
-    for (i = 0; i < cfg->n_slaves; i++) {
-        const hubusd_slave_t *s = &d->slave[cfg->slaves[i].mcid];
+    for (i = 0; i < cfg->rt.n_slaves; i++) {
+        const hubusd_slave_t *s = &d->slave[cfg->rt.slaves[i].mcid];
         const hubus_module_t *found;
 
         if (s->have_info && s->module &&
@@ -1233,6 +1557,7 @@ void hubusd_replace_modules(hubusd_t *d, const hubus_module_t *const *modules, s
             for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
                 if (d->slave[mcid].inst_module == gone) {
                     d->slave[mcid].inst_module = NULL;
+                    slave_drop_topics(d, mcid);
                 }
             }
         }
@@ -1246,18 +1571,13 @@ void hubusd_replace_modules(hubusd_t *d, const hubus_module_t *const *modules, s
         }
         resolve_module(d, mcid);
         if (s->module != before) {
-            if (before) { /* the old module is still in memory: its entities can be taken back */
-                uint8_t e;
-
+            if (before) { /* what the old module published goes; the new one publishes its own */
                 remove_slave_discovery(d, mcid, before);
-                for (e = 0; e < before->n_entities; e++) {
-                    pub_topic(d, 1, "", "slave/%u/%s/state", mcid, before->entities[e].key);
-                }
                 if (before->firmware && !(s->module && s->module->firmware)) {
                     pub_topic(d, 1, "", "slave/%u/firmware", mcid);
                 }
             }
-            memset(s->last_state, 0, sizeof s->last_state);
+            retained_clear(d, mcid);
             publish_slave_info(d, mcid);
             publish_slave_discovery(d, mcid);
         }
@@ -1304,23 +1624,27 @@ int hubusd_reload_modules(hubusd_t *d, hubus_module_set_t *current, const hubusd
 static void bind_config(hubusd_t *d)
 {
     unsigned i;
-    uint64_t now = now_ms(d);
+    uint64_t now = now_ms(d), configured = 0;
 
     for (i = 0; i <= HUBUS_MCID_MAX; i++) {
         d->slave[i].configured = 0;
         d->slave[i].module = NULL;
     }
-    for (i = 0; i < d->cfg.n_slaves; i++) {
-        hubusd_slave_t *s = &d->slave[d->cfg.slaves[i].mcid];
-        unsigned interval = d->cfg.bus.ping_interval_s ? d->cfg.bus.ping_interval_s : 1u;
+    for (i = 0; i < d->cfg.rt.n_slaves; i++) {
+        hubusd_slave_t *s = &d->slave[d->cfg.rt.slaves[i].mcid];
+        unsigned interval = d->cfg.rt.bus.ping_interval_s ? d->cfg.rt.bus.ping_interval_s : 1u;
 
+        configured |= (uint64_t)1u << d->cfg.rt.slaves[i].mcid;
         s->configured = 1;
         s->cfg_index = (uint8_t)i;
-        s->next_ping_ms = now + (uint64_t)i * interval * 1000u / (d->cfg.n_slaves ? d->cfg.n_slaves : 1u);
-        s->next_poll_ms = now + (uint64_t)d->cfg.slaves[i].poll_interval_s * 1000u;
+        s->next_ping_ms = now + (uint64_t)i * interval * 1000u / (d->cfg.rt.n_slaves ? d->cfg.rt.n_slaves : 1u);
+        s->next_poll_ms = now + (uint64_t)d->cfg.rt.slaves[i].poll_interval_s * 1000u;
         s->unknown_seen = 0;
-        resolve_module(d, d->cfg.slaves[i].mcid);
+        resolve_module(d, d->cfg.rt.slaves[i].mcid);
     }
+    pthread_mutex_lock(&d->lock);
+    d->configured = configured;
+    pthread_mutex_unlock(&d->lock);
     sync_instances(d);
 }
 
@@ -1344,7 +1668,9 @@ void hubusd_init(hubusd_t *d, const hubusd_config_t *cfg, const hubus_master_hal
     hubus_master_init(&d->master, hal, &d->cfg.master);
     d->start_ms = now_ms(d);
     d->bus = HUBUSD_BUS_STARTING;
-    d->next_stats_ms = d->start_ms + (uint64_t)d->cfg.mqtt.stats_interval_s * 1000u;
+    d->discovery_cleanup = d->cfg.rt.mqtt.discovery_cleanup;
+    d->config_tail = &d->config_head;
+    d->next_stats_ms = d->start_ms + (uint64_t)d->cfg.rt.mqtt.stats_interval_s * 1000u;
     for (i = 0; i <= HUBUS_MCID_MAX; i++) {
         d->slave[i].online = -1;
     }
@@ -1353,9 +1679,25 @@ void hubusd_init(hubusd_t *d, const hubusd_config_t *cfg, const hubus_master_hal
 
 void hubusd_destroy(hubusd_t *d)
 {
+    unsigned mcid;
+
     stop_modules(d);
+    for (mcid = 0; mcid <= HUBUS_MCID_MAX; mcid++) {
+        while (d->slave[mcid].retained) {
+            hubusd_retained_t *r = d->slave[mcid].retained;
+
+            d->slave[mcid].retained = r->next;
+            retained_free(r);
+        }
+    }
     free(d->reload_cfg);
     d->reload_cfg = NULL;
+    while (d->config_head) {
+        hubusd_config_req_t *q = d->config_head;
+
+        d->config_head = q->next;
+        free(q);
+    }
     pthread_mutex_destroy(&d->lock);
 }
 
@@ -1381,13 +1723,12 @@ static void set_online(hubusd_t *d, unsigned mcid, int online)
     publish_availability(d, mcid);
 }
 
-/* Publishes a frame of a configured slave (event data or a state read) and the values of its entities. */
+/* Publishes a frame of a configured slave (event data or a state read) and passes it to its module. */
 static void deliver(hubusd_t *d, const hubus_slave_frame_t *f, const char *result, uint8_t lost)
 {
     hubusd_slave_t *s = &d->slave[f->mcid];
-    char buf[400], data[2 * HUBUS_MAX_PAYLOAD + 1], text[32], t[160];
+    char buf[400], data[2 * HUBUS_MAX_PAYLOAD + 1], t[160];
     jw_t w;
-    uint8_t i;
 
     d->stats.frames++;
     if (!s->configured) {
@@ -1416,15 +1757,6 @@ static void deliver(hubusd_t *d, const hubus_slave_frame_t *f, const char *resul
     jw_obj_end(&w);
     topic(d, t, sizeof t, "slave/%u/data", f->mcid);
     pub_json(d, &w, 0, t);
-
-    for (i = 0; s->module && i < s->module->n_entities; i++) {
-        const hubus_entity_t *e = &s->module->entities[i];
-
-        if (hubus_entity_decode(e, f->payload, f->len, text, sizeof text)) {
-            snprintf(s->last_state[i], sizeof s->last_state[i], "%s", text);
-            pub_topic(d, 1, text, "slave/%u/%s/state", f->mcid, e->key);
-        }
-    }
     post_frame(d, s, f, result, lost);
 }
 
@@ -1454,7 +1786,7 @@ static void bus_fault(hubusd_t *d, hubus_status_t r)
     }
     d->bus = HUBUSD_BUS_LINE_FAULT;
     snprintf(d->last_error, sizeof d->last_error, "%s", hubus_status_str(r));
-    d->next_startup_ms = now_ms(d) + (uint64_t)d->cfg.bus.startup_retry_s * 1000u;
+    d->next_startup_ms = now_ms(d) + (uint64_t)d->cfg.rt.bus.startup_retry_s * 1000u;
     publish_state(d, 0);
 }
 
@@ -1487,10 +1819,11 @@ static void store_info(hubusd_t *d, unsigned mcid, const hubus_slave_frame_t *in
 
         resolve_module(d, mcid);
         if (before && before != s->module) {
-            remove_slave_discovery(d, mcid, before); /* the entities of the module it had */
+            remove_slave_discovery(d, mcid, before);
             if (before->firmware && !firmware_module(s)) {
                 pub_topic(d, 1, "", "slave/%u/firmware", mcid);
             }
+            retained_clear(d, mcid); /* what the module it had published */
         }
         sync_instances(d);
         publish_slave_info(d, mcid);
@@ -1506,7 +1839,7 @@ static void ping(hubusd_t *d, unsigned mcid, unsigned threshold)
     hubus_status_t r = hubus_master_request_info(&d->master, (uint8_t)mcid, &info);
     uint64_t now = now_ms(d);
 
-    s->next_ping_ms = now + (uint64_t)(d->cfg.bus.ping_interval_s ? d->cfg.bus.ping_interval_s : 30u) * 1000u;
+    s->next_ping_ms = now + (uint64_t)(d->cfg.rt.bus.ping_interval_s ? d->cfg.rt.bus.ping_interval_s : 30u) * 1000u;
     if (r == HUBUS_OK) {
         int was_online = s->online == 1;
 
@@ -1741,8 +2074,8 @@ static void bus_start(hubusd_t *d)
     d->bus = HUBUSD_BUS_OK;
     d->last_error[0] = '\0';
     log_event(d, 0, "bus started");
-    for (i = 0; i < d->cfg.n_slaves && d->bus == HUBUSD_BUS_OK; i++) {
-        ping(d, d->cfg.slaves[i].mcid, 1);
+    for (i = 0; i < d->cfg.rt.n_slaves && d->bus == HUBUSD_BUS_OK; i++) {
+        ping(d, d->cfg.rt.slaves[i].mcid, 1);
     }
     if (d->bus == HUBUSD_BUS_OK) {
         do_scan(d, 0);
@@ -1753,7 +2086,7 @@ static void bus_start(hubusd_t *d)
     if (d->bus == HUBUSD_BUS_OK) {
         refresh_states(d);
     }
-    d->next_scan_ms = now_ms(d) + (uint64_t)d->cfg.bus.scan_interval_s * 1000u;
+    d->next_scan_ms = now_ms(d) + (uint64_t)d->cfg.rt.bus.scan_interval_s * 1000u;
     d->started = 1;
     publish_state(d, 0);
 }
@@ -1807,21 +2140,14 @@ static void capture_exact(hubusd_t *d, unsigned mcid)
     run_burst(d);
 }
 
-/* Reads the state of `mcid` back after a command, in the way its readback setting asks for. */
-static void read_back(hubusd_t *d, unsigned mcid, int entity, const char *expected)
+/* Reads the state of `mcid` back after a command if its readback setting asks for it (slave). With cache the module
+ * publishes what its command establishes; its host tells it the setting. */
+static void read_back(hubusd_t *d, unsigned mcid)
 {
     const hubusd_slave_t *s = &d->slave[mcid];
     hubus_status_t r;
 
-    if (slave_readback(d, mcid) == HUBUSD_READBACK_CACHE) {
-        /* no contact with the slave: report what the command establishes */
-        if (expected && entity >= 0 && s->module && entity < s->module->n_entities) {
-            hubusd_slave_t *w = &d->slave[mcid];
-
-            snprintf(w->last_state[entity], sizeof w->last_state[entity], "%s", expected);
-            pub_topic(d, 1, expected, "slave/%u/%s/state", mcid, s->module->entities[entity].key);
-        }
-    } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_has_state(s)) {
+    if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_has_state(s)) {
         /* commands are never acknowledged: read the state back, in one transaction */
         (void)read_state(d, mcid);
     } else if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && info_can_capture(s)) {
@@ -1836,9 +2162,7 @@ static void read_back(hubusd_t *d, unsigned mcid, int entity, const char *expect
     }
 }
 
-/* `expected` is the state of entity `entity` that the command establishes (for readback: cache), NULL if it is not known. */
-static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t *args, uint8_t n, int entity,
-                       const char *expected)
+static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t *args, uint8_t n)
 {
     const hubusd_slave_t *s = &d->slave[mcid];
     hubus_status_t r;
@@ -1864,7 +2188,7 @@ static void send_exact(hubusd_t *d, unsigned mcid, uint8_t opcode, const uint8_t
     if (slave_readback(d, mcid) == HUBUSD_READBACK_SLAVE && is_blind(d, mcid)) {
         d->slave[mcid].readback_due = 1; /* the slave cannot answer yet: read it back when its blind time ends */
     } else {
-        read_back(d, mcid, entity, expected);
+        read_back(d, mcid);
     }
 }
 
@@ -1898,7 +2222,7 @@ static void end_blind_times(hubusd_t *d)
 
         if (s->readback_due && !is_blind(d, mcid)) {
             s->readback_due = 0;
-            read_back(d, mcid, -1, NULL);
+            read_back(d, mcid);
         }
     }
 }
@@ -1907,7 +2231,6 @@ static void end_blind_times(hubusd_t *d)
 static int request_waits(const hubusd_t *d, const hubusd_request_t *q)
 {
     switch (q->kind) {
-    case HUBUSD_REQ_SET:
     case HUBUSD_REQ_CAPTURE:
     case HUBUSD_REQ_READ:
     case HUBUSD_REQ_PROBE:
@@ -1924,63 +2247,52 @@ static int request_waits(const hubusd_t *d, const hubusd_request_t *q)
     }
 }
 
-/* ON or OFF, in any case. */
-static int parse_on_off(const char *text, int *on)
+/* A message on a topic below a slave goes to the instance of its module that took the topic. */
+static void route_message(hubusd_t *d, const hubusd_request_t *q)
 {
-    if (strcasecmp(text, "ON") == 0) {
-        *on = 1;
-        return 1;
+    const hubusd_slave_t *s = &d->slave[q->prefix];
+    hubusd_worker_t *w;
+    uint8_t i;
+    static hubusd_job_t job; /* large; the bus thread is the only one here */
+
+    if (!s->configured) {
+        reject(d, "slave %u is not configured", q->prefix);
+        return;
     }
-    if (strcasecmp(text, "OFF") == 0) {
-        *on = 0;
-        return 1;
+    if (!s->module) {
+        reject(d, "slave %u has no module; use the raw command topic", q->prefix);
+        return;
     }
-    return 0;
-}
-
-/* "r,g,b" with three numbers 0..255. */
-static int parse_rgb(const char *text, hubus_value_t *v)
-{
-    unsigned r, g, b;
-    char extra;
-
-    if (sscanf(text, " %u , %u , %u %c", &r, &g, &b, &extra) != 3 || r > 255u || g > 255u || b > 255u) {
-        return 0;
+    if (s->no_instance) {
+        reject(d, "module %s has no instance for slave %u; '%s' was not taken", s->module->name, q->prefix, q->topic);
+        return;
     }
-    v->type = HUBUS_VALUE_RGB;
-    v->as.rgb.r = (uint8_t)r;
-    v->as.rgb.g = (uint8_t)g;
-    v->as.rgb.b = (uint8_t)b;
-    return 1;
-}
-
-/* Hands a value to the on_set function of the module of the slave. `text`: the content of a text value. */
-static void dispatch_set(hubusd_t *d, unsigned mcid, int entity, const hubus_value_t *value, const char *text)
-{
-    const hubusd_slave_t *s = &d->slave[mcid];
-    const char *key = s->module->entities[entity].key;
-    hubusd_worker_t *w = worker_of(d, s->module, 0);
-    hubusd_job_t job;
-
-    if (!s->module->on_set) {
-        reject(d, "entity '%s' of slave %u has no command and its module has no function for it", key, mcid);
-    } else if (w && hubusd_worker_failed(w)) {
+    for (i = 0; i < s->n_topics && !hubus_module_topic_matches(s->topics[i], q->topic); i++) {
+    }
+    if (i == s->n_topics) {
+        reject(d, "module %s of slave %u takes nothing on '%s'", s->module->name, q->prefix, q->topic);
+        return;
+    }
+    w = worker_of(d, s->module, 0);
+    if (w && hubusd_worker_failed(w)) {
         reject(d, "module %s has failed and is not called any more", s->module->name);
-    } else if (!w || s->inst_module != s->module) {
-        reject(d, "module %s has no instance for slave %u", s->module->name, mcid);
-    } else {
-        memset(&job, 0, sizeof job);
-        job.kind = HUBUSD_JOB_SET;
-        job.mcid = (uint8_t)mcid;
-        job.entity = (uint8_t)entity;
-        job.value = *value;
-        if (text) {
-            snprintf(job.text, sizeof job.text, "%s", text);
-        }
-        if (!hubusd_worker_post(w, &job)) {
-            d->stats.module_jobs_dropped++;
-            reject(d, "module %s is busy: the value for entity '%s' of slave %u was dropped", s->module->name, key, mcid);
-        }
+        return;
+    }
+    if (!w || s->inst_module != s->module) {
+        reject(d, "module %s has no instance for slave %u", s->module->name, q->prefix);
+        return;
+    }
+    memset(&job, 0, offsetof(hubusd_job_t, payload));
+    job.kind = HUBUSD_JOB_MESSAGE;
+    job.mcid = q->prefix;
+    job.readback = module_readback(d, q->prefix);
+    snprintf(job.topic, sizeof job.topic, "%s", q->topic);
+    job.payload_len = q->text_len;
+    memcpy(job.payload, q->text, q->text_len);
+    job.payload[q->text_len] = '\0';
+    if (!hubusd_worker_post(w, &job)) {
+        d->stats.module_jobs_dropped++;
+        reject(d, "module %s is busy: the message on '%s' for slave %u was dropped", s->module->name, q->topic, q->prefix);
     }
 }
 
@@ -2125,6 +2437,27 @@ static void publish_mcid_result(hubusd_t *d, unsigned mcid, unsigned new_mcid, c
  * configuration: it takes the slave under the new MCID as the configuration has it there (configured, or reported as
  * unknown), and says what the configuration has to follow. The old MCID goes offline.
  */
+static void apply_config(hubusd_t *d, const hubusd_runtime_cfg_t *nrt, const char *what);
+
+/* The slave answers to another MCID now: its entry in the configuration, settings included, goes with it. */
+static void move_slave_config(hubusd_t *d, unsigned mcid, unsigned new_mcid)
+{
+    hubusd_runtime_cfg_t *nrt = malloc(sizeof *nrt);
+    hubusd_slave_cfg_t *sl;
+
+    if (!nrt) {
+        log_event(d, 2, "out of memory: the configuration still has slave %u, move it to MCID %u", mcid, new_mcid);
+        return;
+    }
+    *nrt = d->cfg.rt;
+    sl = hubusd_config_slave(nrt, mcid);
+    sl->mcid = (uint8_t)new_mcid;
+    apply_config(d, nrt, "changed with the MCID");
+    free(nrt);
+    log_event(d, 0, "the configuration has slave %u under MCID %u now", mcid, new_mcid);
+    (void)persist_config(d);
+}
+
 static void run_set_mcid(hubusd_t *d, const hubusd_request_t *q)
 {
     unsigned mcid = q->prefix, new_mcid = q->args[0];
@@ -2132,6 +2465,7 @@ static void run_set_mcid(hubusd_t *d, const hubusd_request_t *q)
     hubus_update_result_t res;
     hubus_slave_frame_t info;
     hubus_status_t r;
+    int move;
 
     log_event(d, 0, "MCID of slave %u (%s) to %u", mcid, slave_name(d, mcid), new_mcid);
     s->updating = 1; /* it restarts: no instance meanwhile */
@@ -2164,9 +2498,10 @@ static void run_set_mcid(hubusd_t *d, const hubusd_request_t *q)
     n->update_module = s->update_module; /* an update that broke off goes on under the new MCID */
     s->update_module = NULL;
     s->unknown_seen = 0;
-    if (s->configured) {
+    move = s->configured && !n->configured;
+    if (s->configured && !move) {
         set_online(d, mcid, 0);
-        log_event(d, 1, "the configuration still has slave %u: move it to MCID %u", mcid, new_mcid);
+        log_event(d, 1, "the configuration still has slave %u, and MCID %u is configured as well", mcid, new_mcid);
     } else {
         s->have_info = 0;
     }
@@ -2180,9 +2515,14 @@ static void run_set_mcid(hubusd_t *d, const hubusd_request_t *q)
         } else {
             n->info = info;
             n->have_info = 1;
-            n->unknown_seen = 1;
-            log_event(d, 1, "slave %u is not configured: add it to the configuration and reload hubusd", new_mcid);
+            n->unknown_seen = !move;
+            if (!move) {
+                log_event(d, 1, "slave %u is not configured: add it with hubus/slave/%u/config/set", new_mcid, new_mcid);
+            }
         }
+    }
+    if (move) {
+        move_slave_config(d, mcid, new_mcid);
     }
     publish_state(d, 0);
     sync_instances(d);
@@ -2229,65 +2569,18 @@ static void exec_request(hubusd_t *d, const hubusd_request_t *q)
     case HUBUSD_REQ_SET_MCID:
         run_set_mcid(d, q);
         break;
-    case HUBUSD_REQ_SET: {
-        const hubusd_slave_t *s = &d->slave[q->prefix];
-        const hubus_module_command_t *cmd = NULL;
-        const hubus_entity_t *e;
-        hubus_value_t v;
-        int idx, on = 0;
-
-        if (!s->configured) {
-            reject(d, "slave %u is not configured", q->prefix);
-        } else if (!s->module) {
-            reject(d, "slave %u has no module; use the raw command topic", q->prefix);
-        } else if ((idx = hubus_module_find_entity(s->module, q->key)) < 0) {
-            reject(d, "slave %u has no entity '%s'", q->prefix, q->key);
-        } else if (q->rgb) {
-            e = &s->module->entities[idx];
-            if (e->component != HUBUS_COMPONENT_LIGHT) {
-                reject(d, "entity '%s' of slave %u is no light and takes no colour", q->key, q->prefix);
-            } else if (!parse_rgb(q->text, &v)) {
-                reject(d, "'%s' is not a colour for entity '%s' (r,g,b with numbers 0..255)", q->text, q->key);
-            } else {
-                dispatch_set(d, q->prefix, idx, &v, NULL);
-            }
-        } else if ((e = &s->module->entities[idx])->component == HUBUS_COMPONENT_TEXT) {
-            v.type = HUBUS_VALUE_TEXT;
-            dispatch_set(d, q->prefix, idx, &v, q->text);
-        } else if (e->component == HUBUS_COMPONENT_NUMBER) {
-            char *end;
-            double num = strtod(q->text, &end);
-
-            if (end == q->text || *end != '\0' || !(num >= e->min && num <= e->max)) {
-                reject(d, "'%s' is not a number for entity '%s' of slave %u (%g..%g)", q->text, q->key, q->prefix, e->min,
-                       e->max);
-            } else {
-                v.type = HUBUS_VALUE_NUMBER;
-                v.as.number = num;
-                dispatch_set(d, q->prefix, idx, &v, NULL);
-            }
-        } else if (e->component != HUBUS_COMPONENT_SWITCH && e->component != HUBUS_COMPONENT_LIGHT) {
-            reject(d, "entity '%s' of slave %u takes no commands", q->key, q->prefix);
-        } else if (!parse_on_off(q->text, &on)) {
-            reject(d, "'%s' is not a valid command for entity '%s' (ON or OFF)", q->text, q->key);
-        } else {
-            cmd = on ? &e->on : &e->off;
-            if (e->component == HUBUS_COMPONENT_SWITCH && cmd->used) {
-                send_exact(d, q->prefix, cmd->opcode, cmd->args, cmd->n_args, idx, on ? "ON" : "OFF");
-            } else {
-                v.type = HUBUS_VALUE_BOOL;
-                v.as.on = on != 0;
-                dispatch_set(d, q->prefix, idx, &v, NULL);
-            }
-        }
+    case HUBUSD_REQ_MESSAGE:
+        route_message(d, q);
         break;
-    }
+    case HUBUSD_REQ_STALE:
+        remove_stale_discovery(d, q->text);
+        break;
     case HUBUSD_REQ_RAW:
         if (q->target_len == HUBUS_TARGET_LEN_EXACT) {
             if (q->opcode == HUBUS_OP_STATUS_CAPTURE) {
                 capture_exact(d, q->prefix);
             } else {
-                send_exact(d, q->prefix, q->opcode, q->args, q->n_args, -1, NULL);
+                send_exact(d, q->prefix, q->opcode, q->args, q->n_args);
             }
         } else {
             r = hubus_master_send_command(&d->master, q->target_len, q->prefix, q->opcode, q->args, q->n_args);
@@ -2367,6 +2660,91 @@ static int parse_raw(const char *text, hubusd_request_t *r)
     return 0;
 }
 
+/* A discovery message (hubusd subscribes to them with mqtt.discovery_cleanup): one that names an MCID that is not configured,
+ * or one of early versions, goes to the bus thread, which removes it. The broker sends back what hubusd publishes itself, so
+ * the configured MCIDs are sorted out here and do not fill the queue. 1 for any topic below the discovery prefix. */
+static int stale_discovery(hubusd_t *d, const char *topic_in, size_t len)
+{
+    size_t pl = strlen(d->cfg.mqtt.discovery_prefix);
+    hubusd_request_t r;
+    unsigned mcid;
+    int configured, legacy = 0;
+
+    pthread_mutex_lock(&d->lock);
+    configured = d->discovery_cleanup; /* the bus thread may change it */
+    pthread_mutex_unlock(&d->lock);
+    if (!configured || strncmp(topic_in, d->cfg.mqtt.discovery_prefix, pl) != 0 || topic_in[pl] != '/') {
+        return 0;
+    }
+    if (len == 0u || (mcid = discovery_mcid(d, topic_in, &legacy)) == 0u || strlen(topic_in) >= sizeof r.text) {
+        return 1; /* a removal, or not one of ours */
+    }
+    pthread_mutex_lock(&d->lock);
+    configured = (d->configured >> mcid) & 1u;
+    pthread_mutex_unlock(&d->lock);
+    if (!configured || legacy) {
+        memset(&r, 0, sizeof r);
+        r.kind = HUBUSD_REQ_STALE;
+        memcpy(r.text, topic_in, strlen(topic_in) + 1u);
+        enqueue(d, &r);
+    }
+    return 1;
+}
+
+/* master/config/set, slave/<n>/config/set, slave/<n>/config/remove: queued for the bus thread, which owns the configuration.
+ * Returns 1 if `p` (below the base topic) is one of them. */
+static int config_request(hubusd_t *d, const char *p, const char *topic_in, const void *payload, size_t len)
+{
+    hubusd_config_kind_t kind;
+    hubusd_config_req_t *q;
+    unsigned mcid = 0;
+    const char *end;
+    int full;
+
+    if (strcmp(p, "master/config/set") == 0) {
+        kind = HUBUSD_CONFIG_SET;
+    } else if (strncmp(p, "slave/", 6) == 0 && parse_uint(p + 6, 999, &mcid, &end) &&
+               (strcmp(end, "/config/set") == 0 || strcmp(end, "/config/remove") == 0)) {
+        kind = strcmp(end, "/config/set") == 0 ? HUBUSD_CONFIG_SET_SLAVE : HUBUSD_CONFIG_REMOVE_SLAVE;
+        if (mcid < HUBUS_MCID_MIN || mcid > HUBUS_MCID_MAX) {
+            enqueue_reject(d, "MCID %u out of range 1..63 in '%s'", mcid, topic_in);
+            return 1;
+        }
+    } else {
+        return 0;
+    }
+    if (len > HUBUSD_CONFIG_PAYLOAD_MAX) {
+        enqueue_reject(d, "payload of %zu bytes on '%s' is too long (at most %u)", len, topic_in, HUBUSD_CONFIG_PAYLOAD_MAX);
+        return 1;
+    }
+    q = malloc(sizeof *q + len + 1u);
+    if (!q) {
+        enqueue_reject(d, "out of memory for '%s'", topic_in);
+        return 1;
+    }
+    q->next = NULL;
+    q->kind = kind;
+    q->mcid = mcid;
+    q->len = len;
+    if (len) {
+        memcpy(q->text, payload, len);
+    }
+    q->text[len] = '\0';
+    pthread_mutex_lock(&d->lock);
+    full = d->n_config >= HUBUSD_CONFIG_PENDING_MAX;
+    if (!full) {
+        *d->config_tail = q;
+        d->config_tail = &q->next;
+        d->n_config++;
+    }
+    pthread_mutex_unlock(&d->lock);
+    if (full) {
+        free(q);
+        enqueue_reject(d, "too many changes of the configuration wait; '%s' is dropped", topic_in);
+    }
+    return 1;
+}
+
 void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payload, size_t len)
 {
     const char *base = d->cfg.mqtt.base_topic;
@@ -2376,10 +2754,16 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
     hubusd_request_t r;
     unsigned a, b;
 
+    if (stale_discovery(d, topic_in, len)) {
+        return;
+    }
     if (strncmp(topic_in, base, bl) != 0 || topic_in[bl] != '/') {
         return;
     }
     p = topic_in + bl + 1u;
+    if (config_request(d, p, topic_in, payload, len)) {
+        return;
+    }
     if (len >= sizeof text) {
         enqueue_reject(d, "payload of %zu bytes on '%s' is too long", len, topic_in);
         return;
@@ -2409,7 +2793,6 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
         enqueue(d, &r);
     } else if (strncmp(p, "slave/", 6) == 0) {
         const char *end;
-        const char *slash;
 
         if (!parse_uint(p + 6, 999, &a, &end) || *end != '/') {
             enqueue_reject(d, "invalid topic '%s'", topic_in);
@@ -2422,25 +2805,21 @@ void hubusd_handle_message(hubusd_t *d, const char *topic_in, const void *payloa
         r.target_len = HUBUS_TARGET_LEN_EXACT;
         r.prefix = (uint8_t)a;
         end++;
-        slash = strchr(end, '/');
-        if (slash && slash > end && (strcmp(slash + 1, "set") == 0 || strcmp(slash + 1, "rgb/set") == 0)) {
-            size_t key_len = (size_t)(slash - end);
-
-            r.kind = HUBUSD_REQ_SET;
-            r.rgb = slash[1] == 'r';
-            if (key_len >= sizeof r.key) {
-                enqueue_reject(d, "entity key in '%s' is too long", topic_in);
+        if (!hubus_module_topic_reserved(end)) {
+            /* a topic of the module of the slave: the bus thread knows which instance took it */
+            if (!hubus_module_topic_valid(end, false)) {
+                enqueue_reject(d, "invalid topic '%s'", topic_in);
                 return;
             }
-            memcpy(r.key, end, key_len);
-            if (strlen(text) >= sizeof r.text) {
-                enqueue_reject(d, "set payload for slave %u is too long", a);
+            if (len > HUBUS_MODULE_MESSAGE_MAX) {
+                enqueue_reject(d, "message of %zu bytes on '%s' is too long (at most %u)", len, topic_in,
+                               HUBUS_MODULE_MESSAGE_MAX);
                 return;
             }
-            memcpy(r.text, text, strlen(text) + 1u);
-        } else if (strcmp(end, "set") == 0) {
-            enqueue_reject(d, "a command for slave %u goes to an entity: slave/%u/<key>/set", a, a);
-            return;
+            r.kind = HUBUSD_REQ_MESSAGE;
+            memcpy(r.topic, end, strlen(end) + 1u);
+            memcpy(r.text, text, len + 1u);
+            r.text_len = len;
         } else if (strcmp(end, "capture") == 0) {
             r.kind = HUBUSD_REQ_CAPTURE;
         } else if (strcmp(end, "read") == 0) {
@@ -2509,15 +2888,24 @@ void hubusd_request_reload(hubusd_t *d, hubusd_config_t *new_cfg)
     pthread_mutex_unlock(&d->lock);
 }
 
-void hubusd_subscriptions(const hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx)
+void hubusd_subscriptions(hubusd_t *d, void (*fn)(void *ctx, const char *filter), void *ctx)
 {
-    static const char *const filters[] = {"master/cmd/+", "slave/+/+/set", "slave/+/+/rgb/set", "slave/+/cmd", "slave/+/capture", "slave/+/read",
-                                          "slave/+/update", "slave/+/mcid", "group/+/+/cmd"};
+    static const char *const filters[] = {"master/cmd/+",   "slave/+/cmd",  "slave/+/capture", "slave/+/read",
+                                          "slave/+/update", "slave/+/mcid", "group/+/+/cmd",   "master/config/set",
+                                          "slave/+/config/set", "slave/+/config/remove"};
     char t[160];
     unsigned i;
+    int cleanup;
 
     for (i = 0; i < sizeof filters / sizeof filters[0]; i++) {
         topic(d, t, sizeof t, "%s", filters[i]);
+        fn(ctx, t);
+    }
+    pthread_mutex_lock(&d->lock); /* the bus thread may change it */
+    cleanup = d->discovery_cleanup;
+    pthread_mutex_unlock(&d->lock);
+    if (cleanup) { /* the retained discovery messages; stale_discovery() sorts them */
+        snprintf(t, sizeof t, "%s/+/+/config", d->cfg.mqtt.discovery_prefix);
         fn(ctx, t);
     }
 }
@@ -2528,12 +2916,38 @@ size_t hubusd_status_topic(const hubusd_t *d, char *out, size_t out_size)
     return strlen(out);
 }
 
-/* ---- reload ------------------------------------------------------------------------------------------------------------------ */
+/* ---- reload and changes over MQTT ------------------------------------------------------------------------------------------------ */
 
-static void apply_reload(hubusd_t *d, hubusd_config_t *nc)
+/* mqtt.discovery_cleanup now: subscribes to the retained discovery messages, or gives them up. */
+static void set_discovery_cleanup(hubusd_t *d, int on)
+{
+    char t[160];
+    unsigned mcid;
+
+    if (on == d->cfg.rt.mqtt.discovery_cleanup) {
+        return;
+    }
+    d->cfg.rt.mqtt.discovery_cleanup = on;
+    pthread_mutex_lock(&d->lock);
+    d->discovery_cleanup = on;
+    pthread_mutex_unlock(&d->lock);
+    snprintf(t, sizeof t, "%s/+/+/config", d->cfg.mqtt.discovery_prefix);
+    if ((on ? d->mqtt.subscribe : d->mqtt.unsubscribe)(d->mqtt.ctx, t) != 0) {
+        log_event(d, 2, "cannot %s '%s'", on ? "subscribe to" : "unsubscribe from", t);
+    }
+    for (mcid = HUBUS_MCID_MIN; on && d->cfg.rt.mqtt.discovery && mcid <= HUBUS_MCID_MAX; mcid++) {
+        if (!d->slave[mcid].configured) {
+            remove_slave_discovery(d, mcid, NULL); /* as at the start */
+        }
+    }
+}
+
+/* Uses this runtime part from now on. It is all a change can bring: the fixed part (GPIO, timing, broker) is not in it. */
+static void apply_config(hubusd_t *d, const hubusd_runtime_cfg_t *nrt, const char *what)
 {
     unsigned mcid;
     hubusd_slave_t old[HUBUS_MCID_MAX + 1u];
+    uint64_t now = now_ms(d);
 
     memcpy(old, d->slave, sizeof old);
     /* Remove discovery entries of slaves that are gone; the others are published again below. */
@@ -2543,37 +2957,42 @@ static void apply_reload(hubusd_t *d, hubusd_config_t *nc)
             int still = 0;
             unsigned i;
 
-            for (i = 0; i < nc->n_slaves; i++) {
-                still |= nc->slaves[i].mcid == mcid;
+            for (i = 0; i < nrt->n_slaves; i++) {
+                still |= nrt->slaves[i].mcid == mcid;
             }
             remove_slave_discovery(d, mcid, m);
             if (!still) {
-                uint8_t k;
-
                 pub_topic(d, 1, "", "slave/%u/availability", mcid);
                 if (m->firmware) {
                     pub_topic(d, 1, "", "slave/%u/firmware", mcid);
                 }
-                for (k = 0; k < m->n_entities; k++) {
-                    pub_topic(d, 1, "", "slave/%u/%s/state", mcid, m->entities[k].key);
-                }
                 pub_topic(d, 1, "", "slave/%u/info", mcid);
+                retained_clear(d, mcid); /* what its module published, discovery included */
+            } else if (d->cfg.rt.mqtt.discovery && !nrt->mqtt.discovery) {
+                retained_hide_discovery(d, mcid);
             }
         }
     }
-    d->cfg.n_slaves = nc->n_slaves;
-    memcpy(d->cfg.slaves, nc->slaves, sizeof d->cfg.slaves);
-    d->cfg.bus = nc->bus;
-    d->cfg.mqtt.stats_interval_s = nc->mqtt.stats_interval_s;
-    d->cfg.mqtt.discovery = nc->mqtt.discovery;
-    d->cfg.modules.call_timeout_ms = nc->modules.call_timeout_ms;
+    if (d->cfg.rt.mqtt.discovery && !nrt->mqtt.discovery) {
+        remove_master_discovery(d);
+    }
+    if (nrt->mqtt.stats_interval_s != d->cfg.rt.mqtt.stats_interval_s) {
+        d->next_stats_ms = now + (uint64_t)nrt->mqtt.stats_interval_s * 1000u;
+    }
+    if (nrt->bus.scan_interval_s != d->cfg.rt.bus.scan_interval_s) {
+        d->next_scan_ms = now + (uint64_t)nrt->bus.scan_interval_s * 1000u;
+    }
+    d->cfg.rt.n_slaves = nrt->n_slaves;
+    memcpy(d->cfg.rt.slaves, nrt->slaves, sizeof d->cfg.rt.slaves);
+    d->cfg.rt.bus = nrt->bus;
+    d->cfg.rt.mqtt.stats_interval_s = nrt->mqtt.stats_interval_s;
+    d->cfg.rt.mqtt.discovery = nrt->mqtt.discovery;
     bind_config(d);
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
         d->slave[mcid].have_info = old[mcid].have_info;
         d->slave[mcid].info = old[mcid].info;
         d->slave[mcid].online = old[mcid].online;
         d->slave[mcid].last_seen_ms = old[mcid].last_seen_ms;
-        memcpy(d->slave[mcid].last_state, old[mcid].last_state, sizeof old[mcid].last_state);
         d->slave[mcid].unknown_seen = d->slave[mcid].configured ? 0 : old[mcid].unknown_seen;
         d->slave[mcid].unknown_logged = old[mcid].unknown_logged;
         if (d->slave[mcid].configured) {
@@ -2581,13 +3000,102 @@ static void apply_reload(hubusd_t *d, hubusd_config_t *nc)
             if (!old[mcid].configured) {
                 d->slave[mcid].needs_refresh = 1; /* new slave: probe and read its state */
                 d->slave[mcid].online = -1;
-                d->slave[mcid].next_ping_ms = now_ms(d);
+                d->slave[mcid].next_ping_ms = now;
             }
         }
     }
     sync_instances(d);
-    log_event(d, 0, "configuration reloaded: %u slaves", d->cfg.n_slaves);
+    set_discovery_cleanup(d, nrt->mqtt.discovery_cleanup); /* after bind_config(): it knows the slaves now */
+    log_event(d, 0, "configuration %s: %u slaves", what, d->cfg.rt.n_slaves);
     publish_all_retained(d);
+}
+
+static void publish_config_result(hubusd_t *d, const hubusd_config_req_t *q, const char *error, int saved)
+{
+    char buf[1024], t[160]; /* an error of 300 characters, escaped */
+    jw_t w;
+
+    jw_init(&w, buf, sizeof buf);
+    jw_obj_begin(&w, NULL);
+    if (q->kind == HUBUSD_CONFIG_SET) {
+        topic(d, t, sizeof t, "master/config/set");
+    } else {
+        topic(d, t, sizeof t, "slave/%u/config/%s", q->mcid, q->kind == HUBUSD_CONFIG_SET_SLAVE ? "set" : "remove");
+    }
+    jw_str(&w, "topic", t);
+    jw_str(&w, "result", error ? "error" : "ok");
+    if (error) {
+        jw_str(&w, "error", error);
+    } else {
+        jw_bool(&w, "saved", saved);
+    }
+    jw_uint(&w, "ts", wall_s(d));
+    jw_obj_end(&w);
+    topic(d, t, sizeof t, "master/config/result");
+    pub_json(d, &w, 0, t);
+}
+
+/* A change over MQTT: checked on a copy of the runtime part, the only part it can reach, then used and written to the runtime
+ * file. */
+static void exec_config(hubusd_t *d, const hubusd_config_req_t *q)
+{
+    hubusd_runtime_cfg_t *nrt = malloc(sizeof *nrt);
+    char err[300];
+    int rc;
+
+    if (!nrt) {
+        reject(d, "out of memory for a change of the configuration");
+        publish_config_result(d, q, "out of memory", 0);
+        return;
+    }
+    *nrt = d->cfg.rt;
+    err[0] = '\0';
+    switch (q->kind) {
+    case HUBUSD_CONFIG_SET:
+        rc = hubusd_config_merge(q->text, q->len, nrt, err, sizeof err);
+        break;
+    case HUBUSD_CONFIG_SET_SLAVE:
+        rc = hubusd_config_merge_slave(q->text, q->len, nrt, q->mcid, err, sizeof err);
+        break;
+    default:
+        rc = hubusd_config_remove_slave(nrt, q->mcid);
+        if (rc != 0) {
+            snprintf(err, sizeof err, "slave %u is not configured", q->mcid);
+        }
+        break;
+    }
+    if (rc != 0) {
+        reject(d, "configuration not changed: %s", err);
+        publish_config_result(d, q, err, 0);
+    } else {
+        apply_config(d, nrt, "changed over MQTT");
+        publish_config_result(d, q, NULL, persist_config(d));
+    }
+    free(nrt);
+}
+
+/* The changes over MQTT that have come in since the last step. Returns 1 if there was one. */
+static int exec_configs(hubusd_t *d)
+{
+    hubusd_config_req_t *q;
+
+    pthread_mutex_lock(&d->lock);
+    q = d->config_head;
+    d->config_head = NULL;
+    d->config_tail = &d->config_head;
+    d->n_config = 0;
+    pthread_mutex_unlock(&d->lock);
+    if (!q) {
+        return 0;
+    }
+    while (q) {
+        hubusd_config_req_t *next = q->next;
+
+        exec_config(d, q);
+        free(q);
+        q = next;
+    }
+    return 1;
 }
 
 /* ---- main step ------------------------------------------------------------------------------------------------------------------ */
@@ -2614,11 +3122,16 @@ int hubusd_step(hubusd_t *d)
     pthread_mutex_unlock(&d->lock);
 
     if (reload && nc) {
-        apply_reload(d, nc);
+        d->cfg.modules.call_timeout_ms = nc->modules.call_timeout_ms; /* the rest of the fixed part needs a restart */
+        apply_config(d, &nc->rt, "reloaded");
         free(nc);
         busy = 1;
     }
+    if (exec_configs(d)) {
+        busy = 1;
+    }
     if (republish) {
+        resubscribe_all(d); /* the topics of the instances; the client has subscribed to hubusd_subscriptions() */
         publish_all_retained(d);
         busy = 1;
     }
@@ -2634,7 +3147,7 @@ int hubusd_step(hubusd_t *d)
     if (d->bus != HUBUSD_BUS_OK) {
         if (!d->started && d->bus == HUBUSD_BUS_STARTING) {
             publish_master_status(d, 1);
-            if (d->cfg.mqtt.discovery && d->cfg.mqtt.discovery_cleanup) {
+            if (d->cfg.rt.mqtt.discovery && d->cfg.rt.mqtt.discovery_cleanup) {
                 for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
                     if (!d->slave[mcid].configured) {
                         remove_slave_discovery(d, mcid, NULL);
@@ -2660,8 +3173,8 @@ int hubusd_step(hubusd_t *d)
                 reject(d, "bus is %s", bus_text(d));
             }
         }
-        if (d->cfg.mqtt.stats_interval_s && now >= d->next_stats_ms) {
-            d->next_stats_ms = now + (uint64_t)d->cfg.mqtt.stats_interval_s * 1000u;
+        if (d->cfg.rt.mqtt.stats_interval_s && now >= d->next_stats_ms) {
+            d->next_stats_ms = now + (uint64_t)d->cfg.rt.mqtt.stats_interval_s * 1000u;
             publish_stats(d);
         }
         return busy;
@@ -2696,9 +3209,9 @@ int hubusd_step(hubusd_t *d)
         }
     }
 
-    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->cfg.bus.ping_interval_s; mcid++) {
+    for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->cfg.rt.bus.ping_interval_s; mcid++) {
         if (d->slave[mcid].configured && now >= d->slave[mcid].next_ping_ms && !is_blind(d, mcid)) {
-            ping(d, mcid, d->cfg.bus.ping_failures);
+            ping(d, mcid, d->cfg.rt.bus.ping_failures);
             refresh_states(d);
             publish_state(d, 0);
             busy = 1;
@@ -2709,7 +3222,7 @@ int hubusd_step(hubusd_t *d)
      * and a burst for a slave without a state. */
     for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX && d->bus == HUBUSD_BUS_OK; mcid++) {
         hubusd_slave_t *s = &d->slave[mcid];
-        unsigned interval = s->configured ? d->cfg.slaves[s->cfg_index].poll_interval_s : 0u;
+        unsigned interval = s->configured ? d->cfg.rt.slaves[s->cfg_index].poll_interval_s : 0u;
 
         if (interval && now >= s->next_poll_ms && !is_blind(d, mcid)) {
             s->next_poll_ms = now + (uint64_t)interval * 1000u;
@@ -2721,14 +3234,14 @@ int hubusd_step(hubusd_t *d)
             }
         }
     }
-    if (d->bus == HUBUSD_BUS_OK && d->cfg.bus.scan_interval_s && now >= d->next_scan_ms && !any_blind(d)) {
-        d->next_scan_ms = now + (uint64_t)d->cfg.bus.scan_interval_s * 1000u;
+    if (d->bus == HUBUSD_BUS_OK && d->cfg.rt.bus.scan_interval_s && now >= d->next_scan_ms && !any_blind(d)) {
+        d->next_scan_ms = now + (uint64_t)d->cfg.rt.bus.scan_interval_s * 1000u;
         do_scan(d, 0);
         refresh_states(d);
         busy = 1;
     }
-    if (d->cfg.mqtt.stats_interval_s && now >= d->next_stats_ms) {
-        d->next_stats_ms = now + (uint64_t)d->cfg.mqtt.stats_interval_s * 1000u;
+    if (d->cfg.rt.mqtt.stats_interval_s && now >= d->next_stats_ms) {
+        d->next_stats_ms = now + (uint64_t)d->cfg.rt.mqtt.stats_interval_s * 1000u;
         publish_stats(d);
         for (mcid = HUBUS_MCID_MIN; mcid <= HUBUS_MCID_MAX; mcid++) {
             if (d->slave[mcid].configured) {

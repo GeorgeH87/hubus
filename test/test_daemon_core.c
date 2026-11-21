@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "hubus_crc.h"
+#include "hubus_module_ha.h"
 #include "hubus_sim.h"
 #include "hubusd_core.h"
 #include "hubusd_ledc.h"
@@ -46,6 +47,50 @@ static int fake_publish(void *ctx, const char *topic, const char *payload, size_
     msgs[n_msgs].retain = retain;
     n_msgs++;
     return 0;
+}
+
+/* What the daemon has subscribed to beyond hubusd_subscriptions(): the topics of the instances. */
+#define SUB_MAX 256
+static char subs[SUB_MAX][200];
+static unsigned n_subs, n_subscribe_calls;
+
+static int find_sub(const char *filter)
+{
+    unsigned i;
+
+    for (i = 0; i < n_subs; i++) {
+        if (strcmp(subs[i], filter) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int fake_subscribe(void *ctx, const char *filter)
+{
+    (void)ctx;
+    n_subscribe_calls++;
+    if (find_sub(filter) < 0) {
+        TEST_ASSERT_TRUE(n_subs < SUB_MAX);
+        snprintf(subs[n_subs++], sizeof subs[0], "%s", filter);
+    }
+    return 0;
+}
+
+static int fake_unsubscribe(void *ctx, const char *filter)
+{
+    int i = find_sub(filter);
+
+    (void)ctx;
+    TEST_ASSERT_TRUE_MESSAGE(i >= 0, filter);
+    memmove(subs[i], subs[i + 1], (n_subs - (unsigned)i - 1u) * sizeof subs[0]);
+    n_subs--;
+    return 0;
+}
+
+static int subscribed(const char *filter)
+{
+    return find_sub(filter) >= 0;
 }
 
 static const msg_t *last_msg(const char *topic)
@@ -184,14 +229,16 @@ static const hubus_entity_t switch_second_entities[] = {
         .off = {.used = true, .opcode = 0x10, .n_args = 1, .args = {0}},
     },
 };
-#define ENTITIES(array) .entities = (array), .n_entities = HUBUS_MODULE_LEN(array)
+/* A module that is all table (hubus_module_ha.h). */
+#define TABLE(array, set) .data = &(const hubus_ha_t){(array), HUBUS_MODULE_LEN(array), (set)}
+#define ENTITIES(array) TABLE(array, NULL), HUBUS_HA_FUNCTIONS
 
 DEVICE_MODULE(relay_plain, false, ENTITIES(relay_entity));
 DEVICE_MODULE(relay_state, true, ENTITIES(relay_entity));
 DEVICE_MODULE(relay_blind, false, .blind_default_ms = 4, ENTITIES(relay_entity));
 DEVICE_MODULE(relay_state_blind, true, .blind_default_ms = 4, ENTITIES(relay_entity));
 DEVICE_MODULE(relay_show_only, true, .blind_ops = show_only_blind, .n_blind_ops = 1, ENTITIES(relay_entity));
-DEVICE_MODULE(no_entities, false);
+DEVICE_MODULE(no_entities, false, HUBUS_HA_FUNCTIONS);
 DEVICE_MODULE(switch_plain, false, ENTITIES(button_entity));
 static const hubus_module_t relay_no_readback = {
     HUBUS_MODULE_INIT,
@@ -228,7 +275,9 @@ static hubus_module_instance_t *func_create(const hubus_module_host_t *host)
 {
     static int instance;
 
-    (void)host;
+    if (hubus_ha_announce(host) != HUBUS_MODULE_OK) {
+        return NULL;
+    }
     pthread_mutex_lock(&func_lock);
     func_created++;
     if (!func_create_fails) {
@@ -250,8 +299,7 @@ static void func_destroy(hubus_module_instance_t *self)
 static void func_on_frame(hubus_module_instance_t *self, const hubus_module_host_t *host, hubus_frame_kind_t kind,
                           const uint8_t *data, uint8_t len, bool gap)
 {
-    (void)self;
-    (void)host;
+    hubus_ha_on_frame(self, host, kind, data, len, gap);
     pthread_mutex_lock(&func_lock);
     func_frames++;
     func_frame_byte = len ? data[0] : 0;
@@ -291,7 +339,7 @@ static hubus_module_status_t func_on_set(hubus_module_instance_t *self, const hu
 
         args[0] = (uint8_t)value->as.number;
         snprintf(text, sizeof text, "%g", value->as.number);
-        (void)host->set_state(host, entity->key, text);
+        (void)hubus_ha_publish_state(host, entity->key, text);
         return host->send(host, OP_FUNC_LIMIT, args, 1);
     }
     if (value->type == HUBUS_VALUE_RGB) {
@@ -301,11 +349,11 @@ static hubus_module_status_t func_on_set(hubus_module_instance_t *self, const hu
         args[0] = value->as.rgb.r;
         args[1] = value->as.rgb.g;
         args[2] = value->as.rgb.b;
-        (void)host->set_state(host, entity->key, "ON");
+        (void)hubus_ha_publish_state(host, entity->key, "ON");
         return host->send(host, OP_FUNC_COLOUR, args, 3);
     }
     args[0] = value->as.on ? 1 : 0;
-    (void)host->set_state(host, entity->key, value->as.on ? "ON" : "OFF");
+    (void)hubus_ha_publish_state(host, entity->key, value->as.on ? "ON" : "OFF");
     return host->send(host, OP_FUNC_POWER, args, 1);
 }
 
@@ -324,8 +372,8 @@ static const hubus_entity_t func_entities[] = {
     {.key = "first", .name = "First byte", .component = HUBUS_COMPONENT_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
     {.key = "limit", .name = "Limit", .component = HUBUS_COMPONENT_NUMBER, .unit = HUBUS_UNIT_PERCENT, .min = 5, .max = 100, .step = 5},
 };
-#define FUNCTIONS .create = func_create, .destroy = func_destroy, .on_frame = func_on_frame, .on_set = func_on_set
-DEVICE_MODULE(func_module, false, FUNCTIONS, ENTITIES(func_entities));
+#define FUNCTIONS .create = func_create, .destroy = func_destroy, .on_frame = func_on_frame, .on_message = hubus_ha_on_message
+DEVICE_MODULE(func_module, false, FUNCTIONS, TABLE(func_entities, func_on_set));
 
 static const hubus_module_t *const test_modules[] = {
     &relay_plain, &relay_state, &relay_blind, &relay_state_blind, &relay_show_only, &relay_no_readback, &no_entities, &switch_plain, &temp_plain, &temp_state, &temp_two, &relay_second, &func_module,
@@ -502,12 +550,13 @@ static void load(const char *yaml)
     char err[256];
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_parse(yaml, strlen(yaml), &cfg, err, sizeof err), err);
+    cfg.runtime_file[0] = '\0'; /* tests that keep one name it */
 }
 
 static void start_daemon(void)
 {
     hubus_master_hal_t hal = hubus_sim_master_hal(&sim);
-    hubusd_mqtt_t mq = {NULL, fake_publish};
+    hubusd_mqtt_t mq = {NULL, fake_publish, fake_subscribe, fake_unsubscribe};
     hubusd_clock_t clk = {NULL, clk_mono, clk_wall};
 
     dmn = malloc(sizeof *dmn);
@@ -516,15 +565,22 @@ static void start_daemon(void)
     hubusd_set_modules(dmn, test_modules, sizeof test_modules / sizeof test_modules[0]);
 }
 
-/* Runs the bus thread until it has nothing to do (bounded). */
+/* Runs the bus thread until it has nothing to do (bounded), and waits for the threads of the modules to finish what
+ * they were given: what they produce comes back in a later step. */
 static void settle(void)
 {
-    unsigned i;
+    struct timespec pause = {0, 200000};
+    unsigned i, waits = 0;
 
     for (i = 0; i < 50; i++) {
-        if (!hubusd_step(dmn)) {
+        if (hubusd_step(dmn)) {
+            continue;
+        }
+        if (!hubusd_modules_busy(dmn) || ++waits > 5000u) {
             return;
         }
+        i--; /* a wait for a module is no step */
+        nanosleep(&pause, NULL);
     }
 }
 
@@ -570,6 +626,7 @@ void setUp(void)
     hubus_sim_init(&sim);
     hubus_sim_check_timing(&sim, 50000, 50000, 50000);
     n_msgs = 0;
+    n_subs = n_subscribe_calls = 0;
     n_dev = 0;
     dev_with_state = 0;
     dev_blind_mcid = 0;
@@ -603,6 +660,16 @@ static void say(const char *topic, const char *payload)
     hubusd_handle_message(dmn, topic, payload, strlen(payload));
 }
 
+/* What hubusd_subscriptions() lists. */
+static char sub_topics[16][160];
+static unsigned sub_n;
+
+static void collect_sub(void *ctx, const char *filter)
+{
+    (void)ctx;
+    snprintf(sub_topics[sub_n++], sizeof sub_topics[0], "%s", filter);
+}
+
 /* ---- startup ---------------------------------------------------------------------------- */
 
 static void test_startup_publishes_state_info_availability_and_discovery(void)
@@ -621,7 +688,7 @@ static void test_startup_publishes_state_info_availability_and_discovery(void)
 
     assert_contains("hubus/slave/3/info", "\"device_type\":129");
     assert_contains("hubus/slave/3/info", "\"serial\":\"00000003\"");
-    assert_contains("hubus/slave/3/info", "\"entities\":[\"relay\"]");
+    assert_contains("hubus/slave/3/info", "\"topics\":[\"relay/set\"]"); /* what its module takes */
     assert_contains("hubus/slave/3/info", "\"status_capture\":true");
     assert_contains("hubus/slave/3/info", "\"update\":false");
     assert_contains("hubus/slave/3/info", "\"updater\":false");
@@ -694,12 +761,42 @@ static void test_discovery_can_be_disabled(void)
 static void test_discovery_cleanup_clears_unconfigured_mcids(void)
 {
     standard_setup("mqtt:\n  discovery_cleanup: true\nbus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 3\n");
-    TEST_ASSERT_EQUAL_UINT(1, count("homeassistant/switch/hubus_20_relay/config")); /* once, though several modules have it */
-    assert_last("homeassistant/switch/hubus_20_relay/config", "");
     TEST_ASSERT_EQUAL_UINT(1, count("homeassistant/switch/hubus_20/config")); /* the entry of earlier versions */
     assert_last("homeassistant/switch/hubus_20/config", "");
-    assert_last("homeassistant/sensor/hubus_63_temperature/config", "");
     TEST_ASSERT_NOT_EQUAL(0, strlen(last("homeassistant/switch/hubus_3_relay/config")));
+    sub_n = 0;
+    hubusd_subscriptions(dmn, collect_sub, NULL);
+    TEST_ASSERT_EQUAL_UINT(11, sub_n);
+    TEST_ASSERT_EQUAL_STRING("homeassistant/+/+/config", sub_topics[10]);
+
+    /* what modules published is on the broker, which sends it back after the subscription */
+    n_msgs = 0;
+    say("homeassistant/switch/hubus_20_relay/config", "{\"name\":\"Relay\"}");
+    say("homeassistant/sensor/hubus_63_temperature/config", "{}");
+    say("homeassistant/switch/hubus_3_relay/config", "{}");      /* configured: it stays */
+    say("homeassistant/switch/hubus_3/config", "{}");            /* configured, but of early versions */
+    say("homeassistant/switch/hubus_21_relay/config", "");        /* a removal: nothing to do */
+    say("homeassistant/light/kitchen/config", "{}");              /* not ours */
+    say("homeassistant/sensor/hubusd_x_uptime_s/config", "{}");   /* not a slave */
+    say("homeassistant/switch/hubus_64_relay/config", "{}");      /* no MCID */
+    say("homeassistant/switch/node/hubus_20_relay/config", "{}"); /* one level more than ours */
+    settle();
+    TEST_ASSERT_EQUAL_UINT(1, count("homeassistant/switch/hubus_20_relay/config"));
+    assert_last("homeassistant/switch/hubus_20_relay/config", "");
+    assert_last("homeassistant/sensor/hubus_63_temperature/config", "");
+    assert_last("homeassistant/switch/hubus_3/config", "");
+    TEST_ASSERT_EQUAL_UINT(3, n_msgs);
+    TEST_ASSERT_EQUAL_UINT(0, dmn->stats.commands_rejected);
+}
+
+static void test_without_cleanup_discovery_messages_are_left_alone(void)
+{
+    standard_setup("bus:\n  scan_interval_s: 0\nslaves:\n  - mcid: 3\n");
+    TEST_ASSERT_NULL(last("homeassistant/switch/hubus_20/config"));
+    n_msgs = 0;
+    say("homeassistant/switch/hubus_20_relay/config", "{}");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, n_msgs);
 }
 
 static void test_custom_base_topic_and_prefix(void)
@@ -963,7 +1060,7 @@ static void test_unrelated_topics_are_ignored(void)
     standard_setup(base_yaml);
     n_msgs = 0;
     say("other/slave/3/relay/set", "ON");
-    say("hubus/slave/3/relay/state", "ON");
+    say("hubus/slave/3/data", "{}"); /* one of our own */
     say("hubus/master/status", "online");
     say("hubus", "x");
     settle();
@@ -991,7 +1088,7 @@ static void test_set_for_an_entity_the_module_does_not_have_is_rejected(void)
     say("hubus/slave/9/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
-    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "has no entity"));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "takes nothing on 'relay/set'"));
     say("hubus/slave/9/cmd", "0x10 1"); /* the raw topic still works */
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
@@ -1028,16 +1125,19 @@ static void test_raw_command_exact(void)
 
 static void test_raw_command_larger_than_the_slave_accepts_is_rejected(void)
 {
+    const hubus_module_t *before;
     hubus_module_t small;
 
     standard_setup(base_yaml);
-    small = *dmn->slave[3].module;
+    before = dmn->slave[3].module;
+    small = *before;
     small.max_command = 2;
     dmn->slave[3].module = &small;
     say("hubus/slave/3/cmd", "0x10 1 2");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
     TEST_ASSERT_EQUAL_UINT(0, dev[0].commands);
+    dmn->slave[3].module = before; /* `small` ends with this function */
 }
 
 static void test_group_and_broadcast_commands(void)
@@ -1082,15 +1182,18 @@ static void test_capture_topic(void)
 
 static void test_capture_of_a_slave_without_support_is_rejected(void)
 {
+    const hubus_module_t *before;
     hubus_module_t no_capture;
 
     standard_setup(base_yaml);
-    no_capture = *dmn->slave[5].module;
+    before = dmn->slave[5].module;
+    no_capture = *before;
     no_capture.has_status_capture = false;
     dmn->slave[5].module = &no_capture;
     say("hubus/slave/5/capture", "");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
+    dmn->slave[5].module = before; /* `no_capture` ends with this function */
 }
 
 static void test_scan_command(void)
@@ -1194,7 +1297,7 @@ static void test_a_module_with_two_entities(void)
     standard_setup(base_yaml);
     assert_last("hubus/slave/7/temperature/state", "25");
     assert_last("hubus/slave/7/low-byte/state", "ON"); /* 298 is 0x012A */
-    assert_contains("hubus/slave/7/info", "\"entities\":[\"temperature\",\"low-byte\"]");
+    assert_contains("hubus/slave/7/info", "\"topics\":[]"); /* sensors take nothing */
     assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"state_topic\":\"hubus/slave/7/temperature/state\"");
     assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"name\":\"Temperature\"");
     assert_contains("homeassistant/sensor/hubus_7_temperature/config", "\"unique_id\":\"hubus_7_temperature\"");
@@ -1215,13 +1318,13 @@ static void test_commands_without_an_entity_are_rejected(void)
     settle();
     TEST_ASSERT_EQUAL_UINT(0, dev[0].commands);
     TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
-    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "slave/3/<key>/set"));
+    TEST_ASSERT_EQUAL_UINT(1, count_containing("hubus/master/log", "takes nothing on 'set'"));
     say("hubus/slave/3/nothing/set", "ON");
-    say("hubus/slave/3/relay/relay/set", "ON"); /* not an entity either */
+    say("hubus/slave/3/relay/relay/set", "ON"); /* no topic of the module either */
     say("hubus/slave/3/this-key-is-much-longer-than-an-entity-key-may-be/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT(0, dev[0].commands);
-    TEST_ASSERT_EQUAL_UINT(3, dmn->stats.commands_rejected); /* "relay/relay/set" is none of our topics and is ignored */
+    TEST_ASSERT_EQUAL_UINT(4, dmn->stats.commands_rejected);
     say("hubus/slave/3/relay/set", "ON");
     settle();
     TEST_ASSERT_EQUAL_UINT(1, dev[0].commands);
@@ -1536,15 +1639,19 @@ static void test_publish_failures_are_counted(void)
 static void test_reconnect_republishes_retained_state(void)
 {
     standard_setup(base_yaml);
+    TEST_ASSERT_TRUE(subscribed("hubus/slave/3/relay/set"));
     n_msgs = 0;
+    n_subs = 0; /* a new connection: the broker has forgotten the subscriptions */
     hubusd_on_connect(dmn);
     settle();
     assert_last("hubus/master/status", "online");
     assert_last("hubus/slave/3/availability", "online");
-    assert_last("hubus/slave/3/relay/state", "OFF");
+    assert_last("hubus/slave/3/relay/state", "OFF"); /* what the module published, from the cache */
     TEST_ASSERT_NOT_NULL(last("hubus/slave/3/info"));
-    TEST_ASSERT_NOT_NULL(last("homeassistant/switch/hubus_3_relay/config"));
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"unique_id\":\"hubus_3_relay\"");
     TEST_ASSERT_NOT_NULL(last("hubus/master/diagnosis"));
+    TEST_ASSERT_TRUE(subscribed("hubus/slave/3/relay/set")); /* the topics of the instances again */
+    TEST_ASSERT_EQUAL_UINT(1, n_subs);
 }
 
 static void test_reload_adds_and_removes_slaves(void)
@@ -1577,6 +1684,180 @@ static void test_reload_adds_and_removes_slaves(void)
     TEST_ASSERT_EQUAL_UINT(0, strstr(last("hubus/master/state"), "\"mcid\":9") != NULL); /* no longer unknown */
 }
 
+/* ---- the configuration over MQTT ------------------------------------------------------------------------------ */
+
+static char runtime_dir[32];
+static char runtime_path[64];
+
+/* A runtime file in a directory of its own, removed by the test. */
+static void use_runtime_file(void)
+{
+    snprintf(runtime_dir, sizeof runtime_dir, "/tmp/hubusd-core-XXXXXX");
+    TEST_ASSERT_NOT_NULL(mkdtemp(runtime_dir));
+    snprintf(runtime_path, sizeof runtime_path, "%s/runtime.yaml", runtime_dir);
+    snprintf(cfg.runtime_file, sizeof cfg.runtime_file, "%s", runtime_path);
+}
+
+static void drop_runtime_file(void)
+{
+    remove(runtime_path);
+    rmdir(runtime_dir);
+}
+
+static char *read_runtime_file(void)
+{
+    static char text[4096];
+    FILE *f = fopen(runtime_path, "r");
+    size_t n;
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(f, runtime_path);
+    n = fread(text, 1, sizeof text - 1u, f);
+    fclose(f);
+    text[n] = '\0';
+    return text;
+}
+
+static void test_the_configuration_is_published(void)
+{
+    standard_setup(base_yaml);
+    TEST_ASSERT_TRUE(last_msg("hubus/master/config")->retain);
+    assert_contains("hubus/master/config", "\"bus\":{\"readback\":\"slave\",\"ping_interval_s\":5,\"ping_failures\":2,"
+                                           "\"scan_interval_s\":0,\"startup_retry_s\":10}");
+    assert_contains("hubus/master/config", "\"mqtt\":{\"stats_interval_s\":10,\"discovery\":true,\"discovery_cleanup\":false}");
+    assert_contains("hubus/master/config", "\"slaves\":[{\"mcid\":3,\"name\":\"Garden relay\",\"readback\":\"default\","
+                                           "\"poll_interval_s\":0},{\"mcid\":5,");
+    TEST_ASSERT_NULL(strstr(last("hubus/master/config"), "password"));
+    TEST_ASSERT_NULL(strstr(last("hubus/master/config"), "gpio"));
+}
+
+static void test_a_change_of_the_bus_section_takes_effect_and_is_saved(void)
+{
+    load(base_yaml);
+    use_runtime_file();
+    add_dev(3, DEV_RELAY);
+    add_dev(5, DEV_SWITCH);
+    add_dev(7, DEV_TEMP);
+    start_daemon();
+    settle();
+    n_msgs = 0;
+    say("hubus/master/config/set", "{\"bus\":{\"ping_interval_s\":60,\"readback\":\"cache\"},\"mqtt\":{\"stats_interval_s\":0}}");
+    settle();
+    assert_contains("hubus/master/config/result", "\"topic\":\"hubus/master/config/set\",\"result\":\"ok\",\"saved\":true");
+    TEST_ASSERT_FALSE(last_msg("hubus/master/config/result")->retain);
+    assert_contains("hubus/master/config", "\"ping_interval_s\":60");
+    assert_contains("hubus/master/config", "\"readback\":\"cache\"");
+    TEST_ASSERT_EQUAL_UINT(60, dmn->cfg.rt.bus.ping_interval_s);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, dmn->cfg.rt.bus.readback);
+    TEST_ASSERT_NOT_NULL(strstr(read_runtime_file(), "  ping_interval_s: 60\n"));
+    TEST_ASSERT_NOT_NULL(strstr(read_runtime_file(), "  readback: cache\n"));
+    TEST_ASSERT_NOT_NULL(strstr(read_runtime_file(), "    name: \"Garden relay\"\n"));
+    TEST_ASSERT_EQUAL_UINT(0, dmn->stats.commands_rejected);
+
+    /* the new readback mode is used at once: the relay is not asked after the command */
+    n_msgs = 0;
+    say("hubus/slave/3/relay/set", "ON");
+    settle();
+    settle(); /* the module publishes what its command establishes */
+    assert_last("hubus/slave/3/relay/state", "ON");
+    TEST_ASSERT_EQUAL_UINT(0, count_containing("hubus/slave/3/data", "\"result\":\"state\""));
+
+    /* no statistics any more */
+    n_msgs = 0;
+    advance(30);
+    TEST_ASSERT_EQUAL_UINT(0, count("hubus/master/stats"));
+    drop_runtime_file();
+}
+
+static void test_a_change_that_does_not_fit_changes_nothing(void)
+{
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/master/config/set", "{\"bus\":{\"ping_interval_s\":60},\"gpio\":{\"clk\":4}}");
+    settle();
+    assert_contains("hubus/master/config/result", "\"result\":\"error\"");
+    assert_contains("hubus/master/config/result", "'gpio' can only be set in the main configuration file");
+    TEST_ASSERT_EQUAL_UINT(5, dmn->cfg.rt.bus.ping_interval_s); /* the valid part is not taken either */
+    TEST_ASSERT_EQUAL_UINT(0, count("hubus/master/config"));
+    TEST_ASSERT_EQUAL_UINT(1, dmn->stats.commands_rejected);
+    assert_contains("hubus/master/log", "configuration not changed");
+
+    say("hubus/slave/3/config/set", "{\"name\": ");
+    say("hubus/slave/64/config/set", "{}");
+    say("hubus/slave/3/config/remove", "");
+    say("hubus/slave/3/config/remove", ""); /* the second finds nothing to remove */
+    settle();
+    assert_contains("hubus/master/config/result", "\"topic\":\"hubus/slave/3/config/remove\",\"result\":\"error\","
+                                                  "\"error\":\"slave 3 is not configured\"");
+    TEST_ASSERT_EQUAL_UINT(4, dmn->stats.commands_rejected);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "MCID 64 out of range") >= 1u);
+}
+
+/* Without a runtime file the change works and is lost with the next restart. */
+static void test_a_change_without_a_runtime_file_is_not_saved(void)
+{
+    standard_setup(base_yaml);
+    say("hubus/master/config/set", "bus:\n  ping_failures: 4\n");
+    settle();
+    assert_contains("hubus/master/config/result", "\"result\":\"ok\",\"saved\":false");
+    TEST_ASSERT_EQUAL_UINT(4, dmn->cfg.rt.bus.ping_failures);
+}
+
+static void test_slaves_are_added_renamed_and_removed_over_mqtt(void)
+{
+    standard_setup(base_yaml);
+    n_msgs = 0;
+    say("hubus/slave/9/config/set", "{\"name\":\"Unknown thing\"}");
+    say("hubus/slave/3/config/set", "{\"name\":\"Pump\"}");
+    say("hubus/slave/7/config/remove", "");
+    settle();
+    advance(6);
+    TEST_ASSERT_EQUAL_UINT(3, count_containing("hubus/master/config/result", "\"result\":\"ok\""));
+    TEST_ASSERT_TRUE(dmn->slave[9].configured);
+    assert_last("hubus/slave/9/availability", "online");
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"name\":\"Pump\"");
+    assert_last("hubus/slave/7/availability", "");
+    assert_last("homeassistant/sensor/hubus_7_temperature/config", "");
+    assert_contains("hubus/master/state", "\"configured_slaves\":3");
+    assert_contains("hubus/master/config", "{\"mcid\":9,\"name\":\"Unknown thing\"");
+    TEST_ASSERT_NULL(strstr(last("hubus/master/config"), "\"mcid\":7"));
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "configuration changed over MQTT") >= 3u);
+
+    /* the whole list at once */
+    say("hubus/master/config/set", "{\"slaves\":[{\"mcid\":5,\"name\":\"Door\"}]}");
+    settle();
+    assert_contains("hubus/master/state", "\"configured_slaves\":1");
+    assert_last("hubus/slave/3/availability", "");
+}
+
+static void test_discovery_and_its_cleanup_are_switched_over_mqtt(void)
+{
+    standard_setup(base_yaml);
+    TEST_ASSERT_FALSE(subscribed("homeassistant/+/+/config"));
+    n_msgs = 0;
+    say("hubus/master/config/set", "{\"mqtt\":{\"discovery_cleanup\":true}}");
+    settle();
+    TEST_ASSERT_TRUE(subscribed("homeassistant/+/+/config"));
+    assert_last("homeassistant/switch/hubus_20/config", ""); /* as at the start */
+    say("homeassistant/sensor/hubus_63_temperature/config", "{}"); /* the broker sends what it has */
+    settle();
+    assert_last("homeassistant/sensor/hubus_63_temperature/config", "");
+
+    say("hubus/master/config/set", "{\"mqtt\":{\"discovery_cleanup\":false,\"discovery\":false}}");
+    settle();
+    TEST_ASSERT_FALSE(subscribed("homeassistant/+/+/config"));
+    assert_last("homeassistant/switch/hubus_3_relay/config", "");
+    assert_last("homeassistant/sensor/hubusd_hubusd_uptime_s/config", ""); /* the master's go as well */
+    n_msgs = 0;
+    say("homeassistant/sensor/hubus_62_temperature/config", "{}");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, n_msgs); /* no cleanup any more */
+
+    say("hubus/master/config/set", "{\"mqtt\":{\"discovery\":true}}");
+    settle();
+    assert_contains("homeassistant/switch/hubus_3_relay/config", "\"unique_id\":\"hubus_3_relay\"");
+    assert_contains("homeassistant/sensor/hubusd_hubusd_uptime_s/config", "uptime_s");
+}
+
 static void test_shutdown_publishes_offline_and_resets_the_bus(void)
 {
     standard_setup(base_yaml);
@@ -1589,15 +1870,6 @@ static void test_shutdown_publishes_offline_and_resets_the_bus(void)
     TEST_ASSERT_EQUAL_UINT8(1, sim.data);
 }
 
-static char sub_topics[9][160];
-static unsigned sub_n;
-
-static void collect_sub(void *ctx, const char *filter)
-{
-    (void)ctx;
-    snprintf(sub_topics[sub_n++], sizeof sub_topics[0], "%s", filter);
-}
-
 static void test_subscriptions_and_status_topic(void)
 {
     char status[160];
@@ -1605,14 +1877,18 @@ static void test_subscriptions_and_status_topic(void)
     standard_setup(base_yaml);
     sub_n = 0;
     hubusd_subscriptions(dmn, collect_sub, NULL);
-    TEST_ASSERT_EQUAL_UINT(9, sub_n);
+    TEST_ASSERT_EQUAL_UINT(10, sub_n); /* the topics of the modules come from their instances */
     TEST_ASSERT_EQUAL_STRING("hubus/master/cmd/+", sub_topics[0]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/set", sub_topics[1]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/+/rgb/set", sub_topics[2]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[5]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/update", sub_topics[6]);
-    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/mcid", sub_topics[7]);
-    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[8]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/cmd", sub_topics[1]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/read", sub_topics[3]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/update", sub_topics[4]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/mcid", sub_topics[5]);
+    TEST_ASSERT_EQUAL_STRING("hubus/group/+/+/cmd", sub_topics[6]);
+    TEST_ASSERT_EQUAL_STRING("hubus/master/config/set", sub_topics[7]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/config/set", sub_topics[8]);
+    TEST_ASSERT_EQUAL_STRING("hubus/slave/+/config/remove", sub_topics[9]);
+    TEST_ASSERT_TRUE(subscribed("hubus/slave/3/relay/set"));
+    TEST_ASSERT_FALSE(subscribed("hubus/slave/5/button/set")); /* a binary sensor takes nothing */
     TEST_ASSERT_EQUAL_UINT(strlen("hubus/master/status"), hubusd_status_topic(dmn, status, sizeof status));
     TEST_ASSERT_EQUAL_STRING("hubus/master/status", status);
 }
@@ -1798,12 +2074,13 @@ static void test_a_function_that_hangs_stops_only_its_module(void)
     assert_contains("hubus/slave/6/info", "\"module_failed\":true");
     TEST_ASSERT_TRUE(count_containing("hubus/master/log", "did not return within 100 ms") >= 1);
 
-    /* no more calls, but everything that is data still works */
+    /* no more calls: the fixed commands of a switch come from the module too; the raw topic still works */
     n_msgs = 0;
     say("hubus/slave/4/lamp/set", "OFF");
-    settle();
-    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "has failed") >= 1);
     say("hubus/slave/4/relay/set", "ON");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(2, count_containing("hubus/master/log", "has failed"));
+    say("hubus/slave/4/cmd", "0x10 1");
     settle();
     TEST_ASSERT_EQUAL_HEX8(0x10, func_dev->last_op);
 
@@ -2132,6 +2409,74 @@ static void test_the_distance_sensor_gets_its_trigger_distance_back_after_a_powe
     PUMP_UNTIL(strcmp(last("hubus/slave/3/near/state"), "ON") == 0);
 }
 
+/* The trigger distance is a setting of the module: hubusd keeps it in its runtime file, and after a restart the module sends
+ * it to the slave again, not the default. */
+static void test_the_trigger_distance_outlives_a_restart_of_hubusd(void)
+{
+    static const hubus_module_t *const modules[] = {&hubusd_distance_module};
+    hubusd_config_t *saved;
+
+    distance_setup();
+    use_runtime_file();
+    snprintf(dmn->cfg.runtime_file, sizeof dmn->cfg.runtime_file, "%s", runtime_path);
+    say("hubus/slave/3/threshold/set", "75");
+    distance_until_commands(1);
+    PUMP_UNTIL(dmn->cfg.rt.slaves[0].settings.n == 1u);
+    TEST_ASSERT_EQUAL_STRING("distance", dmn->cfg.rt.slaves[0].settings.module);
+    TEST_ASSERT_EQUAL_STRING("threshold", dmn->cfg.rt.slaves[0].settings.item[0].key);
+    TEST_ASSERT_EQUAL_STRING("75", dmn->cfg.rt.slaves[0].settings.item[0].value);
+    assert_contains("hubus/master/config", "\"settings\":{\"module\":\"distance\",\"threshold\":\"75\"}");
+    TEST_ASSERT_NOT_NULL(strstr(read_runtime_file(), "    settings:\n      module: \"distance\"\n      threshold: \"75\"\n"));
+
+    /* the same value again writes nothing */
+    remove(runtime_path);
+    say("hubus/slave/3/threshold/set", "75");
+    distance_until_commands(2);
+    settle();
+    TEST_ASSERT_NOT_EQUAL(0, access(runtime_path, F_OK));
+
+    /* a restart, with what the runtime file has */
+    saved = malloc(sizeof *saved);
+    TEST_ASSERT_NOT_NULL(saved);
+    TEST_ASSERT_EQUAL_INT(0, hubusd_config_write_runtime(&dmn->cfg.rt, runtime_path, NULL, 0));
+    {
+        char err[256];
+        FILE *f = fopen(runtime_path, "r");
+        static char text[4096];
+        size_t n;
+
+        TEST_ASSERT_NOT_NULL(f);
+        n = fread(text, 1, sizeof text - 1u, f);
+        fclose(f);
+        load("mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 0\n  scan_interval_s: 0\n  readback: none\n");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_load_runtime(text, n, &cfg, err, sizeof err), err);
+    }
+    *saved = cfg;
+    hubusd_destroy(dmn);
+    free(dmn);
+    n_msgs = 0;
+    cfg = *saved;
+    free(saved);
+    start_daemon();
+    hubusd_set_modules(dmn, modules, 1);
+    settle();
+    PUMP_UNTIL(last("hubus/slave/3/threshold/state") != NULL);
+    TEST_ASSERT_EQUAL_STRING("75", last("hubus/slave/3/threshold/state"));
+    distance_report(0, 0, 0); /* a slave that forgot it */
+    distance_until_commands(3);
+    TEST_ASSERT_EQUAL_HEX8(0x02, dist->last_args[0]); /* 750 mm */
+    TEST_ASSERT_EQUAL_HEX8(0xEE, dist->last_args[1]);
+
+    /* a slave that leaves the configuration takes its settings along */
+    say("hubus/slave/3/config/remove", "");
+    settle();
+    TEST_ASSERT_EQUAL_UINT(0, dmn->cfg.rt.n_slaves);
+    say("hubus/slave/3/config/set", "{}");
+    settle();
+    TEST_ASSERT_EQUAL_UINT8(0, dmn->cfg.rt.slaves[0].settings.n);
+    drop_runtime_file();
+}
+
 static void test_the_trigger_distance_takes_numbers_within_its_range_only(void)
 {
     distance_setup();
@@ -2156,7 +2501,7 @@ static void test_the_trigger_distance_takes_numbers_within_its_range_only(void)
 
 VARIANT_RULE(func_next, DEV_FUNC, VARIANT_PLAIN);
 static const hubus_entity_t func_next_entities[] = {{.key = "lamp", .name = "Lamp", .component = HUBUS_COMPONENT_LIGHT}};
-DEVICE_MODULE(func_next, false, FUNCTIONS, ENTITIES(func_next_entities));
+DEVICE_MODULE(func_next, false, FUNCTIONS, TABLE(func_next_entities, func_on_set));
 
 static void test_replacing_a_module_makes_new_instances_and_entities(void)
 {
@@ -2178,9 +2523,9 @@ static void test_replacing_a_module_makes_new_instances_and_entities(void)
     TEST_ASSERT_EQUAL_PTR(&func_next, dmn->slave[4].module);
     assert_contains("hubus/slave/4/info", "\"module\":\"func_next\"");
     assert_last("homeassistant/switch/hubus_4_fan/config", ""); /* gone with the old module */
-    assert_last("hubus/slave/4/fan/state", "");
+    assert_last("hubus/slave/4/lamp/state", ""); /* what the old one published */
+    TEST_ASSERT_NULL(last("hubus/slave/4/fan/state"));
     assert_contains("homeassistant/light/hubus_4_lamp/config", "\"model\":\"func_next\"");
-    TEST_ASSERT_EQUAL_STRING("", dmn->slave[4].last_state[0]);
 
     say("hubus/slave/4/lamp/set", "OFF");
     PUMP_UNTIL(func_dev->last_op == OP_FUNC_POWER && func_dev->last_args[0] == 0u);
@@ -2211,7 +2556,7 @@ static void test_modules_a_slave_needs_are_not_given_up(void)
     TEST_ASSERT_NULL(hubusd_modules_missing(dmn, &cfg, test_modules, sizeof test_modules / sizeof test_modules[0]));
     /* if the slave is not in the new configuration, nothing needs its module */
     none = cfg;
-    none.n_slaves = 0;
+    none.rt.n_slaves = 0;
     TEST_ASSERT_NULL(hubusd_modules_missing(dmn, &none, others, 1));
 }
 
@@ -2272,6 +2617,7 @@ static void test_a_reload_reads_the_plugins_anew(void)
     second = dmn->slave[3].module;
     TEST_ASSERT_NOT_NULL(second);
     TEST_ASSERT_TRUE(second != first);
+    settle(); /* the new instance publishes its discovery on its own thread */
     assert_contains("hubus/slave/3/info", "\"module\":\"plugin_good\"");
     assert_contains("homeassistant/sensor/hubus_3_temperature/config", "\"model\":\"plugin_good\"");
     TEST_ASSERT_EQUAL_STRING("plugin_good", second->name);
@@ -2473,6 +2819,7 @@ int main(void)
     RUN_TEST(test_discovery_messages);
     RUN_TEST(test_discovery_can_be_disabled);
     RUN_TEST(test_discovery_cleanup_clears_unconfigured_mcids);
+    RUN_TEST(test_without_cleanup_discovery_messages_are_left_alone);
     RUN_TEST(test_custom_base_topic_and_prefix);
     RUN_TEST(test_button_press_is_published);
     RUN_TEST(test_data_from_an_unconfigured_slave_is_ignored);
@@ -2534,6 +2881,12 @@ int main(void)
     RUN_TEST(test_publish_failures_are_counted);
     RUN_TEST(test_reconnect_republishes_retained_state);
     RUN_TEST(test_reload_adds_and_removes_slaves);
+    RUN_TEST(test_the_configuration_is_published);
+    RUN_TEST(test_a_change_of_the_bus_section_takes_effect_and_is_saved);
+    RUN_TEST(test_a_change_that_does_not_fit_changes_nothing);
+    RUN_TEST(test_a_change_without_a_runtime_file_is_not_saved);
+    RUN_TEST(test_slaves_are_added_renamed_and_removed_over_mqtt);
+    RUN_TEST(test_discovery_and_its_cleanup_are_switched_over_mqtt);
     RUN_TEST(test_shutdown_publishes_offline_and_resets_the_bus);
     RUN_TEST(test_subscriptions_and_status_topic);
     RUN_TEST(test_functions_get_one_instance_per_slave_and_one_thread_per_module);
@@ -2557,6 +2910,7 @@ int main(void)
     RUN_TEST(test_a_refused_program_is_reported);
     RUN_TEST(test_the_distance_sensor_offers_a_distance_a_state_and_a_trigger_distance);
     RUN_TEST(test_the_distance_sensor_gets_its_trigger_distance_back_after_a_power_up);
+    RUN_TEST(test_the_trigger_distance_outlives_a_restart_of_hubusd);
     RUN_TEST(test_the_trigger_distance_takes_numbers_within_its_range_only);
     RUN_TEST(test_replacing_a_module_makes_new_instances_and_entities);
     RUN_TEST(test_replacing_with_the_same_module_changes_nothing);

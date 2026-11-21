@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hubus_module_ha.h"
 #include "hubus_sim.h"
 #include "hubus_updater.h"
 #include "hubusd_core.h"
@@ -209,13 +210,16 @@ static const hubus_module_rule_t updater_rules[] = {{.pattern = {HUBUS_HWID_TYPE
 static const hubus_entity_t app_entities[] = {
     {.key = "first", .name = "First", .component = HUBUS_COMPONENT_SENSOR, .decode = {.offset = 0, .len = 1, .scale = 1.0}},
 };
+static const hubus_ha_t app_ha = {app_entities, HUBUS_MODULE_LEN(app_entities), NULL};
 
 static unsigned live_instances, created_instances;
 static int instance;
 
 static hubus_module_instance_t *app_create(const hubus_module_host_t *host)
 {
-    (void)host;
+    if (hubus_ha_announce(host) != HUBUS_MODULE_OK) {
+        return NULL;
+    }
     __atomic_add_fetch(&live_instances, 1, __ATOMIC_SEQ_CST);
     __atomic_add_fetch(&created_instances, 1, __ATOMIC_SEQ_CST);
     return (hubus_module_instance_t *)&instance;
@@ -229,6 +233,7 @@ static void app_destroy(hubus_module_instance_t *self)
 
 static const hubus_module_t updater_module = {
     HUBUS_MODULE_INIT, .name = "updater", .rules = updater_rules, .n_rules = 1, .max_command = HUBUS_MAX_PAYLOAD, .has_state = true,
+    HUBUS_HA_FUNCTIONS,
 };
 static hubus_module_t app_module = {
     HUBUS_MODULE_INIT,
@@ -238,13 +243,14 @@ static hubus_module_t app_module = {
     .max_command = HUBUS_MAX_PAYLOAD,
     .has_state = true,
     .has_update = true,
-    .entities = app_entities,
-    .n_entities = 1,
+    .data = &app_ha,
     .firmware = image,
     .firmware_len = sizeof image,
     .firmware_version = NEW_VERSION,
     .create = app_create,
     .destroy = app_destroy,
+    .on_frame = hubus_ha_on_frame,
+    .on_message = hubus_ha_on_message,
 };
 static const hubus_module_t *const modules[] = {&app_module, &updater_module};
 
@@ -290,12 +296,12 @@ static void start(int with_application)
 {
     char yaml[400];
     hubus_master_hal_t hal;
-    hubusd_mqtt_t mq = {NULL, fake_publish};
+    hubusd_mqtt_t mq = {NULL, fake_publish, NULL, NULL};
     hubusd_clock_t clk = {NULL, clk_mono, clk_wall};
     char err[200];
 
     snprintf(yaml, sizeof yaml,
-             "mqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 5\n  ping_failures: 3\n  scan_interval_s: 0\nslaves:\n%s",
+             "runtime_file: \"\"\nmqtt:\n  stats_interval_s: 0\nbus:\n  ping_interval_s: 5\n  ping_failures: 3\n  scan_interval_s: 0\nslaves:\n%s",
              slaves_yaml);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_parse(yaml, strlen(yaml), &cfg, err, sizeof err), err);
     hubus_sim_init(&sim);
@@ -530,6 +536,25 @@ static void install_image(void)
 
 /* The configuration has the slave under both MCIDs while it moves: hubusd takes it into operation under the new one, and
  * the old one goes offline. */
+static void test_a_new_module_without_an_image_takes_the_update_entity_away(void)
+{
+    static hubus_module_t plain;
+    static const hubus_module_t *const next[] = {&plain, &updater_module};
+
+    start(1);
+    assert_contains("homeassistant/update/hubus_9_firmware/config", "\"payload_install\":\"app\"");
+    plain = app_module;
+    plain.name = "app-plain";
+    plain.firmware = NULL;
+    plain.firmware_len = 0;
+    n_msgs = 0;
+    hubusd_replace_modules(dmn, next, 2);
+    settle();
+    TEST_ASSERT_EQUAL_PTR(&plain, dmn->slave[MCID].module);
+    TEST_ASSERT_EQUAL_STRING("", last("homeassistant/update/hubus_9_firmware/config"));
+    TEST_ASSERT_EQUAL_STRING("", last("hubus/slave/9/firmware"));
+}
+
 static void test_a_trigger_changes_the_mcid(void)
 {
     slaves_yaml = "  - mcid: 9\n  - mcid: 12\n";
@@ -544,7 +569,7 @@ static void test_a_trigger_changes_the_mcid(void)
     TEST_ASSERT_EQUAL_UINT8(12, eeprom_mcid);
     assert_contains("hubus/master/mcid", "\"result\":\"ok\"");
     assert_contains("hubus/master/mcid", "\"new_mcid\":12");
-    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "move it to MCID 12") >= 1u);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "and MCID 12 is configured as well") >= 1u);
     TEST_ASSERT_EQUAL_INT(0, dmn->slave[9].online);
     TEST_ASSERT_EQUAL_INT(1, dmn->slave[12].online);
     TEST_ASSERT_EQUAL_PTR(&app_module, dmn->slave[12].module);
@@ -558,16 +583,41 @@ static void test_a_trigger_changes_the_mcid(void)
     TEST_ASSERT_EQUAL_INT(HUBUSD_BUS_OK, dmn->bus);
 }
 
-static void test_a_new_mcid_outside_the_configuration_is_reported(void)
+/* Only the old MCID is configured: its entry goes with the slave, name and settings included. */
+static void test_a_new_mcid_outside_the_configuration_takes_the_configuration_along(void)
 {
+    slaves_yaml = "  - mcid: 9\n    name: Porch\n    settings:\n      module: app\n      level: \"7\"\n";
     start(1);
     install_image();
+    wait_for_live_instances(1);
     say("hubus/slave/9/mcid", "12");
     settle();
     assert_contains("hubus/master/mcid", "\"result\":\"ok\"");
-    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "slave 12 is not configured") >= 1u);
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "has slave 9 under MCID 12 now") >= 1u);
+    TEST_ASSERT_EQUAL_UINT(0, count_containing("hubus/master/log", "is not configured"));
+    TEST_ASSERT_FALSE(dmn->slave[9].configured);
+    TEST_ASSERT_TRUE(dmn->slave[12].configured);
+    TEST_ASSERT_EQUAL_STRING("", last("hubus/slave/9/availability"));
+    assert_contains("hubus/master/config", "{\"mcid\":12,\"name\":\"Porch\"");
+    assert_contains("hubus/master/config", "\"settings\":{\"module\":\"app\",\"level\":\"7\"}");
+    TEST_ASSERT_NULL(strstr(last("hubus/master/state"), "\"unknown_slaves\":[{\"mcid\":12"));
+
+    clock_ms += 6000;
+    settle();
+    TEST_ASSERT_EQUAL_INT(1, dmn->slave[12].online);
+    TEST_ASSERT_EQUAL_PTR(&app_module, dmn->slave[12].module);
+    wait_for_live_instances(1);
+}
+
+static void test_a_new_mcid_is_reported_when_neither_is_configured(void)
+{
+    slaves_yaml = "  - mcid: 3\n";
+    start(0); /* in its updater: it answers, and is not configured */
+    say("hubus/slave/9/mcid", "12");
+    settle();
+    assert_contains("hubus/master/mcid", "\"result\":\"ok\"");
+    TEST_ASSERT_TRUE(count_containing("hubus/master/log", "slave 12 is not configured: add it with hubus/slave/12/config/set") >= 1u);
     assert_contains("hubus/master/state", "\"unknown_slaves\":[{\"mcid\":12");
-    TEST_ASSERT_EQUAL_INT(0, dmn->slave[9].online);
 }
 
 static void test_a_slave_in_its_updater_takes_the_mcid_and_keeps_its_update(void)
@@ -637,8 +687,10 @@ int main(void)
     RUN_TEST(test_a_slave_in_its_updater_needs_the_name_of_the_module);
     RUN_TEST(test_a_failed_update_can_be_repeated_without_a_name);
     RUN_TEST(test_a_module_without_an_image_offers_no_update);
+    RUN_TEST(test_a_new_module_without_an_image_takes_the_update_entity_away);
     RUN_TEST(test_a_trigger_changes_the_mcid);
-    RUN_TEST(test_a_new_mcid_outside_the_configuration_is_reported);
+    RUN_TEST(test_a_new_mcid_outside_the_configuration_takes_the_configuration_along);
+    RUN_TEST(test_a_new_mcid_is_reported_when_neither_is_configured);
     RUN_TEST(test_a_slave_in_its_updater_takes_the_mcid_and_keeps_its_update);
     RUN_TEST(test_a_failed_change_leaves_the_slave_as_it_was);
     RUN_TEST(test_invalid_mcid_payloads_are_rejected);

@@ -1,9 +1,12 @@
 /* Configuration (YAML) and the JSON writer of hubusd. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "hubusd_config.h"
-#include "hubusd_json.h"
+#include "hubus_json.h"
+#include "hubus_module_ha.h"
 #include "hubusd_yaml.h"
 #include "hubusd_modules.h"
 #include "unity.h"
@@ -92,9 +95,9 @@ static void test_empty_configuration_gives_defaults(void)
     TEST_ASSERT_EQUAL_INT(1883, cfg.mqtt.port);
     TEST_ASSERT_EQUAL_STRING("hubus", cfg.mqtt.base_topic);
     TEST_ASSERT_EQUAL_STRING("homeassistant", cfg.mqtt.discovery_prefix);
-    TEST_ASSERT_TRUE(cfg.mqtt.discovery);
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.bus.readback);
-    TEST_ASSERT_EQUAL_UINT(0, cfg.n_slaves);
+    TEST_ASSERT_TRUE(cfg.rt.mqtt.discovery);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.rt.bus.readback);
+    TEST_ASSERT_EQUAL_UINT(0, cfg.rt.n_slaves);
     TEST_ASSERT_EQUAL_UINT(0, cfg.n_warnings);
     TEST_ASSERT_EQUAL_UINT(50000, cfg.master.t_clk_low_ns);
 }
@@ -161,16 +164,16 @@ static void test_full_configuration(void)
     TEST_ASSERT_EQUAL_INT(8883, cfg.mqtt.port);
     TEST_ASSERT_TRUE(cfg.mqtt.tls);
     TEST_ASSERT_EQUAL_STRING("home/hubus", cfg.mqtt.base_topic);
-    TEST_ASSERT_FALSE(cfg.mqtt.discovery);
-    TEST_ASSERT_EQUAL_UINT(10, cfg.mqtt.stats_interval_s);
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.bus.readback);
-    TEST_ASSERT_EQUAL_UINT(5, cfg.bus.ping_interval_s);
-    TEST_ASSERT_EQUAL_UINT(3, cfg.n_slaves);
-    TEST_ASSERT_EQUAL_UINT8(3, cfg.slaves[0].mcid);
-    TEST_ASSERT_EQUAL_STRING("Garden relay", cfg.slaves[0].name);
-    TEST_ASSERT_EQUAL_INT(-1, cfg.slaves[0].readback);
-    TEST_ASSERT_EQUAL_STRING("HUBUS slave 5", cfg.slaves[1].name);
-    TEST_ASSERT_EQUAL_INT(0, cfg.slaves[1].readback);
+    TEST_ASSERT_FALSE(cfg.rt.mqtt.discovery);
+    TEST_ASSERT_EQUAL_UINT(10, cfg.rt.mqtt.stats_interval_s);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.rt.bus.readback);
+    TEST_ASSERT_EQUAL_UINT(5, cfg.rt.bus.ping_interval_s);
+    TEST_ASSERT_EQUAL_UINT(3, cfg.rt.n_slaves);
+    TEST_ASSERT_EQUAL_UINT8(3, cfg.rt.slaves[0].mcid);
+    TEST_ASSERT_EQUAL_STRING("Garden relay", cfg.rt.slaves[0].name);
+    TEST_ASSERT_EQUAL_INT(-1, cfg.rt.slaves[0].readback);
+    TEST_ASSERT_EQUAL_STRING("HUBUS slave 5", cfg.rt.slaves[1].name);
+    TEST_ASSERT_EQUAL_INT(0, cfg.rt.slaves[1].readback);
     TEST_ASSERT_EQUAL_UINT(0, cfg.n_warnings);
 }
 
@@ -269,26 +272,29 @@ static void test_the_plugins_of_the_directory_join_the_built_in_modules(void)
 static void test_readback_modes(void)
 {
     TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: cache\nslaves:\n  - mcid: 1\n    readback: none\n  - mcid: 2\n    readback: slave\n  - mcid: 3\n    readback: cache\n  - mcid: 4\n"));
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.bus.readback);
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.slaves[0].readback);
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.slaves[1].readback);
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.slaves[2].readback);
-    TEST_ASSERT_EQUAL_INT(-1, cfg.slaves[3].readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.rt.bus.readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.rt.slaves[0].readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.rt.slaves[1].readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.rt.slaves[2].readback);
+    TEST_ASSERT_EQUAL_INT(-1, cfg.rt.slaves[3].readback);
     TEST_ASSERT_EQUAL_INT(0, parse(""));
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.bus.readback); /* default */
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.rt.bus.readback); /* default */
     TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: true\n"));
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.bus.readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_SLAVE, cfg.rt.bus.readback);
     TEST_ASSERT_EQUAL_INT(0, parse("bus:\n  readback: false\n"));
-    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.bus.readback);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.rt.bus.readback);
     expect_error("bus:\n  readback: sometimes\n", "slave, cache, or none");
-    expect_error("slaves:\n  - mcid: 1\n    readback: later\n", "slave, cache, or none");
+    expect_error("slaves:\n  - mcid: 1\n    readback: later\n", "slave, cache, default, or none");
+    expect_error("bus:\n  readback: default\n", "slave, cache, or none"); /* only a slave has a default to go back to */
+    TEST_ASSERT_EQUAL_INT(0, parse("slaves:\n  - mcid: 1\n    readback: default\n"));
+    TEST_ASSERT_EQUAL_INT(-1, cfg.rt.slaves[0].readback);
 }
 
 static void test_poll_interval(void)
 {
     TEST_ASSERT_EQUAL_INT(0, parse("slaves:\n  - mcid: 1\n    poll_interval_s: 60\n  - mcid: 2\n"));
-    TEST_ASSERT_EQUAL_UINT(60, cfg.slaves[0].poll_interval_s);
-    TEST_ASSERT_EQUAL_UINT(0, cfg.slaves[1].poll_interval_s); /* default: no polling */
+    TEST_ASSERT_EQUAL_UINT(60, cfg.rt.slaves[0].poll_interval_s);
+    TEST_ASSERT_EQUAL_UINT(0, cfg.rt.slaves[1].poll_interval_s); /* default: no polling */
     TEST_ASSERT_EQUAL_UINT(0, cfg.n_warnings);
     expect_error("slaves:\n  - mcid: 1\n    poll_interval_s: -1\n", "between 0 and 86400");
 }
@@ -310,7 +316,7 @@ static void test_too_many_slaves(void)
         strcat(text, line);
     }
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, parse(text), err);
-    TEST_ASSERT_EQUAL_UINT(63, cfg.n_slaves);
+    TEST_ASSERT_EQUAL_UINT(63, cfg.rt.n_slaves);
 }
 
 static void test_password_from_file_and_environment(void)
@@ -341,6 +347,307 @@ static void test_load_reports_the_file_name(void)
     TEST_ASSERT_NOT_NULL(strstr(err, "/does/not/exist.yaml"));
 }
 
+/* ---- the runtime part ---------------------------------------------------------- */
+
+static const char *main_yaml = "gpio:\n  clk: 5\n  data: 6\nmqtt:\n  host: broker\n  stats_interval_s: 30\n"
+                               "bus:\n  ping_interval_s: 20\nslaves:\n  - mcid: 3\n    name: Relay\n"
+                               "  - mcid: 5\n    name: Button\n    settings:\n      module: switch\n      mode: \"2\"\n";
+
+/* Over MQTT the change gets the runtime part only; as a runtime file it goes through the loader, warnings and all. */
+#define HUBUSD_MERGE_FILE 0
+#define HUBUSD_MERGE_MQTT 1
+
+static int merge(const char *text, int mode)
+{
+    return mode == HUBUSD_MERGE_MQTT ? hubusd_config_merge(text, strlen(text), &cfg.rt, err, sizeof err)
+                                     : hubusd_config_load_runtime(text, strlen(text), &cfg, err, sizeof err);
+}
+
+static int merge_slave(const char *text, unsigned mcid)
+{
+    return hubusd_config_merge_slave(text, strlen(text), &cfg.rt, mcid, err, sizeof err);
+}
+
+static void expect_merge_error(const char *text, const char *needle)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, merge(text, HUBUSD_MERGE_MQTT), text);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, needle), err);
+}
+
+static void test_the_runtime_file_has_a_default(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse(""));
+    TEST_ASSERT_EQUAL_STRING("/var/lib/hubus/runtime.yaml", cfg.runtime_file);
+    TEST_ASSERT_EQUAL_INT(0, parse("runtime_file: \"\"\n"));
+    TEST_ASSERT_EQUAL_STRING("", cfg.runtime_file);
+}
+
+/* JSON is YAML too: a change over MQTT names what it changes, and the rest stays. */
+static void test_a_change_over_mqtt_changes_only_what_it_names(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, parse(main_yaml), err);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, merge("{\"bus\":{\"ping_interval_s\":10,\"readback\":\"cache\"},"
+                                           "\"mqtt\":{\"discovery\":false,\"discovery_cleanup\":true}}", HUBUSD_MERGE_MQTT),
+                                  err);
+    TEST_ASSERT_EQUAL_UINT(10, cfg.rt.bus.ping_interval_s);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.rt.bus.readback);
+    TEST_ASSERT_EQUAL_UINT(3, cfg.rt.bus.ping_failures);  /* not named: as it was */
+    TEST_ASSERT_EQUAL_UINT(30, cfg.rt.mqtt.stats_interval_s);
+    TEST_ASSERT_FALSE(cfg.rt.mqtt.discovery);
+    TEST_ASSERT_TRUE(cfg.rt.mqtt.discovery_cleanup);
+    TEST_ASSERT_EQUAL_STRING("broker", cfg.mqtt.host);
+    TEST_ASSERT_EQUAL_UINT(2, cfg.rt.n_slaves);
+    TEST_ASSERT_EQUAL_INT(0, merge("{}", HUBUSD_MERGE_MQTT));
+}
+
+static void test_the_fixed_part_cannot_change_at_runtime(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse(main_yaml));
+    expect_merge_error("{\"gpio\":{\"clk\":4}}", "'gpio' can only be set in the main configuration file");
+    expect_merge_error("{\"timing\":{}}", "'timing' can only be set");
+    expect_merge_error("{\"modules\":{\"dir\":\"/tmp\"}}", "'modules' can only be set");
+    expect_merge_error("{\"runtime_file\":\"/tmp/x\"}", "'runtime_file' can only be set");
+    expect_merge_error("{\"mqtt\":{\"host\":\"evil\"}}", "'mqtt.host' can only be set");
+    expect_merge_error("{\"mqtt\":{\"base_topic\":\"x\"}}", "'mqtt.base_topic' can only be set");
+    TEST_ASSERT_EQUAL_INT(-1, merge("gpio:\n  clk: 4\n", HUBUSD_MERGE_FILE)); /* nor in the runtime file */
+    TEST_ASSERT_EQUAL_UINT(5, cfg.gpio.clk_line);
+}
+
+/* Over MQTT nobody reads warnings: what hubusd does not know is an error, as are values out of range. */
+static void test_a_change_over_mqtt_is_checked_strictly(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse(main_yaml));
+    expect_merge_error("{\"bus\":{\"ping_intervall_s\":5}}", "unknown key 'ping_intervall_s' in 'bus'");
+    expect_merge_error("{\"busses\":{}}", "unknown key 'busses'");
+    expect_merge_error("{\"bus\":{\"ping_failures\":0}}", "between 1 and 100");
+    expect_merge_error("{\"mqtt\":{\"discovery\":\"maybe\"}}", "true or false");
+    expect_merge_error("[1, 2]", "must be a mapping");
+    expect_merge_error("{\"bus\": [", "line");
+    TEST_ASSERT_EQUAL_INT(0, merge("bus:\n  ping_intervall_s: 5\n", HUBUSD_MERGE_FILE)); /* a file: a warning */
+    TEST_ASSERT_EQUAL_UINT(1, cfg.n_warnings);
+}
+
+/* A list of slaves replaces the list; over MQTT the settings stay with the modules. */
+static void test_a_list_of_slaves_replaces_the_list(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, parse(main_yaml));
+    TEST_ASSERT_EQUAL_STRING("switch", cfg.rt.slaves[1].settings.module);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, merge("{\"slaves\":[{\"mcid\":5,\"name\":\"Door\",\"settings\":{\"module\":\"x\",\"mode\":\"9\"}},"
+                                           "{\"mcid\":9,\"readback\":\"none\",\"poll_interval_s\":60}]}",
+                                           HUBUSD_MERGE_MQTT),
+                                  err);
+    TEST_ASSERT_EQUAL_UINT(2, cfg.rt.n_slaves);
+    TEST_ASSERT_EQUAL_UINT8(5, cfg.rt.slaves[0].mcid);
+    TEST_ASSERT_EQUAL_STRING("Door", cfg.rt.slaves[0].name);
+    TEST_ASSERT_EQUAL_STRING("switch", cfg.rt.slaves[0].settings.module); /* kept, not taken from the message */
+    TEST_ASSERT_EQUAL_STRING("2", cfg.rt.slaves[0].settings.item[0].value);
+    TEST_ASSERT_EQUAL_STRING("HUBUS slave 9", cfg.rt.slaves[1].name);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, cfg.rt.slaves[1].readback);
+    TEST_ASSERT_EQUAL_UINT(60, cfg.rt.slaves[1].poll_interval_s);
+    TEST_ASSERT_EQUAL_UINT8(0, cfg.rt.slaves[1].settings.n);
+    TEST_ASSERT_EQUAL_INT(0, merge("{\"slaves\":[]}", HUBUSD_MERGE_MQTT));
+    TEST_ASSERT_EQUAL_UINT(0, cfg.rt.n_slaves);
+    expect_merge_error("{\"slaves\":[{\"mcid\":4},{\"mcid\":4}]}", "configured twice");
+    expect_merge_error("{\"slaves\":[{\"mcid\":4,\"colour\":1}]}", "unknown key 'colour' in 'slaves'");
+}
+
+static void test_one_slave_is_added_changed_and_removed(void)
+{
+    hubusd_slave_cfg_t *sl;
+
+    TEST_ASSERT_EQUAL_INT(0, parse(main_yaml));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, merge_slave("{\"name\":\"Pump\"}", 9), err);
+    TEST_ASSERT_EQUAL_UINT(3, cfg.rt.n_slaves);
+    sl = hubusd_config_slave(&cfg.rt, 9);
+    TEST_ASSERT_NOT_NULL(sl);
+    TEST_ASSERT_EQUAL_STRING("Pump", sl->name);
+    TEST_ASSERT_EQUAL_INT(-1, sl->readback);
+
+    TEST_ASSERT_EQUAL_INT(0, merge_slave("{\"readback\":\"cache\",\"mcid\":9}", 9));
+    TEST_ASSERT_EQUAL_STRING("Pump", sl->name); /* stays */
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, sl->readback);
+    TEST_ASSERT_EQUAL_INT(0, merge_slave("readback: default\n", 9));
+    TEST_ASSERT_EQUAL_INT(-1, sl->readback);
+    TEST_ASSERT_EQUAL_INT(0, merge_slave("", 11)); /* empty: the defaults */
+    TEST_ASSERT_EQUAL_STRING("HUBUS slave 11", hubusd_config_slave(&cfg.rt, 11)->name);
+
+    TEST_ASSERT_EQUAL_INT(-1, merge_slave("{\"mcid\":8}", 9));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, "is not the slave of the topic"), err);
+    TEST_ASSERT_EQUAL_INT(-1, merge_slave("{\"nme\":\"x\"}", 9));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, "unknown key 'nme'"), err);
+    TEST_ASSERT_EQUAL_INT(-1, merge_slave("{}", 64));
+    TEST_ASSERT_EQUAL_UINT(4, cfg.rt.n_slaves);
+
+    TEST_ASSERT_EQUAL_INT(0, hubusd_config_remove_slave(&cfg.rt, 3));
+    TEST_ASSERT_EQUAL_INT(-1, hubusd_config_remove_slave(&cfg.rt, 3));
+    TEST_ASSERT_NULL(hubusd_config_slave(&cfg.rt, 3));
+    TEST_ASSERT_EQUAL_UINT(3, cfg.rt.n_slaves);
+    TEST_ASSERT_EQUAL_STRING("Button", cfg.rt.slaves[0].name);
+}
+
+static void test_settings_are_checked(void)
+{
+    char text[600];
+    unsigned i;
+    int n;
+
+    expect_error("slaves:\n  - mcid: 1\n    settings:\n      level: \"1\"\n", "settings without 'module'");
+    expect_error("slaves:\n  - mcid: 1\n    settings:\n      module: m\n      bad key: \"1\"\n", "setting 'bad key'");
+    expect_error("slaves:\n  - mcid: 1\n    settings:\n      module: m\n      level:\n        - 1\n", "setting 'level'");
+    n = snprintf(text, sizeof text, "slaves:\n  - mcid: 1\n    settings:\n      module: m\n");
+    for (i = 0; i <= HUBUS_MODULE_SETTINGS_MAX; i++) {
+        n += snprintf(text + n, sizeof text - (size_t)n, "      k%u: v\n", i);
+    }
+    expect_error(text, "more than 8 settings");
+    TEST_ASSERT_TRUE(hubus_module_setting_valid("threshold", "50"));
+    TEST_ASSERT_TRUE(hubus_module_setting_valid("a-b_C9", NULL));
+    TEST_ASSERT_FALSE(hubus_module_setting_valid("module", "x")); /* the name of the module has this key */
+    TEST_ASSERT_FALSE(hubus_module_setting_valid("", "x"));
+    TEST_ASSERT_FALSE(hubus_module_setting_valid("a/b", "x"));
+    TEST_ASSERT_FALSE(hubus_module_setting_valid("aaaaaaaaaaaaaaaaaaaaaaaa", "x")); /* 24 characters */
+    TEST_ASSERT_FALSE(hubus_module_setting_valid("k", "line\nbreak"));
+}
+
+/* What hubusd writes, it reads back as it was: names with quotes, colons and backslashes included. */
+static void test_the_runtime_file_reads_back_what_was_written(void)
+{
+    static hubusd_config_t back;
+    static char text[8192];
+    size_t len;
+
+    TEST_ASSERT_EQUAL_INT(0, parse(main_yaml));
+    snprintf(cfg.rt.slaves[0].name, sizeof cfg.rt.slaves[0].name, "Say \"hi\": a\\b #1 \x01");
+    cfg.rt.slaves[0].readback = HUBUSD_READBACK_NONE;
+    cfg.rt.slaves[0].poll_interval_s = 7;
+    cfg.rt.mqtt.discovery = 0;
+    cfg.rt.bus.scan_interval_s = 0;
+    len = hubusd_config_format_runtime(&cfg.rt, text, sizeof text);
+    TEST_ASSERT_TRUE(len > 0u);
+    TEST_ASSERT_EQUAL_UINT(0, hubusd_config_format_runtime(&cfg.rt, text, 40)); /* too small: nothing */
+    len = hubusd_config_format_runtime(&cfg.rt, text, sizeof text);
+
+    hubusd_config_defaults(&back);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_load_runtime(text, len, &back, err, sizeof err), err);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0, back.n_warnings, text);
+    TEST_ASSERT_EQUAL_UINT(2, back.rt.n_slaves);
+    TEST_ASSERT_EQUAL_STRING(cfg.rt.slaves[0].name, back.rt.slaves[0].name);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_NONE, back.rt.slaves[0].readback);
+    TEST_ASSERT_EQUAL_UINT(7, back.rt.slaves[0].poll_interval_s);
+    TEST_ASSERT_EQUAL_INT(-1, back.rt.slaves[1].readback);
+    TEST_ASSERT_EQUAL_STRING("switch", back.rt.slaves[1].settings.module);
+    TEST_ASSERT_EQUAL_UINT8(1, back.rt.slaves[1].settings.n);
+    TEST_ASSERT_EQUAL_STRING("mode", back.rt.slaves[1].settings.item[0].key);
+    TEST_ASSERT_EQUAL_STRING("2", back.rt.slaves[1].settings.item[0].value);
+    TEST_ASSERT_EQUAL_UINT(20, back.rt.bus.ping_interval_s);
+    TEST_ASSERT_EQUAL_UINT(0, back.rt.bus.scan_interval_s);
+    TEST_ASSERT_EQUAL_UINT(30, back.rt.mqtt.stats_interval_s);
+    TEST_ASSERT_FALSE(back.rt.mqtt.discovery);
+
+    cfg.rt.n_slaves = 0;
+    len = hubusd_config_format_runtime(&cfg.rt, text, sizeof text);
+    TEST_ASSERT_NOT_NULL(strstr(text, "slaves: []\n"));
+    back.rt.n_slaves = 5;
+    TEST_ASSERT_EQUAL_INT(0, hubusd_config_load_runtime(text, len, &back, err, sizeof err));
+    TEST_ASSERT_EQUAL_UINT(0, back.rt.n_slaves);
+}
+
+static void write_text(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "w");
+
+    TEST_ASSERT_NOT_NULL(f);
+    fputs(text, f);
+    fclose(f);
+}
+
+/* The runtime file overrides the main file where it has something; without one the main file has the start values. */
+static void test_load_takes_the_runtime_file_over_the_main_file(void)
+{
+    char dir[] = "/tmp/hubusd-rt-XXXXXX";
+    char main_path[64], rt_path[64], text[600];
+
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    snprintf(main_path, sizeof main_path, "%s/hubusd.yaml", dir);
+    snprintf(rt_path, sizeof rt_path, "%s/runtime.yaml", dir);
+    snprintf(text, sizeof text, "runtime_file: %s\n%s", rt_path, main_yaml);
+    write_text(main_path, text);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_load(main_path, &cfg, err, sizeof err), err);
+    TEST_ASSERT_EQUAL_UINT(2, cfg.rt.n_slaves); /* no runtime file yet */
+    TEST_ASSERT_EQUAL_UINT(0, cfg.n_warnings);
+
+    cfg.rt.n_slaves = 1;
+    snprintf(cfg.rt.slaves[0].name, sizeof cfg.rt.slaves[0].name, "Only one");
+    cfg.rt.bus.ping_interval_s = 99;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_write_runtime(&cfg.rt, rt_path, err, sizeof err), err);
+    snprintf(text, sizeof text, "%s.new", rt_path);
+    TEST_ASSERT_NOT_EQUAL(0, access(text, F_OK)); /* replaced, not left beside it */
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_load(main_path, &cfg, err, sizeof err), err);
+    TEST_ASSERT_EQUAL_UINT(1, cfg.rt.n_slaves);
+    TEST_ASSERT_EQUAL_STRING("Only one", cfg.rt.slaves[0].name);
+    TEST_ASSERT_EQUAL_UINT(99, cfg.rt.bus.ping_interval_s);
+    TEST_ASSERT_EQUAL_STRING("broker", cfg.mqtt.host); /* the fixed part is from the main file */
+    TEST_ASSERT_EQUAL_UINT(5, cfg.gpio.clk_line);
+    TEST_ASSERT_EQUAL_UINT(1, cfg.n_warnings); /* the main file has a runtime part as well */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(cfg.warnings[0], "overrides"), cfg.warnings[0]);
+
+    write_text(rt_path, "bus:\n  ping_interval_s: 5\n  pingg: 1\n");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_load(main_path, &cfg, err, sizeof err), err);
+    TEST_ASSERT_EQUAL_UINT(2, cfg.rt.n_slaves); /* the runtime file has none: those of the main file */
+    TEST_ASSERT_EQUAL_UINT(5, cfg.rt.bus.ping_interval_s);
+    TEST_ASSERT_EQUAL_UINT(2, cfg.n_warnings);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(cfg.warnings[0], rt_path), cfg.warnings[0]);
+
+    write_text(rt_path, "gpio:\n  clk: 1\n");
+    TEST_ASSERT_EQUAL_INT(-1, hubusd_config_load(main_path, &cfg, err, sizeof err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, rt_path), err);
+
+    snprintf(text, sizeof text, "%s/missing/runtime.yaml", dir);
+    TEST_ASSERT_EQUAL_INT(-1, hubusd_config_write_runtime(&cfg.rt, text, err, sizeof err));
+    remove(rt_path);
+    remove(main_path);
+    rmdir(dir);
+}
+
+/* The two example files: the main one has the fixed part only, the runtime one the rest, and both without a warning. */
+static void test_the_example_files_go_together(void)
+{
+    char main_path[300], rt_path[300], text[700];
+    char dir[] = "/tmp/hubusd-ex-XXXXXX";
+    char copy[64];
+    char line[300];
+    FILE *in, *out;
+
+    snprintf(main_path, sizeof main_path, "%s/daemon/hubusd.example.yaml", HUBUS_SOURCE_DIR);
+    snprintf(rt_path, sizeof rt_path, "%s/daemon/hubusd.runtime.example.yaml", HUBUS_SOURCE_DIR);
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    snprintf(copy, sizeof copy, "%s/hubusd.yaml", dir);
+    in = fopen(main_path, "r");
+    out = fopen(copy, "w");
+    TEST_ASSERT_NOT_NULL(in);
+    TEST_ASSERT_NOT_NULL(out);
+    while (fgets(line, sizeof line, in)) {
+        if (strncmp(line, "runtime_file:", 13) == 0) {
+            fprintf(out, "runtime_file: %s\n", rt_path); /* the example next to it */
+        } else {
+            fputs(line, out);
+        }
+    }
+    fclose(in);
+    fclose(out);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hubusd_config_load(copy, &cfg, err, sizeof err), err);
+    snprintf(text, sizeof text, "%u warnings, the first: %s", cfg.n_warnings, cfg.n_warnings ? cfg.warnings[0] : "");
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0, cfg.n_warnings, text);
+    TEST_ASSERT_EQUAL_UINT(6, cfg.rt.n_slaves);
+    TEST_ASSERT_EQUAL_INT(HUBUSD_READBACK_CACHE, cfg.rt.slaves[2].readback);
+    TEST_ASSERT_EQUAL_STRING("distance", cfg.rt.slaves[5].settings.module);
+    TEST_ASSERT_EQUAL_STRING("45", cfg.rt.slaves[5].settings.item[0].value);
+    remove(copy);
+    rmdir(dir);
+}
+
 /* ---- profiles are gone --------------------------------------------------------- */
 
 static void test_profiles_are_no_longer_supported(void)
@@ -362,7 +669,8 @@ static void test_the_built_in_modules_are_valid_and_have_entities(void)
     TEST_ASSERT_TRUE(n > 0u);
     for (i = 0; i < n; i++) {
         TEST_ASSERT_EQUAL_MESSAGE(HUBUS_MODULE_VALID, hubus_module_validate(modules[i]), modules[i]->name);
-        with_entities += modules[i]->n_entities > 0u;
+        TEST_ASSERT_TRUE_MESSAGE(hubus_ha_valid(modules[i]), modules[i]->name); /* all of them use the table */
+        with_entities += hubus_ha_of(modules[i])->n_entities > 0u;
     }
     TEST_ASSERT_EQUAL_UINT(n - 1u, with_entities); /* all but the updater */
 }
@@ -438,6 +746,16 @@ int main(void)
     RUN_TEST(test_too_many_slaves);
     RUN_TEST(test_password_from_file_and_environment);
     RUN_TEST(test_load_reports_the_file_name);
+    RUN_TEST(test_the_runtime_file_has_a_default);
+    RUN_TEST(test_a_change_over_mqtt_changes_only_what_it_names);
+    RUN_TEST(test_the_fixed_part_cannot_change_at_runtime);
+    RUN_TEST(test_a_change_over_mqtt_is_checked_strictly);
+    RUN_TEST(test_a_list_of_slaves_replaces_the_list);
+    RUN_TEST(test_one_slave_is_added_changed_and_removed);
+    RUN_TEST(test_settings_are_checked);
+    RUN_TEST(test_the_runtime_file_reads_back_what_was_written);
+    RUN_TEST(test_load_takes_the_runtime_file_over_the_main_file);
+    RUN_TEST(test_the_example_files_go_together);
     RUN_TEST(test_profiles_are_no_longer_supported);
     RUN_TEST(test_the_built_in_modules_are_valid_and_have_entities);
     RUN_TEST(test_json_writer);

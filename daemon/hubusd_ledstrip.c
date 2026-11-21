@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "hubus_crc.h"
+#include "hubus_module_ha.h"
 #include "hubusd_ledc.h"
 #include "hubusd_modules.h"
 #include "ledvm.h"
@@ -35,12 +36,12 @@ struct hubus_module_instance {
 
 static hubus_module_instance_t *strip_create(const hubus_module_host_t *host)
 {
-    hubus_module_instance_t *self = calloc(1, sizeof *self);
+    hubus_module_instance_t *self;
 
-    (void)host;
-    if (self) {
-        self->r = self->g = self->b = 255; /* white until the user has chosen a colour */
+    if (hubus_ha_announce(host) != HUBUS_MODULE_OK || (self = calloc(1, sizeof *self)) == NULL) {
+        return NULL;
     }
+    self->r = self->g = self->b = 255; /* white until the user has chosen a colour */
     return self;
 }
 
@@ -121,10 +122,10 @@ static hubus_module_status_t set_lamp(hubus_module_instance_t *self, const hubus
         }
         if (self->len != 0u) {
             self->len = 0;
-            (void)host->set_state(host, "animation", NO_ANIMATION);
+            (void)hubus_ha_publish_state(host, "animation", NO_ANIMATION);
         }
     }
-    return host->set_state(host, "lamp", on ? "ON" : "OFF");
+    return hubus_ha_publish_state(host, "lamp", on ? "ON" : "OFF");
 }
 
 static hubus_module_status_t set_animation(hubus_module_instance_t *self, const hubus_module_host_t *host, const char *formula)
@@ -141,8 +142,8 @@ static hubus_module_status_t set_animation(hubus_module_instance_t *self, const 
             self->len = saved_len;
             return st;
         }
-        (void)host->set_state(host, "lamp", self->on ? "ON" : "OFF");
-        return host->set_state(host, "animation", NO_ANIMATION);
+        (void)hubus_ha_publish_state(host, "lamp", self->on ? "ON" : "OFF");
+        return hubus_ha_publish_state(host, "animation", NO_ANIMATION);
     }
     self->len = hubusd_ledc_compile(formula, code, err, sizeof err);
     if (self->len == 0u) {
@@ -155,8 +156,8 @@ static hubus_module_status_t set_animation(hubus_module_instance_t *self, const 
     if (st != HUBUS_MODULE_OK) {
         return st;
     }
-    (void)host->set_state(host, "lamp", "ON");
-    return host->set_state(host, "animation", formula);
+    (void)hubus_ha_publish_state(host, "lamp", "ON");
+    return hubus_ha_publish_state(host, "animation", formula);
 }
 
 static hubus_module_status_t strip_on_set(hubus_module_instance_t *self, const hubus_module_host_t *host,
@@ -179,13 +180,13 @@ static hubus_module_status_t strip_on_set(hubus_module_instance_t *self, const h
 static void strip_on_frame(hubus_module_instance_t *self, const hubus_module_host_t *host, hubus_frame_kind_t kind,
                            const uint8_t *data, uint8_t len, bool gap)
 {
-    (void)gap;
+    hubus_ha_on_frame(self, host, kind, data, len, gap); /* the button */
     if (len < STATE_LEN) {
         return;
     }
     if (self->len != 0u && data[STATE_PROGRAM] == PROG_REFUSED) {
         self->len = 0;
-        (void)host->set_state(host, "animation", "refused by the slave");
+        (void)hubus_ha_publish_state(host, "animation", "refused by the slave");
         return;
     }
     if (kind != HUBUS_FRAME_EVENT) {
@@ -208,13 +209,14 @@ static const hubus_entity_t strip_entities[] = {
     {.key = "lamp", .name = "Lamp", .component = HUBUS_COMPONENT_LIGHT},
     {.key = "animation", .name = "Animation", .component = HUBUS_COMPONENT_TEXT},
 };
+static const hubus_ha_t strip_ha = {strip_entities, HUBUS_MODULE_LEN(strip_entities), strip_on_set};
 
 /* The same firmware with and without update support: only the variant and has_update differ. */
 #define STRIP_MODULE                                                                                                   \
     HUBUS_MODULE_INIT, .max_command = HUBUS_MAX_PAYLOAD, .has_state = true, .has_events = true,                        \
         .has_status_capture = true, .blind_ops = strip_blind, .n_blind_ops = HUBUS_MODULE_LEN(strip_blind),            \
-        .entities = strip_entities, .n_entities = HUBUS_MODULE_LEN(strip_entities), .create = strip_create,            \
-        .destroy = strip_destroy, .on_frame = strip_on_frame, .on_set = strip_on_set
+        .data = &strip_ha, .create = strip_create, .destroy = strip_destroy, .on_frame = strip_on_frame,               \
+        .on_message = hubus_ha_on_message
 
 const hubus_module_t hubusd_ledstrip_module = {
     STRIP_MODULE,

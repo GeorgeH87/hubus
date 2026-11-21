@@ -69,6 +69,23 @@ static int mq_publish(void *ctx, const char *topic, const char *payload, size_t 
     return rc == MOSQ_ERR_SUCCESS ? 0 : -1;
 }
 
+/* Without a connection there is nothing to do: hubusd subscribes again once it is back (hubusd_on_connect()). */
+static int mq_subscribe(void *ctx, const char *filter)
+{
+    mq_t *m = ctx;
+    int rc = mosquitto_subscribe(m->client, NULL, filter, 1);
+
+    return rc == MOSQ_ERR_SUCCESS || rc == MOSQ_ERR_NO_CONN ? 0 : -1;
+}
+
+static int mq_unsubscribe(void *ctx, const char *filter)
+{
+    mq_t *m = ctx;
+    int rc = mosquitto_unsubscribe(m->client, NULL, filter);
+
+    return rc == MOSQ_ERR_SUCCESS || rc == MOSQ_ERR_NO_CONN ? 0 : -1;
+}
+
 static void subscribe_one(void *ctx, const char *filter)
 {
     mq_t *m = ctx;
@@ -159,6 +176,8 @@ int hubusd_run(const hubusd_config_t *cfg, const hubus_master_hal_t *hal, const 
     }
     iface.ctx = &mq;
     iface.publish = mq_publish;
+    iface.subscribe = mq_subscribe;
+    iface.unsubscribe = mq_unsubscribe;
     hubusd_init(d, cfg, hal, iface, clk);
     hubus_module_set_init(&modules);
     if (opts->modules) {

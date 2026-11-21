@@ -2,10 +2,13 @@
  * hubusd: HUBUS master daemon with an MQTT interface for the Raspberry Pi.
  *
  *   hubusd [-c /etc/hubus/hubusd.yaml] [--check] [-v]
+ *
+ * The main file names the runtime file (runtime_file), which holds what changes over MQTT.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "hubusd_modules.h"
 #include "hubusd_run.h"
@@ -72,8 +75,15 @@ int main(int argc, char **argv)
 
         hubus_module_set_init(&modules);
         plugins = hubusd_load_modules(cfg, &modules, hubusd_report_module, NULL);
-        printf("%s: ok (%u slaves, %u modules, %u of them plugins)\n", path, cfg->n_slaves,
+        printf("%s: ok (%u slaves, %u modules, %u of them plugins)\n", path, cfg->rt.n_slaves,
                (unsigned)modules.n, (unsigned)plugins);
+        if (!cfg->runtime_file[0]) {
+            printf("no runtime file: changes over MQTT are lost at a restart\n");
+        } else if (access(cfg->runtime_file, F_OK) == 0) {
+            printf("%s: ok, overrides the runtime part of %s\n", cfg->runtime_file, path);
+        } else {
+            printf("%s: not there yet, written at the first change over MQTT\n", cfg->runtime_file);
+        }
         hubus_module_set_unload(&modules);
         free(cfg);
         return 0;

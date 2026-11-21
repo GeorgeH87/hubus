@@ -31,7 +31,8 @@ hubus_test(test_slave_core)
 hubus_test(test_master)
 hubus_test(test_faults)
 hubus_test(test_blind)
-hubus_test(test_module)
+hubus_test(test_module hubus_module_topic)
+hubus_test(test_module_ha hubus_module_ha)
 
 # Master modules as plugins: shared libraries built next to the test, loaded by test_module_loader.
 set(HUBUS_TEST_PLUGINS a_good b_override c_bad_api d_conflict e_dup_name f_no_entry g_null)
@@ -40,9 +41,10 @@ foreach(plugin ${HUBUS_TEST_PLUGINS})
     target_include_directories(plugin_${plugin} PRIVATE ${PROJECT_SOURCE_DIR}/master ${PROJECT_SOURCE_DIR}/core)
     set_target_properties(plugin_${plugin} PROPERTIES PREFIX "" OUTPUT_NAME ${plugin}
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/plugins)
+    target_link_libraries(plugin_${plugin} PRIVATE hubus_module_ha)
     target_compile_options(plugin_${plugin} PRIVATE ${HUBUS_TEST_WARNINGS})
 endforeach()
-hubus_test(test_module_loader)
+hubus_test(test_module_loader hubus_module_ha)
 target_compile_definitions(test_module_loader PRIVATE HUBUS_TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins"
     HUBUS_EXAMPLE_PLUGIN="$<TARGET_FILE:hubus_plugin_dimmer>")
 add_dependencies(test_module_loader hubus_plugin_dimmer)
@@ -127,7 +129,8 @@ add_subdirectory(avr)
 
 if(HUBUSD_LIB_AVAILABLE)
     hubus_test(test_daemon_config hubusd_lib)
-    target_compile_definitions(test_daemon_config PRIVATE HUBUS_TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins")
+    target_compile_definitions(test_daemon_config PRIVATE HUBUS_TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins"
+                                                      HUBUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     foreach(plugin ${HUBUS_TEST_PLUGINS})
         add_dependencies(test_daemon_config plugin_${plugin})
     endforeach()

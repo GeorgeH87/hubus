@@ -20,6 +20,7 @@ trap cleanup EXIT
 
 printf 'listener %s 127.0.0.1\nallow_anonymous true\n' "$port" > "$tmp/broker.conf"
 cat > "$tmp/hubusd.yaml" <<YAML
+runtime_file: $tmp/runtime.yaml
 mqtt:
   host: 127.0.0.1
   port: $port
@@ -57,6 +58,21 @@ expect() { # description pattern
         echo "FAIL: $1   (pattern: $2)"; fails=$((fails + 1))
     fi
 }
+expect_since() { # line description pattern: only what came after that line of the subscriber
+    sleep 1
+    if tail -n "+$1" "$tmp/sub.log" | grep -q -E "$3"; then
+        echo "ok:   $2"
+    else
+        echo "FAIL: $2   (pattern: $3)"; fails=$((fails + 1))
+    fi
+}
+expect_file() { # description pattern
+    if grep -q -E "$2" "$tmp/runtime.yaml" 2>/dev/null; then
+        echo "ok:   $1"
+    else
+        echo "FAIL: $1   (pattern in the runtime file: $2)"; fails=$((fails + 1))
+    fi
+}
 
 expect "master online"               '^hubus/master/status online$'
 expect "relay available"             '^hubus/slave/3/availability online$'
@@ -92,6 +108,14 @@ expect "statistics"                  '^hubus/master/stats .*"bus":"ok"'
 pub hubus/master/cmd/scan ""
 expect "scan result"                 '^hubus/master/scan .*"mcid":9,"state":"present","configured":false'
 
+pub hubus/slave/9/config/set '{"name":"Attic"}'
+expect "slave added over MQTT"       '^hubus/master/config/result .*"topic":"hubus/slave/9/config/set","result":"ok","saved":true'
+expect "configuration published"     '^hubus/master/config .*\{"mcid":9,"name":"Attic"'
+expect "added slave available"       '^hubus/slave/9/availability online$'
+expect_file "runtime file written"   'name: "Attic"'
+pub hubus/master/config/set '{"bus":{"ping_failures":3},"gpio":{"clk":1}}'
+expect "fixed part refused"          '^hubus/master/config/result .*"result":"error","error":".*can only be set in the main configuration file'
+
 echo "unplug 7" >&3
 sleep 4
 expect "slave goes offline"          '^hubus/slave/7/availability offline$'
@@ -102,6 +126,19 @@ expect "slave comes back"            '^hubus/slave/7/availability online$'
 echo quit >&3
 sleep 1
 expect "offline on shutdown"         '^hubus/master/status offline$'
+
+# a restart: the runtime file has the slave added over MQTT, the main file does not
+exec 3>&-
+wait $sim_pid 2>/dev/null
+mark=$(($(wc -l < "$tmp/sub.log") + 1))
+"$build/test/hubusd_sim" -c "$tmp/hubusd.yaml" < "$tmp/in" > "$tmp/sim.out" 2>> "$tmp/sim.err" &
+sim_pid=$!
+exec 3> "$tmp/in"
+sleep 3
+expect_since "$mark" "restart keeps the change" '^hubus/master/config .*\{"mcid":9,"name":"Attic"'
+expect_since "$mark" "added slave online after the restart" '^hubus/slave/9/availability online$'
+echo quit >&3
+sleep 1
 
 if [ "$fails" -ne 0 ]; then
     echo "$fails checks failed"; echo "--- daemon log"; cat "$tmp/sim.err"; echo "--- subscriber"; tail -30 "$tmp/sub.log"; exit 1

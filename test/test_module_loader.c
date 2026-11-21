@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "hubus_module_ha.h"
 #include "hubus_module_loader.h"
 #include "unity.h"
 
@@ -109,7 +110,7 @@ static void test_a_plugin_is_loaded_and_selected_by_its_rules(void)
     TEST_ASSERT_NOT_NULL(set.plugin[0]);
     TEST_ASSERT_EQUAL(HUBUS_MODULE_FOUND, hubus_module_select(set.module, set.n, hwid, sizeof hwid, &out));
     TEST_ASSERT_EQUAL_PTR(set.module[0], out);
-    TEST_ASSERT_EQUAL_STRING("temperature", out->entities[0].key);
+    TEST_ASSERT_EQUAL_STRING("temperature", ((const hubus_ha_t *)out->data)->entities[0].key);
     TEST_ASSERT_EQUAL(HUBUS_MODULE_VALID, hubus_module_validate(out));
 }
 
@@ -223,7 +224,8 @@ static void test_the_set_holds_a_limited_number_of_modules(void)
     for (i = 0; i <= HUBUS_MODULE_SET_MAX; i++) {
         snprintf(names[i], sizeof names[i], "m%u", i);
         rules[i] = (hubus_module_rule_t){.pattern = {(uint8_t)(0x80u + i)}, .mask = {0xFF}, .len = 1};
-        modules[i] = (hubus_module_t){HUBUS_MODULE_INIT, .name = names[i], .rules = &rules[i], .n_rules = 1, .max_command = 1};
+        modules[i] = (hubus_module_t){HUBUS_MODULE_INIT, .name = names[i], .rules = &rules[i], .n_rules = 1, .max_command = 1,
+                                      HUBUS_HA_FUNCTIONS};
     }
     for (i = 0; i < HUBUS_MODULE_SET_MAX; i++) {
         TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, hubus_module_set_add(&set, &modules[i]).status);
@@ -234,7 +236,8 @@ static void test_the_set_holds_a_limited_number_of_modules(void)
 static void test_statically_linked_modules_join_the_set(void)
 {
     hubus_module_rule_t rule = {.pattern = {0x95}, .mask = {0xFF}, .len = 1};
-    hubus_module_t m = {HUBUS_MODULE_INIT, .name = "static", .rules = &rule, .n_rules = 1, .max_command = 1};
+    hubus_module_t m = {HUBUS_MODULE_INIT, .name = "static", .rules = &rule, .n_rules = 1, .max_command = 1,
+                                      HUBUS_HA_FUNCTIONS};
     hubus_module_t invalid = m;
 
     TEST_ASSERT_EQUAL(HUBUS_LOAD_OK, hubus_module_set_add(&set, &m).status);
@@ -251,7 +254,8 @@ static void test_statically_linked_modules_join_the_set(void)
 
 static hubus_module_t with_rule(const hubus_module_rule_t *r)
 {
-    return (hubus_module_t){HUBUS_MODULE_INIT, .name = "x", .rules = r, .n_rules = 1, .max_command = 1};
+    return (hubus_module_t){HUBUS_MODULE_INIT, .name = "x", .rules = r, .n_rules = 1, .max_command = 1,
+                                      HUBUS_HA_FUNCTIONS};
 }
 
 static void test_conflicts_need_the_same_number_of_mask_bits_and_a_common_device(void)
@@ -349,7 +353,7 @@ static void test_a_plugin_that_is_kept_stays_loaded(void)
 typedef struct {
     uint8_t opcode;
     uint8_t level;
-    unsigned sends;
+    unsigned sends, subscribes, discoveries, rejects;
     char state[8];
 } dimmer_host_t;
 
@@ -365,24 +369,69 @@ static hubus_module_status_t dimmer_send(const hubus_module_host_t *host, uint8_
     return HUBUS_MODULE_OK;
 }
 
-static hubus_module_status_t dimmer_state(const hubus_module_host_t *host, const char *key, const char *text)
+static hubus_module_status_t dimmer_subscribe(const hubus_module_host_t *host, const char *topic)
 {
     (void)host;
-    TEST_ASSERT_EQUAL_STRING("light", key);
-    snprintf(dimmer_seen.state, sizeof dimmer_seen.state, "%s", text);
+    TEST_ASSERT_TRUE(strcmp(topic, "light/set") == 0 || strcmp(topic, "light/rgb/set") == 0);
+    dimmer_seen.subscribes++;
     return HUBUS_MODULE_OK;
+}
+
+static hubus_module_status_t dimmer_publish(const hubus_module_host_t *host, const char *topic, const void *payload,
+                                            size_t len, bool retain)
+{
+    (void)host;
+    TEST_ASSERT_EQUAL_STRING("light/state", topic);
+    TEST_ASSERT_TRUE(retain);
+    snprintf(dimmer_seen.state, sizeof dimmer_seen.state, "%.*s", (int)len, (const char *)payload);
+    return HUBUS_MODULE_OK;
+}
+
+static hubus_module_status_t dimmer_discovery(const hubus_module_host_t *host, const char *component, const char *object,
+                                              const char *json)
+{
+    (void)host;
+    (void)json;
+    TEST_ASSERT_EQUAL_STRING("light", component);
+    TEST_ASSERT_EQUAL_STRING("light", object);
+    dimmer_seen.discoveries++;
+    return HUBUS_MODULE_OK;
+}
+
+static size_t dimmer_topic(const hubus_module_host_t *host, const char *topic, char *out, size_t out_size)
+{
+    (void)host;
+    return (size_t)snprintf(out, out_size, "hubus/slave/9/%s", topic);
+}
+
+static hubus_module_status_t dimmer_text(const hubus_module_host_t *host, const char *text)
+{
+    (void)host;
+    (void)text;
+    dimmer_seen.rejects++;
+    return HUBUS_MODULE_OK;
+}
+
+static void dimmer_message(const hubus_module_t *m, hubus_module_instance_t *self, const hubus_module_host_t *host,
+                           const char *topic, const char *payload)
+{
+    m->on_message(self, host, topic, payload, strlen(payload));
 }
 
 static void test_the_example_plugin_loads_and_works(void)
 {
-    const hubus_module_host_t host = {.mcid = 9, .send = dimmer_send, .set_state = dimmer_state};
+    const hubus_module_host_t host = {.mcid = 9,
+                                      .send = dimmer_send,
+                                      .subscribe = dimmer_subscribe,
+                                      .publish = dimmer_publish,
+                                      .discovery = dimmer_discovery,
+                                      .topic = dimmer_topic,
+                                      .log = dimmer_text,
+                                      .reject = dimmer_text};
+    hubus_module_host_t h = host;
     hubus_load_result_t r;
     const hubus_module_t *m;
     hubus_module_instance_t *self;
-    hubus_value_t on = {.type = HUBUS_VALUE_BOOL, .as.on = true};
-    hubus_value_t off = {.type = HUBUS_VALUE_BOOL, .as.on = false};
-    hubus_value_t colour = {.type = HUBUS_VALUE_RGB};
-    hubus_value_t number = {.type = HUBUS_VALUE_NUMBER};
     static const uint8_t state_40[1] = {40};
     static const uint8_t dark[1] = {0};
 
@@ -390,31 +439,33 @@ static void test_the_example_plugin_loads_and_works(void)
     TEST_ASSERT_EQUAL_MESSAGE(HUBUS_LOAD_OK, r.status, r.detail);
     m = r.module;
     TEST_ASSERT_EQUAL_STRING("dimmer", m->name);
-    TEST_ASSERT_EQUAL(HUBUS_COMPONENT_LIGHT, m->entities[0].component);
+    h.module = m;
 
     memset(&dimmer_seen, 0, sizeof dimmer_seen);
-    self = m->create(&host);
+    self = m->create(&h);
     TEST_ASSERT_NOT_NULL(self);
+    TEST_ASSERT_EQUAL_UINT(2, dimmer_seen.subscribes); /* on/off and the colour */
+    TEST_ASSERT_EQUAL_UINT(1, dimmer_seen.discoveries);
 
-    TEST_ASSERT_EQUAL(HUBUS_MODULE_OK, m->on_set(self, &host, &m->entities[0], &on));
+    dimmer_message(m, self, &h, "light/set", "ON");
     TEST_ASSERT_EQUAL_UINT8(255, dimmer_seen.level);
-    colour.as.rgb.r = 30;
-    colour.as.rgb.g = 90;
-    colour.as.rgb.b = 60;
-    TEST_ASSERT_EQUAL(HUBUS_MODULE_OK, m->on_set(self, &host, &m->entities[0], &colour));
+    dimmer_message(m, self, &h, "light/rgb/set", "30,90,60");
     TEST_ASSERT_EQUAL_HEX8(0x10, dimmer_seen.opcode);
     TEST_ASSERT_EQUAL_UINT8(90, dimmer_seen.level);
-    TEST_ASSERT_EQUAL(HUBUS_MODULE_OK, m->on_set(self, &host, &m->entities[0], &off));
+    dimmer_message(m, self, &h, "light/set", "OFF");
     TEST_ASSERT_EQUAL_UINT8(0, dimmer_seen.level);
-    TEST_ASSERT_EQUAL(HUBUS_MODULE_OK, m->on_set(self, &host, &m->entities[0], &on));
+    dimmer_message(m, self, &h, "light/set", "ON");
     TEST_ASSERT_EQUAL_UINT8(90, dimmer_seen.level); /* back to the level before OFF */
-    TEST_ASSERT_EQUAL(HUBUS_MODULE_REJECTED, m->on_set(self, &host, &m->entities[0], &number));
+    TEST_ASSERT_EQUAL_UINT(4, dimmer_seen.sends);
+    dimmer_message(m, self, &h, "light/set", "50");
+    TEST_ASSERT_EQUAL_UINT(4, dimmer_seen.sends);
+    TEST_ASSERT_EQUAL_UINT(1, dimmer_seen.rejects);
 
-    m->on_frame(self, &host, HUBUS_FRAME_STATE, state_40, 1, false);
+    m->on_frame(self, &h, HUBUS_FRAME_STATE, state_40, 1, false);
     TEST_ASSERT_EQUAL_STRING("ON", dimmer_seen.state);
-    m->on_frame(self, &host, HUBUS_FRAME_STATE, dark, 1, false);
+    m->on_frame(self, &h, HUBUS_FRAME_STATE, dark, 1, false);
     TEST_ASSERT_EQUAL_STRING("OFF", dimmer_seen.state);
-    TEST_ASSERT_EQUAL(HUBUS_MODULE_OK, m->on_set(self, &host, &m->entities[0], &on));
+    dimmer_message(m, self, &h, "light/set", "ON");
     TEST_ASSERT_EQUAL_UINT8(40, dimmer_seen.level); /* what the slave reported last */
 
     m->destroy(self);
