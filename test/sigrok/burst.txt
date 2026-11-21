@@ -1,0 +1,32 @@
+# The burst of section 5.6: slaves 42, 40, 25, and 15 are pending and are served in this order, each with the event
+# 0xA0 + MCID. 40 and 42 win bit 5, 15 and 25 lose there and push the mask 0xxxxx; 40 loses at bit 1 and pushes
+# 10100x, which is popped first.
+Event signaled
+START
+REQUEST_DATA to all
+Turnaround
+Arbitration bit 5: 1
+Handoff 5: lost here
+Arbitration bit 4: 0
+Arbitration bit 3: 1
+Arbitration bit 2: 0
+Arbitration bit 1: 1
+Handoff 1: lost here
+Arbitration bit 0: 0
+SLAVE_DATA (event) from 42, GEN 1: CA
+STOP
+START
+REQUEST_DATA to group 10100x
+Arbitration bit 0: 0
+SLAVE_DATA (event) from 40, GEN 1: C8
+STOP
+START
+REQUEST_DATA to group 0xxxxx
+Arbitration bit 4: 1
+Handoff 4: lost here
+SLAVE_DATA (event) from 25, GEN 1: B9
+STOP
+START
+REQUEST_DATA to group 00xxxx
+SLAVE_DATA (event) from 15, GEN 1: AF
+STOP

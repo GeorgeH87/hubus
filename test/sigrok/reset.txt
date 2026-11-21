@@ -1,0 +1,2 @@
+# Startup on an idle bus: the master generates RESET (section 6.6).
+RESET

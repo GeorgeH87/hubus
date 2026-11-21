@@ -25,6 +25,7 @@
 | [Master library](master-library.md) | API of the master: HAL, startup, bursts, transactions, commissioning, diagnosis, protocol helpers |
 | [hubusd](daemon.md) | The master as an MQTT service: installation, configuration, topics, Home Assistant |
 | [Development](development.md) | Toolchain, build and test, documentation tools |
+| [sigrok decoder](sigrok.md) | Reading HUBUS traffic from a logic analyzer in PulseView or sigrok-cli |
 | **Project** | |
 | [Decisions](project/decisions.md) | Why the protocol is the way it is |
 | [Open issues](project/open-issues.md) | What is still open, milestones, deferred topics |

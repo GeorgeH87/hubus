@@ -1,0 +1,7 @@
+# An exact command with an argument and a broadcast STATUS_CAPTURE; commands are never answered (section 4.4).
+START
+SEND_COMMAND 0x10 to 3: 01
+STOP
+START
+SEND_COMMAND STATUS_CAPTURE to all
+STOP

@@ -1,0 +1,5 @@
+# A request to an MCID nobody has: the first bit after the turnaround slot stays high (section 3.4).
+START
+REQUEST_INFO to 7
+Turnaround
+No response

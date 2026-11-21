@@ -41,6 +41,7 @@ Verified versions (2026-10-21):
 | `simavr`, `libsimavr-dev` | 1.6 | slave firmware on simulated devices (`test/avr/`, classic tinyAVR only) |
 | `libgpiod-dev` | 2.2.1 | master GPIO access (v2 API) |
 | `libyaml-dev`, `libmosquitto-dev`, `mosquitto` | | daemon, and its end-to-end test |
+| `sigrok-cli` | 0.7.2 | test of the [sigrok decoder](sigrok.md) |
 | PlantUML | 1.2026.9 | timing diagrams (`tools/setup-docs.sh`) |
 | mermaid-cli | 12.0.0 | checks the Mermaid diagrams (`tools/setup-docs.sh`) |
 
@@ -66,6 +67,7 @@ All commands run inside WSL from the repository root (from Windows: `wsl -d hubu
 | One test with the bus trace on stderr | `HUBUS_SIM_TRACE=1 ./build/host/test/test_master` |
 | The same, rebuilt, showing only the context of the first matches | `sh tools/run-trace.sh test_master [pattern] [lines]` |
 | Render the timing diagrams and check the documentation | `sh tools/build-docs.sh` |
+| Bus scenarios as VCD files for PulseView, and the test of the sigrok decoder | `ctest --preset host -R sigrok -V` ([sigrok decoder](sigrok.md)) |
 
 ### Repository Layout
 
@@ -79,7 +81,7 @@ All commands run inside WSL from the repository root (from Windows: `wsl -d hubu
 | `examples/` | Slave firmware examples (ATtiny85) and the master command line example |
 | `docs/` | This documentation; `docs/diagrams/` holds the PlantUML sources and their SVGs |
 | `cmake/` | AVR toolchain file, device defaults, size check |
-| `tools/` | Setup, build, and check scripts |
+| `tools/` | Setup, build, and check scripts; the sigrok decoder (`tools/sigrok/hubus/`) |
 
 ### Tests
 
@@ -96,6 +98,8 @@ All commands run inside WSL from the repository root (from Windows: `wsl -d hubu
 - `test_ledvm`: the animation bytecode of the LED strip example: the program check, every instruction with its 16-bit semantics, outputs and layouts, the documented programs, and arbitrary code under the sanitizers.
 - `test_small_buffers`: the core with small compile-time buffers and without the state.
 - `test_slave_passive`, `test_slave_command_only`: the core without the event buffer, with and without the state ([§7.4](spec/07-slave.md#74-optional-parts)).
+
+- `sigrok_decoder` (`test/tools/sigrok.sh`): `sigrok_scenarios` records bus scenarios as VCD files, `sigrok-cli` decodes them with the [sigrok decoder](sigrok.md), and the output has to contain the lines of `test/sigrok/<scenario>.txt` in their order, with no other warnings. Skipped if `sigrok-cli` is not installed.
 
 In every master and fault test the simulation checks two invariants: a slave never changes `DATA` while `CLK` is high, and the master never undercuts its configured timing minimums.
 

@@ -1,0 +1,6 @@
+# REQUEST_STATE to slave 5, whose two state bytes start at its MCID (section 4.10).
+START
+REQUEST_STATE to 5
+Turnaround
+SLAVE_DATA (state) from 5: 05 06
+STOP

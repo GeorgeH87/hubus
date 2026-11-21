@@ -1,0 +1,8 @@
+# A fragment with MORE = 1: the master asks the same slave again at once, and it stays silent until it writes the next
+# fragment (section 4.11).
+Event signaled
+REQUEST_DATA to all
+SLAVE_DATA (event) from 9, GEN 1, MORE: 11 22
+STOP
+REQUEST_DATA to 9
+No response

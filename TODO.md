@@ -99,7 +99,8 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [ ] Multi-node test with mixed device families (`v0-multi` milestone).
 - [ ] Firmware update on an ATtiny85: install the updater, load an application over the bus, interrupt an update ([open issues](docs/project/open-issues.md#firmware-update)).
 - [ ] Firmware update on an ATtiny1614 (UPDI): fuses `BOOTEND`/`APPEND`, the updater in the boot section, an application behind it, the hand-over and the clock of the updater, an interrupted update, `UPDATE_SET_MCID` ([slave library](docs/slave-library.md#tinyavr-012-series)).
-- [ ] Optional: sigrok protocol decoder for HUBUS.
+- [x] sigrok protocol decoder for HUBUS, stage 1 (`tools/sigrok/hubus/`): conditions, idle event handshake, bits, slots, frame fields, CRC; tested on VCD files of the bus simulation with `sigrok-cli` (`sigrok_decoder`), not yet on a real capture ([sigrok decoder](docs/sigrok.md)).
+- [ ] Optional, stage 2 of the decoder: the burst as a whole (pending masks) and a check of the timing minimums.
 
 ## 10. Master Daemon (`hubusd`, MQTT)
 

@@ -81,6 +81,7 @@ struct hubus_sim {
     unsigned master_reads; /* number of DATA reads by the master so far */
 
     FILE *trace; /* optional text trace */
+    FILE *vcd;   /* optional value change dump of CLK and DATA (hubus_sim_vcd_open()) */
 
     /* internal */
     uint64_t t_rise;
@@ -88,6 +89,7 @@ struct hubus_sim {
     uint64_t t_cond;
     uint8_t cond_since_clk; /* a START/STOP happened since the last CLK edge */
     uint8_t last_was_start;
+    uint64_t vcd_time; /* time of the last timestamp written to `vcd` */
 };
 
 void hubus_sim_init(hubus_sim_t *sim);
@@ -114,5 +116,12 @@ void hubus_sim_glitch_clk(hubus_sim_t *sim, unsigned slave);
 
 /* Checks timing minimums on the master side. */
 void hubus_sim_check_timing(hubus_sim_t *sim, uint32_t clk_low_ns, uint32_t clk_high_ns, uint32_t cond_ns);
+
+/*
+ * Records CLK and DATA from now on as a value change dump (VCD) in nanoseconds, which PulseView and sigrok-cli read
+ * (tools/sigrok/). Returns 0 on success. hubus_sim_vcd_close() ends the file a little after the last change.
+ */
+int hubus_sim_vcd_open(hubus_sim_t *sim, const char *path);
+void hubus_sim_vcd_close(hubus_sim_t *sim);
 
 #endif /* HUBUS_SIM_H */

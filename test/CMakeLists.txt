@@ -34,6 +34,20 @@ hubus_test(test_blind)
 hubus_test(test_module hubus_module_topic)
 hubus_test(test_module_ha hubus_module_ha)
 
+# Bus scenarios as value change dumps for the sigrok decoder (tools/sigrok/); its test runs where sigrok-cli is installed.
+add_executable(sigrok_scenarios tools/sigrok_scenarios.c)
+target_link_libraries(sigrok_scenarios PRIVATE unity hubus_sim)
+target_compile_options(sigrok_scenarios PRIVATE ${HUBUS_TEST_WARNINGS})
+find_program(SIGROK_CLI sigrok-cli)
+if(SIGROK_CLI)
+    add_test(NAME sigrok_decoder
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/sigrok.sh ${SIGROK_CLI} $<TARGET_FILE:sigrok_scenarios>
+                     ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/sigrok)
+    set_tests_properties(sigrok_decoder PROPERTIES TIMEOUT 300)
+else()
+    message(STATUS "sigrok-cli not found: the test of the sigrok decoder is skipped")
+endif()
+
 # Master modules as plugins: shared libraries built next to the test, loaded by test_module_loader.
 set(HUBUS_TEST_PLUGINS a_good b_override c_bad_api d_conflict e_dup_name f_no_entry g_null)
 foreach(plugin ${HUBUS_TEST_PLUGINS})

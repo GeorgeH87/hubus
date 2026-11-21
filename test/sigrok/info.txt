@@ -1,0 +1,6 @@
+# REQUEST_INFO to slave 3 and its SLAVE_INFO (sections 3.1, 4.7); the fixture gives it the HWID F0 01 00 00 03.
+START
+REQUEST_INFO to 3
+Turnaround
+SLAVE_INFO from 3: protocol 0, speed class 0, HWID F0 01 00 00 03
+STOP

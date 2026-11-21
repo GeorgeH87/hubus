@@ -1,0 +1,7 @@
+# Bit 4 of the first payload byte of the SLAVE_INFO of slave 3 is pulled low on the line: the byte reads 0x10
+# (protocol 1) instead of 0x00, the CRC no longer fits, and the master ends with RESET (section 3.6).
+START
+REQUEST_INFO to 3
+CRC wrong: 0x2F, expected 0xFC
+SLAVE_INFO from 3: protocol 1, speed class 0, HWID F0 01 00 00 03 (CRC wrong)
+RESET

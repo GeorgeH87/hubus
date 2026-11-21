@@ -8,7 +8,8 @@ apt-get update
 apt-get install -y \
     build-essential cmake ninja-build pkg-config git gdb clang-format \
     gcc-avr binutils-avr avr-libc avrdude simavr libsimavr-dev libelf-dev \
-    libgpiod-dev gpiod libyaml-dev libmosquitto-dev mosquitto mosquitto-clients
+    libgpiod-dev gpiod libyaml-dev libmosquitto-dev mosquitto mosquitto-clients \
+    sigrok-cli
 
 # Documentation tools (tools/setup-docs.sh installs PlantUML and mermaid-cli on top): Java for PlantUML, Node.js for
 # mermaid-cli, Python for the link check, unzip for the browser download, and the libraries of the headless browser that mermaid-cli uses.

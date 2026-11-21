@@ -11,6 +11,18 @@ static void timing_violation(hubus_sim_t *sim, int line)
     }
 }
 
+static void vcd_change(hubus_sim_t *sim, char id, uint8_t level)
+{
+    if (!sim->vcd) {
+        return;
+    }
+    if (sim->time_ns != sim->vcd_time) {
+        fprintf(sim->vcd, "#%llu\n", (unsigned long long)sim->time_ns);
+        sim->vcd_time = sim->time_ns;
+    }
+    fprintf(sim->vcd, "%u%c\n", level, id);
+}
+
 static uint8_t resolve(const hubus_sim_t *sim)
 {
     unsigned i;
@@ -59,6 +71,7 @@ static void note_data_change(hubus_sim_t *sim, uint8_t new_data)
     if (sim->trace) {
         fprintf(sim->trace, "%10llu ns  DATA=%u\n", (unsigned long long)sim->time_ns, new_data);
     }
+    vcd_change(sim, 'd', new_data);
     if (!sim->clk) {
         return;
     }
@@ -175,6 +188,7 @@ static void hal_set_clk(void *ctx, uint8_t high)
     if (sim->trace) {
         fprintf(sim->trace, "%10llu ns  CLK=%u\n", (unsigned long long)sim->time_ns, high);
     }
+    vcd_change(sim, 'c', high);
     hubus_sim_settle(sim);
 }
 
@@ -253,4 +267,27 @@ void hubus_sim_check_timing(hubus_sim_t *sim, uint32_t clk_low_ns, uint32_t clk_
     sim->min_clk_low_ns = clk_low_ns;
     sim->min_clk_high_ns = clk_high_ns;
     sim->min_cond_ns = cond_ns;
+}
+
+int hubus_sim_vcd_open(hubus_sim_t *sim, const char *path)
+{
+    sim->vcd = fopen(path, "w");
+    if (!sim->vcd) {
+        return -1;
+    }
+    fprintf(sim->vcd, "$timescale 1 ns $end\n$scope module hubus $end\n$var wire 1 c clk $end\n$var wire 1 d data $end\n"
+                      "$upscope $end\n$enddefinitions $end\n#%llu\n$dumpvars\n%uc\n%ud\n$end\n",
+            (unsigned long long)sim->time_ns, sim->clk, sim->data);
+    sim->vcd_time = sim->time_ns;
+    return 0;
+}
+
+void hubus_sim_vcd_close(hubus_sim_t *sim)
+{
+    if (!sim->vcd) {
+        return;
+    }
+    fprintf(sim->vcd, "#%llu\n", (unsigned long long)(sim->vcd_time + 1000000u)); /* room after the last edge */
+    fclose(sim->vcd);
+    sim->vcd = NULL;
 }
