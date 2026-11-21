@@ -55,7 +55,7 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Blind sections after a command: `has_blind_time`, `hubus_slave_blind_begin()`/`hubus_slave_blind_end()` with resynchronization, waiting and deferred readback in hubusd ([§7.8](docs/spec/07-slave.md#78-blind-sections), [§6.9](docs/spec/06-operation.md#69-blind-time-after-a-command)).
 - [x] Flash/RAM budget for the ATtiny85 reference build, checked with `avr-size` ([slave library](docs/slave-library.md#optional-parts)).
 - [x] Run in simavr against the real master and measure ISR cycles, edge response, and stack depth (`test/avr/`, [AVR tests](docs/development.md#avr-tests); input for `T_CLK_LOW`, `T_COND`, `T_TURNAROUND`, and the buffer sizes of 128 B RAM devices, [open issues](docs/project/open-issues.md)).
-- [x] Run the examples in simavr as well (`test_avr_examples`: sleep in the main loop, button, ADC) and the updater (`test_avr_update`: `SPM`, EEPROM, watchdog reset), [AVR tests](docs/development.md#avr-tests).
+- [x] Run the devices in simavr as well (`test_avr_devices`: sleep in the main loop, button, ADC) and the updater (`test_avr_update`: `SPM`, EEPROM, watchdog reset), [AVR tests](docs/development.md#avr-tests).
 - [x] Remove the old ATtiny85-only implementation.
 
 ## 6. Master (`master/`)
@@ -73,12 +73,13 @@ Implementation roadmap for HUBUS v0. The specification is complete except for va
 - [x] Derive the timing minimums from the speed classes of the known slaves: raised to `R` of the slowest plus `t_class_margin_ns`, never below the configuration; hubusd warns and shows the timing in `hubus/master/state` ([master library](docs/master-library.md#speed-classes), [hubusd](docs/daemon.md#speed-classes)).
 - [ ] Later, if measurements show a gain: clock the rest of a frame faster once slower slaves have rejected its prefix ([open issues](docs/project/open-issues.md#speed-classes-on-the-master)).
 
-## 7. Examples
+## 7. Devices
 
-- [x] Slave examples for every combination of event buffer and state: switch, relay, sensor, passive sensor, relay without feedback. Run on simulated ATtiny85 devices (`test_avr_examples`); not run on hardware.
-- [x] Master example application (scan, burst, state, info, commands). Compiles; not run on a Raspberry Pi yet.
+- [x] Slaves for every combination of event buffer and state: switch, relay, sensor, passive sensor, relay without feedback. Run on simulated ATtiny85 devices (`test_avr_devices`); not run on hardware.
+- [x] Master command line tool `hubus-cli` (scan, burst, state, info, commands). Compiles; not run on a Raspberry Pi yet.
 - [x] LED strip: fixed frames in a blind section, and animations from bytecode the master sends, shown in an interruptible section. Run on simulated ATtiny85 devices with the WS2812B signal decoded; not run on hardware.
 - [x] LED strip on the master: formulas compiled to bytecode and sent by its module ([section 12](#12-master-modules-and-hardware-identifier)).
+- [x] The slave firmware in `devices/<name>/` (`slave_<name>.hex`), documented in `docs/devices/`; the master command line tool is `hubus-cli`. They are devices for use, not examples; `examples/` keeps the dimmer plugin, a template of a module.
 
 ## 8. Continuous Integration
 
@@ -121,7 +122,7 @@ Documentation: [hubusd](docs/daemon.md).
 - [x] Specification: update opcodes, updater information, info page ([§6.8](docs/spec/06-operation.md#68-firmware-update)).
 - [x] Slave library option `HUBUS_ENABLE_UPDATE`: hand-over to the updater.
 - [x] Updater for classic tinyAVR (ATtiny85, 2 KB at the end of flash).
-- [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of the master example.
+- [x] Master: `hubus_master_update()`, Intel HEX reader, `update` command of `hubus-cli`.
 - [x] Bus simulation test with bit errors and an interrupted update.
 - [x] Updater for the tinyAVR 0/1/2-series (`updater/hubus_updater_modern.c`): the boot section at 0 (`HUBUS_UPDATER_BOOT_SIZE`, default 2 KB, fuse `BOOTEND`), the application area behind it, no reset vector rule; flash and EEPROM through `NVMCTRL`, no C runtime, with `UPDATE_SET_MCID` (2010 of 2048 bytes on the ATtiny1614, 2020 on the ATtiny3216). Built and size-checked for every 0/1/2 device of 8 KB and more, with an application linked behind it (`hubus_size_reference_update`); its layout on the simulated bus (`test_update_boot_section`). The master checks the start of a HEX image against the application area (`HUBUS_UPD_REASON_WRONG_START`). Not run on hardware or a simulator (`simavr` has no 0/1/2 cores), [slave library](docs/slave-library.md#tinyavr-012-series).
 - [x] Updates from hubusd: the image comes with the module, MQTT only triggers it ([hubusd](docs/daemon.md#firmware-updates)). The bus stands still meanwhile, by decision: requests that need the bus are refused with the reason, and `hubus/master/state` shows the update ([decisions](docs/project/decisions.md#master-modules)).
@@ -138,13 +139,13 @@ Specification: [§4.7](docs/spec/04-frames.md#47-slave-info-slave_info), [§6.10
 - [x] Master library: firmware update by the HWID.
 - [x] hubusd: modules selected by the HWID; command size, state, status capture, and blind times per opcode from the module; slaves without a module get no commands.
 - [x] Examples and tests.
-- [x] Load modules as plugins (`modules.dir` of hubusd, `master/hubus_module_loader.h`): checks before use, name and rule conflicts reported at load time, files that others can write refused. The modules of the examples stay linked into hubusd.
+- [x] Load modules as plugins (`modules.dir` of hubusd, `master/hubus_module_loader.h`): checks before use, name and rule conflicts reported at load time, files that others can write refused. The modules of the devices stay linked into hubusd.
 - [x] hubusd: topics and discovery from the entities of the module (`hubus/slave/<n>/<key>/state` and `/set`); the profiles are gone.
 - [x] Functions of a module (`create`, `destroy`, `on_frame`, `on_set`) on one thread per module, with a time limit per call ([hubusd](docs/daemon.md#module-functions)).
 - [x] Entities of the kind `light` and `text`, and switches without fixed commands, through `on_set`, with discovery.
-- [x] LED strip as a module: lamp, button, and animation formulas compiled to bytecode, sent as `PROG_WRITE` / `PROG_RUN` ([LED strip](docs/example-ledstrip.md#master-side)).
+- [x] LED strip as a module: lamp, button, and animation formulas compiled to bytecode, sent as `PROG_WRITE` / `PROG_RUN` ([LED strip](docs/devices/ledstrip.md#master-side)).
 - [x] Reload modules on `SIGHUP`: an unchanged plugin stays with its thread and instances, a replaced one becomes a new module once no function of the old one runs, and a reload that would leave a slave without a module changes nothing.
-- [x] Master example with modules (`--modules`): it names the module of a slave, and `hubus_master_update()` tells an application without update support (`HUBUS_UPD_REASON_NO_SUPPORT`) from a missing updater.
+- [x] `hubus-cli` with modules (`--modules`): it names the module of a slave, and `hubus_master_update()` tells an application without update support (`HUBUS_UPD_REASON_NO_SUPPORT`) from a missing updater.
 - [x] Example plugin in the build (`examples/plugin-dimmer`), installed to `lib/hubus/modules`, with notes for 32 and 64 bit Raspberry Pi OS.
 - [x] Module API version 3: the instance of a module owns its topics below the slave (`subscribe`, `publish`, `discovery` through its host, `on_message`); hubusd keeps what it publishes retained, publishes it again on reconnect, and removes it with the slave or module. The entities of Home Assistant are a library of the module (`master/hubus_module_ha.h`, `HUBUS_HA_FUNCTIONS`); every module has all four functions. Discovery cleanup takes the retained messages from the broker ([decisions](docs/project/decisions.md), [master library](docs/master-library.md#functions-and-host)).
 
@@ -158,10 +159,10 @@ Decisions: The library is not tied to a controller. It offers functions that the
 
 Flashing:
 
-- [x] Every example takes its MCID from the last EEPROM byte, with its old MCID as the default (`examples/`, `test/avr/firmware/fw_slave.c`); the MCID is a parameter of the flash script, written together with the image in one avrdude call. Run on simulated ATtiny85 devices (`test_avr_examples`: two relays from one image, invalid bytes).
+- [x] Every example takes its MCID from the last EEPROM byte, with its old MCID as the default (`devices/`, `test/avr/firmware/fw_slave.c`); the MCID is a parameter of the flash script, written together with the image in one avrdude call. Run on simulated ATtiny85 devices (`test_avr_devices`: two relays from one image, invalid bytes).
 - [x] `tools/flash-avr.sh [-m mcu] [-c programmer] [-P port] [-n] image.hex [mcid]`: a one-byte Intel HEX image for the EEPROM, the offset of the last byte from avr-gcc (also for the 0/1/2-series), `-` for the MCID alone; without an MCID it says that the default applies. Tried with `-n` only, not with a programmer.
 - [x] Slave library: `hubus_slave_mcid_from_eeprom(fallback)` and `hubus_slave_mcid_or()` in `slave/hubus_slave.h`: the last EEPROM byte as the updater reads it, range check, fallback; on the 0/1/2-series the offset of the mapped EEPROM.
-- [x] `example_relay_simple_pins`: the simple relay with its MCID from two jumpers (`0x20` plus PB1, PB4); the updater stores what the application hands over, and a change over the bus does not last, which the master undoes and reports.
+- [x] `slave_relay_simple_pins`: the simple relay with its MCID from two jumpers (`0x20` plus PB1, PB4); the updater stores what the application hands over, and a change over the bus does not last, which the master undoes and reports.
 
 Change over the bus (update mode):
 
@@ -170,7 +171,7 @@ Change over the bus (update mode):
 - [x] Updater: `HUBUS_UPD_SET_MCID` (CMake `HUBUS_UPDATER_SET_MCID`, on for the ATtiny85 reference updater), range check, `eeprom_update_byte` through the platform function `hubus_upd_store_mcid()`, the new MCID in the running core. 60 bytes: 2040 instead of 1980 of 2048; the build also produces `hubus_updater_no_set_mcid` and checks both.
 - [x] The option is in the hardware-independent part of the updater (`updater/hubus_updater.c`); another updater only provides `hubus_upd_store_mcid()`, and the flag tells the master. The updater for the 0/1/2-series has it too (section 11).
 - [x] Master library: `hubus_master_set_mcid(m, mcid, new_mcid, modules, n_modules, &res)`: refuses a taken MCID, enters the update mode, repeats the opcode until the updater answers to the new MCID, leaves the update mode under the new one; reasons `MCID_TAKEN`, `NO_SET_MCID`, `MCID_NOT_SET`, `MCID_NOT_KEPT` (with the change undone), `NO_SUPPORT` from the module.
-- [x] Master example: command `mcid <old> <new>`. Compiles; not run on a Raspberry Pi.
+- [x] `hubus-cli`: command `mcid <old> <new>`. Compiles; not run on a Raspberry Pi.
 - [x] hubusd: `hubus/slave/<n>/mcid` with the new MCID, result on `hubus/master/mcid`. It does not write its configuration: a configured new MCID goes into operation with its module, another one is reported as unknown, and the log says what the configuration has to follow; the old MCID goes offline.
 - [x] Tests: `test_update` and `test_update_no_set_mcid` on the bus simulation (from an application and from the updater, taken MCID, the checks of the updater, bit errors, power loss in update mode, an application with its own MCID, a module without update support, an updater without the option), `test_daemon_update` (MQTT), `test_avr_update` on a simulated ATtiny85 (the MCID from the programmer, a fresh device that gets its MCID over the bus, the running switch that moves and keeps it after a power cycle and an update).
 - [ ] Hardware: change the MCID on an ATtiny85 and survive an interrupted change (together with the firmware update test in section 9); the flash script with a real programmer and `EESAVE`.
@@ -184,14 +185,14 @@ Documentation:
 
 ## 14. Sensor Modules for the ATtiny85
 
-Three new devices, each with slave firmware (always with the update option), a master module, an entry in the [HWID types](docs/hwid-types.md), tests, and a page like the [LED strip](docs/example-ledstrip.md). Decisions: HWID types `0x86` (DHT11), `0x87` (HC-SR04), `0x88` (HC-SR501); one variant each, built with the updater; the distance threshold is sent by the master, with a default of 30 cm.
+Three new devices, each with slave firmware (always with the update option), a master module, an entry in the [HWID types](docs/hwid-types.md), tests, and a page like the [LED strip](docs/devices/ledstrip.md). Decisions: HWID types `0x86` (DHT11), `0x87` (HC-SR04), `0x88` (HC-SR501); one variant each, built with the updater; the distance threshold is sent by the master, with a default of 30 cm.
 
 Free pins next to `CLK` (PB2) and `DATA` (PB3): PB0, PB1, PB4 (PB5 is reset).
 
 - [x] Entity kind `number` (`HUBUS_COMPONENT_NUMBER`, `min`/`max`/`step`, value through `on_set`, discovery as a box input; module API version 2).
-- [x] LED strip and push button: the build with the updater fits below the info page, 6076 of 6080 bytes; the AVR build fails once it no longer fits (`example_ledstrip_update_size`, [sizes](docs/example-ledstrip.md#sizes)). HWID variant `2` with the module `ledstrip-update`; updated on a simulated ATtiny85 while an animation runs (`test_avr_update`), the module on the simulated bus (`test_daemon_core`); not run on hardware.
-- [x] DHT11 (`0x86`): temperature and humidity as state, read at most once per second; the 40-bit read in an interruptible section that is repeated when the bus needs an edge. Module with two sensors. Test with a simulated DHT11 (pulse widths, bad checksum, absent sensor). Run on a simulated ATtiny85 with a model of the sensor (`test_avr_examples`); not run on hardware, [description](docs/example-dht11.md).
-- [x] HC-SR04 (`0x87`): echo width measured on PB1 (trigger PB0), distance as state, an event when it falls below the threshold (and when it leaves it, with hysteresis). Command to set the threshold; the slave reports "no threshold" after power-up and the master sends the stored value, default 30 cm. Module with a distance sensor and a `number` entity. The echo is 5 V: divider or a 3.3 V sensor. Test with a simulated echo. Run on a simulated ATtiny85 with a model of the module (`test_avr_examples`), the module on the simulated bus (`test_daemon_core`); not run on hardware, [description](docs/example-distance.md).
-- [x] HC-SR501 (`0x88`): event buffer only (1 motion, 0 cleared), no state; warm-up of the PIR after power-up. Module: `binary_sensor` with the device class `motion`. Test on a simulated ATtiny85. Run on a simulated ATtiny85 (`test_avr_examples`); not run on hardware, [description](docs/example-motion.md).
-- [x] Tables, daemon documentation, and size checks for the new firmware (`example_<name>_size` in the AVR build, which the CI builds).
+- [x] LED strip and push button: the build with the updater fits below the info page, 6076 of 6080 bytes; the AVR build fails once it no longer fits (`slave_ledstrip_update_size`, [sizes](docs/devices/ledstrip.md#sizes)). HWID variant `2` with the module `ledstrip-update`; updated on a simulated ATtiny85 while an animation runs (`test_avr_update`), the module on the simulated bus (`test_daemon_core`); not run on hardware.
+- [x] DHT11 (`0x86`): temperature and humidity as state, read at most once per second; the 40-bit read in an interruptible section that is repeated when the bus needs an edge. Module with two sensors. Test with a simulated DHT11 (pulse widths, bad checksum, absent sensor). Run on a simulated ATtiny85 with a model of the sensor (`test_avr_devices`); not run on hardware, [description](docs/devices/dht11.md).
+- [x] HC-SR04 (`0x87`): echo width measured on PB1 (trigger PB0), distance as state, an event when it falls below the threshold (and when it leaves it, with hysteresis). Command to set the threshold; the slave reports "no threshold" after power-up and the master sends the stored value, default 30 cm. Module with a distance sensor and a `number` entity. The echo is 5 V: divider or a 3.3 V sensor. Test with a simulated echo. Run on a simulated ATtiny85 with a model of the module (`test_avr_devices`), the module on the simulated bus (`test_daemon_core`); not run on hardware, [description](docs/devices/distance.md).
+- [x] HC-SR501 (`0x88`): event buffer only (1 motion, 0 cleared), no state; warm-up of the PIR after power-up. Module: `binary_sensor` with the device class `motion`. Test on a simulated ATtiny85. Run on a simulated ATtiny85 (`test_avr_devices`); not run on hardware, [description](docs/devices/motion.md).
+- [x] Tables, daemon documentation, and size checks for the new firmware (`slave_<name>_size` in the AVR build, which the CI builds).
 - [ ] Hardware test together with section 9.

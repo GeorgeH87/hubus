@@ -1,18 +1,18 @@
-# Example: Temperature and Humidity Sensor (DHT11)
+# Device: Temperature and Humidity Sensor (DHT11)
 
-One ATtiny85 that reads a DHT11 module and offers the values to the master. It only answers reads and can be updated, nothing else. The firmware is `examples/slave-dht11/dht11_example.c`, the HWID type `0x86` variant `1` ([types](hwid-types.md)), the master module `dht11`.
+One ATtiny85 that reads a DHT11 module and offers the values to the master. It only answers reads and can be updated, nothing else. The firmware is `devices/dht11/dht11.c`, the HWID type `0x86` variant `1` ([types](../hwid-types.md)), the master module `dht11`.
 
 ## Hardware
 
 | ATtiny85 pin | Function |
 |---|---|
 | PB2 | `CLK` |
-| PB3 | `DATA` (external pull-up to 3.3 V, [§1.1](spec/01-physical-layer.md#11-bus-lines)) |
+| PB3 | `DATA` (external pull-up to 3.3 V, [§1.1](../spec/01-physical-layer.md#11-bus-lines)) |
 | PB0 | data pin of the DHT11 |
 
 - **Pull-up:** the data pin needs 4.7 to 10 kOhm to 3.3 V; most DHT11 modules on a small board have it, a bare sensor does not.
 - **Supply:** the DHT11 works from 3.3 V. Then its data pin is a 3.3 V signal and needs no level shifting.
-- **Clock:** 8 MHz from the internal oscillator, as for the other examples (clear the `CKDIV8` fuse).
+- **Clock:** 8 MHz from the internal oscillator, as for the other devices (clear the `CKDIV8` fuse).
 
 ## State
 
@@ -28,7 +28,7 @@ The DHT11 delivers whole numbers; the decimal bytes of its answer are ignored. I
 
 ## Reading without disturbing the bus
 
-A reading takes about 4 ms, and the sensor tells a 0 from a 1 by the length of a pulse (27 us against 70 us), so the slave cannot be interrupted in the middle. It uses an [interruptible section](slave-library.md) of the library:
+A reading takes about 4 ms, and the sensor tells a 0 from a 1 by the length of a pulse (27 us against 70 us), so the slave cannot be interrupted in the middle. It uses an [interruptible section](../slave-library.md) of the library:
 
 1. The start signal, 20 ms of the line pulled low, runs with the interrupts on. The slave never blocks the bus for it.
 2. The section begins only when the bus is between two transactions. Until then the line stays low for up to 10 ms more, which the sensor tolerates.
@@ -43,8 +43,8 @@ The module `dht11` offers three entities: `temperature` (device class `temperatu
 
 ## Firmware update
 
-The application ends below the info page in front of the updater, checked by the build (`example_dht11_size`); it takes about 2 KB of flash and 62 bytes of RAM. Installing and updating work as for the switch ([slave library](slave-library.md#firmware-update)).
+The application ends below the info page in front of the updater, checked by the build (`slave_dht11_size`); it takes about 2 KB of flash and 62 bytes of RAM. Installing and updating work as for the switch ([slave library](../slave-library.md#firmware-update)).
 
 ## Tests
 
-`test_avr_examples` runs the firmware on a simulated ATtiny85 with a model of the DHT11 on PB0: start signal of at least 18 ms, then the 30 us, 80 us, 80 us, and 40 bits of 50 us low and 27 or 70 us high, driven by simavr cycle timers. The tests cover the values and their refresh, a wrong checksum, a sensor that does not answer, a value out of range, and 600 transactions of the master while the sensor is read: all of them succeed, and the reading is made once the bus rests.
+`test_avr_devices` runs the firmware on a simulated ATtiny85 with a model of the DHT11 on PB0: start signal of at least 18 ms, then the 30 us, 80 us, 80 us, and 40 bits of 50 us low and 27 or 70 us high, driven by simavr cycle timers. The tests cover the values and their refresh, a wrong checksum, a sensor that does not answer, a value out of range, and 600 transactions of the master while the sensor is read: all of them succeed, and the reading is made once the bus rests.

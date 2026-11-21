@@ -1,5 +1,5 @@
 /*
- * The LED strip example (examples/slave-ledstrip) as it runs on an ATtiny85, simulated by simavr against the real
+ * The LED strip (devices/ledstrip) as it runs on an ATtiny85, simulated by simavr against the real
  * master: the WS2812B signal on PB0 is decoded bit by bit, so the tests see the frames the strip would show. Covers
  * the fixed frame (SHOW in a blind section), the animation bytecode (PROG_WRITE, PROG_RUN, PARAM, TIME), and the
  * interruptible section: animation frames give way to the bus, and no transaction is lost meanwhile.

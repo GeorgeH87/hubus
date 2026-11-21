@@ -1,5 +1,5 @@
 /*
- * The slave examples (examples/slave-*) as they are shipped, on simulated ATtiny85 devices against the real master:
+ * The devices (devices/) as they are shipped, on simulated ATtiny85 devices against the real master:
  * the relays sleep in their main loop and wake up by the pin change interrupt, the switch debounces a button in a
  * loop of 1 ms delays, and the sensors measure with the ADC between their delays. The tests drive the inputs (button,
  * temperature sensor) and watch the outputs (relay pin) of the devices.
@@ -22,7 +22,7 @@
 
 #define BOOT_NS (5u * MS) /* C runtime, the first measurement of the sensors, hubus_slave_init() */
 
-/* MCIDs and hardware identifiers of the examples */
+/* MCIDs and hardware identifiers of the devices */
 #define RELAY 3u
 #define RELAY_SIMPLE 4u
 #define SWITCH 5u
@@ -195,7 +195,7 @@ static void test_relay_switches_and_reads_back(void)
 {
     hubus_slave_frame_t f;
     event_t ev[2];
-    avr_slave_t *relay = add(FW("ex_relay"));
+    avr_slave_t *relay = add(FW("dev_relay"));
 
     boot();
     check_info(RELAY, 0x81, 0x01);
@@ -230,7 +230,7 @@ static void test_relay_without_feedback(void)
 {
     hubus_slave_frame_t f;
     event_t ev[2];
-    avr_slave_t *relay = add(FW("ex_relay_simple"));
+    avr_slave_t *relay = add(FW("dev_relay_simple"));
 
     boot();
     check_info(RELAY_SIMPLE, 0x81, 0x02);
@@ -254,7 +254,7 @@ static void test_switch_debounces_and_announces_the_button(void)
 {
     hubus_slave_frame_t f;
     event_t ev[4];
-    avr_slave_t *sw = add(FW("ex_switch"));
+    avr_slave_t *sw = add(FW("dev_switch"));
 
     boot();
     check_info(SWITCH, 0x82, 0x01);
@@ -289,7 +289,7 @@ static void test_switch_event_while_the_bus_is_busy(void)
 {
     hubus_slave_frame_t f;
     event_t ev[4];
-    avr_slave_t *sw = add(FW("ex_switch"));
+    avr_slave_t *sw = add(FW("dev_switch"));
     unsigned i;
 
     boot();
@@ -309,7 +309,7 @@ static void test_switch_event_while_the_bus_is_busy(void)
 static void test_sensor_reports_its_measurement(void)
 {
     event_t ev[2];
-    avr_slave_t *sensor = add(FW("ex_sensor"));
+    avr_slave_t *sensor = add(FW("dev_sensor"));
 
     temperature(sensor, 300);
     boot();
@@ -334,7 +334,7 @@ static void test_passive_sensor_state(void)
 {
     hubus_slave_frame_t f;
     event_t ev[2];
-    avr_slave_t *sensor = add(FW("ex_sensor_passive"));
+    avr_slave_t *sensor = add(FW("dev_sensor_passive"));
 
     temperature(sensor, 290);
     boot();
@@ -368,7 +368,7 @@ static void test_motion_sensor_announces_changes_after_the_warm_up(void)
 {
     hubus_slave_frame_t f;
     event_t ev[4];
-    avr_slave_t *m = add(FW("ex_motion"));
+    avr_slave_t *m = add(FW("dev_motion"));
 
     pir(m, 0);
     boot();
@@ -406,7 +406,7 @@ static void test_motion_sensor_announces_changes_after_the_warm_up(void)
 static void test_motion_sensor_high_after_the_warm_up(void)
 {
     event_t ev[4];
-    avr_slave_t *m = add(FW("ex_motion"));
+    avr_slave_t *m = add(FW("dev_motion"));
 
     pir(m, 1);
     boot();
@@ -505,7 +505,7 @@ static void dht_on_ddr(struct avr_irq_t *irq, uint32_t value, void *param)
 
 static avr_slave_t *add_dht(uint8_t humidity, uint8_t temperature)
 {
-    avr_slave_t *d = add(FW("ex_dht11"));
+    avr_slave_t *d = add(FW("dev_dht11"));
 
     memset(&dht, 0, sizeof dht);
     dht.dev = d;
@@ -667,7 +667,7 @@ static void echo_on_trig(struct avr_irq_t *irq, uint32_t value, void *param)
 
 static avr_slave_t *add_echo(unsigned distance_mm)
 {
-    avr_slave_t *d = add(FW("ex_distance"));
+    avr_slave_t *d = add(FW("dev_distance"));
 
     memset(&echo, 0, sizeof echo);
     echo.dev = d;
@@ -865,15 +865,15 @@ static void on_state(void *ctx, const hubus_slave_frame_t *f)
     }
 }
 
-/* Four examples on one bus: a STATUS_CAPTURE of all is answered in descending MCID order by those with an event buffer,
+/* Four devices on one bus: a STATUS_CAPTURE of all is answered in descending MCID order by those with an event buffer,
  * and the states of all are read with one group request each. */
-static void test_examples_share_the_bus(void)
+static void test_devices_share_the_bus(void)
 {
     event_t ev[8];
-    avr_slave_t *relay = add(FW("ex_relay"));
-    avr_slave_t *sw = add(FW("ex_switch"));
-    avr_slave_t *sensor = add(FW("ex_sensor"));
-    avr_slave_t *passive = add(FW("ex_sensor_passive"));
+    avr_slave_t *relay = add(FW("dev_relay"));
+    avr_slave_t *sw = add(FW("dev_switch"));
+    avr_slave_t *sensor = add(FW("dev_sensor"));
+    avr_slave_t *passive = add(FW("dev_sensor_passive"));
     uint16_t count = 0;
 
     n_states = 0;
@@ -910,12 +910,12 @@ static void test_examples_share_the_bus(void)
 
 /* One image for all devices, one EEPROM byte per device as the programmer writes it (tools/flash-avr.sh): two relays
  * from the same image under their own MCIDs. A byte without an MCID (0, above 63, erased) leaves the default. */
-static void test_examples_take_their_mcid_from_the_eeprom(void)
+static void test_devices_take_their_mcid_from_the_eeprom(void)
 {
-    avr_slave_t *a = add(FW("ex_relay"));
-    avr_slave_t *b = add(FW("ex_relay"));
-    avr_slave_t *sensor = add(FW("ex_sensor"));
-    avr_slave_t *sw = add(FW("ex_switch"));
+    avr_slave_t *a = add(FW("dev_relay"));
+    avr_slave_t *b = add(FW("dev_relay"));
+    avr_slave_t *sensor = add(FW("dev_sensor"));
+    avr_slave_t *sw = add(FW("dev_switch"));
 
     avr_slave_eeprom_write(a, -1, 30);
     avr_slave_eeprom_write(b, -1, 31);
@@ -933,14 +933,14 @@ static void test_examples_take_their_mcid_from_the_eeprom(void)
     TEST_ASSERT_EQUAL_UINT8(1, output(b, RELAY_PIN));
 }
 
-/* The source of the MCID is up to the application: example_relay_simple_pins reads two jumpers (PB1, PB4 to ground)
+/* The source of the MCID is up to the application: slave_relay_simple_pins reads two jumpers (PB1, PB4 to ground)
  * and ignores the EEPROM byte. */
 #define JUMPERS ((1u << 1) | (1u << 4))
 
 static void test_relay_with_its_mcid_from_jumpers(void)
 {
-    avr_slave_t *a = add(FW("ex_relay_simple_pins"));
-    avr_slave_t *b = add(FW("ex_relay_simple_pins"));
+    avr_slave_t *a = add(FW("dev_relay_simple_pins"));
+    avr_slave_t *b = add(FW("dev_relay_simple_pins"));
 
     drive(a, JUMPERS, 1u << 4); /* PB1 closed: + 1 */
     drive(b, JUMPERS, 1u << 1); /* PB4 closed: + 2 */
@@ -974,8 +974,8 @@ int main(void)
     RUN_TEST(test_distance_threshold_commands);
     RUN_TEST(test_distance_without_an_echo);
     RUN_TEST(test_distance_under_bus_traffic);
-    RUN_TEST(test_examples_share_the_bus);
-    RUN_TEST(test_examples_take_their_mcid_from_the_eeprom);
+    RUN_TEST(test_devices_share_the_bus);
+    RUN_TEST(test_devices_take_their_mcid_from_the_eeprom);
     RUN_TEST(test_relay_with_its_mcid_from_jumpers);
     return UNITY_END();
 }

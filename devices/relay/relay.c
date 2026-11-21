@@ -6,7 +6,7 @@
  *
  * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1 (docs/spec/07-slave.md
  * section 7.4). REQUEST_STATE alone would do for the readback; the event
- * buffer adds STATUS_CAPTURE. Without feedback at all, see slave-relay-simple.
+ * buffer adds STATUS_CAPTURE. Without feedback at all, see relay-simple.
  *
  * Application commands (SEND_COMMAND, opcode and one argument byte):
  *   0x10 <0|1>   switch the output off / on

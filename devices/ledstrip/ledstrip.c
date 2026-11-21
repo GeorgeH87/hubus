@@ -2,7 +2,7 @@
  * LED strip and push button slave (ATtiny85 at 8 MHz).
  *
  *   PB2 = CLK, PB3 = DATA (library, see slave/hubus_slave_config.h)
- *   PB0 = WS2812B data input (through a 5 V buffer, docs/example-ledstrip.md)
+ *   PB0 = WS2812B data input (through a 5 V buffer, docs/devices/ledstrip.md)
  *   PB1 = push button to ground (internal pull-up)
  *
  * Build options: HUBUS_ENABLE_EVENTS=1, HUBUS_ENABLE_STATE=1, HUBUS_TX_BUF_SIZE=3; HUBUS_ENABLE_UPDATE=1 for the

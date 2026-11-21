@@ -148,7 +148,7 @@ static void assert_contains(const char *topic, const char *needle)
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(p, needle), p);
 }
 
-/* ---- simulated devices (behave like the example firmware) ---------------------------- */
+/* ---- simulated devices (behave like the firmware in devices/) ------------------------ */
 
 enum { DEV_RELAY = 0x81, DEV_SWITCH = 0x82, DEV_TEMP = 0x83, DEV_UNKNOWN = 0x97, DEV_NO_ENTITIES = 0x98, DEV_FUNC = 0xF0 };
 

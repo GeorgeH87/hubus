@@ -91,7 +91,7 @@ Configuration (`hubus_slave_config_t`):
   }
   ```
 
-  The work has to tolerate being cut off: the LED strip example sends an interrupted frame again later ([LED strip](example-ledstrip.md#animations)).
+  The work has to tolerate being cut off: the LED strip sends an interrupted frame again later ([LED strip](devices/ledstrip.md#animations)).
 - `hubus_slave_write()` and `hubus_slave_is_pending()` exist only with the event buffer; `on_status_capture` is ignored without it.
 - Callbacks run in the interrupt handler and must be short. Group commands are executed without any response; results go through the event buffer.
 - Writes from the main loop disable interrupts for the duration of the copy (at most 31 bytes).
@@ -109,25 +109,25 @@ The event buffer and the state ([§7.4](spec/07-slave.md#74-optional-parts)) are
 
 The event buffer costs about 490 bytes of flash and 41 bytes of RAM (including the capture and write code of the reference firmware), the state about 60 bytes of flash and 3 bytes of RAM.
 
-## Examples
+## Devices
 
-`examples/` has complete firmware for the ATtiny85, one for each combination of the optional parts. The CMake build compiles each example with its own options, independent of the options of the build directory.
+`devices/` has the firmware of the devices for the ATtiny85, ready to flash: one for each combination of the optional parts, and a few sensors. A new device can start from the one closest to it. The CMake build compiles each device with its own options, independent of the options of the build directory, into `slave_<name>.hex`.
 
-| Example | Device | Events | State |
+| Directory | Device | Events | State |
 |---|---|---|---|
-| `slave-switch` | push button: announces changes, input level readable | 1 | 1 |
-| `slave-relay` | relay: state readable, `STATUS_CAPTURE` | 1 | 1 |
-| `slave-sensor` | temperature sensor: value collected with `STATUS_CAPTURE` | 1 | 0 |
-| `slave-sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
-| `slave-relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
-| `slave-ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](example-ledstrip.md)) | 1 | 1 |
-| `slave-dht11` | DHT11 temperature and humidity, read only: state with the values and a fault byte, with firmware update ([description](example-dht11.md)) | 0 | 1 |
-| `slave-distance` | HC-SR04 distance: state and event with the distance and a near flag, trigger distance from the master, with firmware update ([description](example-distance.md)) | 1 | 1 |
-| `slave-motion` | HC-SR501 PIR motion sensor: an event for every change, with firmware update ([description](example-motion.md)) | 1 | 0 |
+| `switch` | push button: announces changes, input level readable | 1 | 1 |
+| `relay` | relay: state readable, `STATUS_CAPTURE` | 1 | 1 |
+| `sensor` | temperature sensor: value collected with `STATUS_CAPTURE` | 1 | 0 |
+| `sensor-passive` | temperature sensor that is only read (the master polls) | 0 | 1 |
+| `relay-simple` | relay without feedback (the master caches its state) | 0 | 0 |
+| `ledstrip` | WS2812B strip driven with raw frames or animated by bytecode from the master, plus a push button ([description](devices/ledstrip.md)) | 1 | 1 |
+| `dht11` | DHT11 temperature and humidity, read only: state with the values and a fault byte, with firmware update ([description](devices/dht11.md)) | 0 | 1 |
+| `distance` | HC-SR04 distance: state and event with the distance and a near flag, trigger distance from the master, with firmware update ([description](devices/distance.md)) | 1 | 1 |
+| `motion` | HC-SR501 PIR motion sensor: an event for every change, with firmware update ([description](devices/motion.md)) | 1 | 0 |
 
-Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#entities); their modules also state the entities of each device ([hubusd](daemon.md#entities)). The build also produces `example_switch_update`, the switch with [firmware update](#firmware-update), and `example_relay_simple_pins`, the simple relay with its MCID from two jumpers ([assigning the MCID](#assigning-the-mcid)).
+Their hardware identifiers are in the [table of types](hwid-types.md) and select the modules built into [hubusd](daemon.md#entities); their modules also state the entities of each device ([hubusd](daemon.md#entities)). The build also produces `slave_switch_update`, the switch with [firmware update](#firmware-update), and `slave_relay_simple_pins`, the simple relay with its MCID from two jumpers ([assigning the MCID](#assigning-the-mcid)).
 
-Every example takes its MCID from the last EEPROM byte and falls back to its own default (switch 5, relay 3, sensor 7, passive sensor 8, simple relay 4, LED strip 11): one image serves every device of a kind.
+Every device takes its MCID from the last EEPROM byte and falls back to its own default (switch 5, relay 3, sensor 7, passive sensor 8, simple relay 4, LED strip 11): one image serves every device of a kind.
 
 ## Configuration
 
@@ -165,7 +165,7 @@ Both share the protocol part (`updater/hubus_updater.c`) and are built and size-
 | `0x17C0..0x17FF` | info page: length, CRC-16, and entry of the application |
 | `0x1800..0x1FFF` | updater (`updater/`, 2040 bytes; 1980 without `UPDATE_SET_MCID`) |
 
-**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and `HUBUS_UPDATER_ADDR=0x1800`, and keep it below `0x17C0`; the firmware only needs a HWID whose module states the update support. The library then jumps to the updater on `UPDATE_ENTER`, with the MCID handed over in `GPIOR1`. This costs about 60 bytes of flash. Without an updater at that address the command is ignored. `example_switch_update` is the switch built this way, with a check that it fits.
+**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and `HUBUS_UPDATER_ADDR=0x1800`, and keep it below `0x17C0`; the firmware only needs a HWID whose module states the update support. The library then jumps to the updater on `UPDATE_ENTER`, with the MCID handed over in `GPIOR1`. This costs about 60 bytes of flash. Without an updater at that address the command is ignored. `slave_switch_update` is the switch built this way, with a check that it fits.
 
 **Updater.** `build/avr-attiny85/updater/hubus_updater.hex`, linked to `0x1800`. It runs without interrupts, starts the application at reset if the info page checks out (a CRC-16 over the application, about 30 ms at 8 MHz), and otherwise waits for the master. Its MCID is the last EEPROM byte, the same one the library reads ([assigning the MCID](#assigning-the-mcid)); while that byte holds none, the build option `HUBUS_UPDATER_MCID` (default 63) applies. At `UPDATE_ENTER` it stores the MCID the application hands over there. The application may read the byte, but must not write it.
 
@@ -181,7 +181,7 @@ avrdude -c usbasp -p t85 -U lfuse:w:0xE2:m -U hfuse:w:0xD5:m -U efuse:w:0xFE:m
 sh tools/flash-avr.sh build/avr-attiny85/updater/hubus_updater.hex 5
 ```
 
-The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master under MCID 5, and `hubus_master_example update 5 example_switch_update.hex` loads the switch ([master library](master-library.md#firmware-update)), which starts under the same MCID, since it reads the same byte. A device programmed without an MCID waits under 63; `hubus_master_example mcid 63 5` gives it its MCID over the bus first ([below](#changing-the-mcid-over-the-bus)). Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
+The updater image also holds the first word of flash, the jump to the updater, so the freshly programmed device starts the updater. It waits for the master under MCID 5, and `hubus-cli update 5 slave_switch_update.hex` loads the switch ([master library](master-library.md#firmware-update)), which starts under the same MCID, since it reads the same byte. A device programmed without an MCID waits under 63; `hubus-cli mcid 63 5` gives it its MCID over the bus first ([below](#changing-the-mcid-over-the-bus)). Writing the application with the programmer as well does not work: its first word would not jump to the updater, and the info page would be missing.
 
 A firmware update over the bus writes the flash only: the MCID in the EEPROM survives it.
 
@@ -201,7 +201,7 @@ The 32 KB devices have 128-byte pages, so their info page is `0x7F80..0x7FFF`. T
 |---|---|
 | `HUBUS_UPDATER_BOOT_SIZE` | Size of the boot section in bytes, a multiple of 256 (default 2048): the updater must fit, the application starts behind it. Fuse `BOOTEND` = this value / 256. |
 
-**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and link it to the end of the boot section, `-Wl,--section-start=.text=0x800` (`ld` reads the address as hexadecimal). On `UPDATE_ENTER` the library jumps to address 0 with the MCID in `GPIOR1`. `hubus_size_reference_update` in the AVR build is the reference firmware built this way, with a check that it fits. An image from `avr-objcopy -O ihex` starts at `0x0800`; `hubus_master_example update` reads the start from the file and refuses an image for another area ([master library](master-library.md#firmware-update)). A module image (`avr-objcopy -O binary`) starts at the start of the area by itself.
+**Application.** Build it with `HUBUS_ENABLE_UPDATE=1` and link it to the end of the boot section, `-Wl,--section-start=.text=0x800` (`ld` reads the address as hexadecimal). On `UPDATE_ENTER` the library jumps to address 0 with the MCID in `GPIOR1`. `hubus_size_reference_update` in the AVR build is the reference firmware built this way, with a check that it fits. An image from `avr-objcopy -O ihex` starts at `0x0800`; `hubus-cli update` reads the start from the file and refuses an image for another area ([master library](master-library.md#firmware-update)). A module image (`avr-objcopy -O binary`) starts at the start of the area by itself.
 
 **Updater.** `build/avr-attiny1614/updater/hubus_updater.hex`, linked to 0. It differs from the one for classic devices in a few points:
 
@@ -233,14 +233,14 @@ The library takes `cfg.mcid` and nothing else: where the MCID comes from is the 
 
 | Source | How | Example |
 |---|---|---|
-| **EEPROM, written when flashing** (recommended) | one image for all devices, one byte per device: `cfg.mcid = hubus_slave_mcid_from_eeprom(default)` | every example |
-| Pins (jumpers, DIP switch) | read once at reset, a base MCID plus the pins | `example_relay_simple_pins`: `0x20` plus jumpers on PB1 and PB4 |
+| **EEPROM, written when flashing** (recommended) | one image for all devices, one byte per device: `cfg.mcid = hubus_slave_mcid_from_eeprom(default)` | every device |
+| Pins (jumpers, DIP switch) | read once at reset, a base MCID plus the pins | `slave_relay_simple_pins`: `0x20` plus jumpers on PB1 and PB4 |
 | A constant | one image per device | – |
 
 **Recommended: the last EEPROM byte.** `hubus_slave_mcid_from_eeprom(default)` reads the last byte of the EEPROM (`E2END` on classic tinyAVR, the last byte of the mapped EEPROM on the 0/1/2-series) and returns `default` if it holds no MCID. The updater keeps its MCID in the same byte, so application and updater always agree. `tools/flash-avr.sh` writes it together with the image:
 
 ```sh
-sh tools/flash-avr.sh build/avr-attiny85/examples/example_relay.hex 12   # image and MCID 12, one avrdude call
+sh tools/flash-avr.sh build/avr-attiny85/devices/slave_relay.hex 12   # image and MCID 12, one avrdude call
 sh tools/flash-avr.sh - 13                                               # the MCID alone, the flash stays
 sh tools/flash-avr.sh -m attiny1614 -c serialupdi -P /dev/ttyUSB0 image.hex 7
 ```
@@ -253,7 +253,7 @@ The script builds a one-byte Intel HEX image for the EEPROM (`-n` prints it and 
 
 ### Changing the MCID over the Bus
 
-With an updater that takes `UPDATE_SET_MCID` (`HUBUS_UPDATER_SET_MCID`), the master can give a slave another MCID without a programmer ([§6.8](spec/06-operation.md#mcid)): `hubus_master_set_mcid()` ([master library](master-library.md#firmware-update)), `hubus_master_example mcid <old> <new>`, or the `mcid` topic of [hubusd](daemon.md#changing-the-mcid). The slave switches to its updater, which writes the new MCID to the last EEPROM byte and answers to it at once; the application then starts with it if it reads that byte. It works for a slave in its updater as well, for example a fresh device under the default MCID 63, before its first application.
+With an updater that takes `UPDATE_SET_MCID` (`HUBUS_UPDATER_SET_MCID`), the master can give a slave another MCID without a programmer ([§6.8](spec/06-operation.md#mcid)): `hubus_master_set_mcid()` ([master library](master-library.md#firmware-update)), `hubus-cli mcid <old> <new>`, or the `mcid` topic of [hubusd](daemon.md#changing-the-mcid). The slave switches to its updater, which writes the new MCID to the last EEPROM byte and answers to it at once; the application then starts with it if it reads that byte. It works for a slave in its updater as well, for example a fresh device under the default MCID 63, before its first application.
 
 This is only possible in update mode, so only for firmware with `HUBUS_ENABLE_UPDATE` and an updater with the option. A firmware without update support keeps the MCID it was flashed with.
 

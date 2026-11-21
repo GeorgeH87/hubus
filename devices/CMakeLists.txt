@@ -1,0 +1,102 @@
+# Slave firmware of the devices for the ATtiny85 (CLK = PB2, DATA = PB3). The CI
+# device matrix builds the size reference firmware for the other devices.
+#
+# Each device builds the slave library itself with the optional parts it uses
+# (docs/spec/07-slave.md section 7.4), independent of the options of this
+# build directory; buffers and pins follow this build.
+if(HUBUS_AVR AND HUBUS_AVR_MCU STREQUAL "attiny85")
+    set(HUBUS_DEVICE_LIB_SOURCES
+        ${PROJECT_SOURCE_DIR}/core/hubus_slave_core.c
+        ${PROJECT_SOURCE_DIR}/core/hubus_crc.c
+        ${PROJECT_SOURCE_DIR}/core/hubus_frame.c
+        ${PROJECT_SOURCE_DIR}/slave/hubus_slave.c)
+
+    # hubus_device(name source events state [TX_BUF size] [extra definitions...])
+    function(hubus_device name source events state)
+        cmake_parse_arguments(PARSE_ARGV 4 dev "" "TX_BUF" "")
+        if(NOT dev_TX_BUF)
+            set(dev_TX_BUF ${HUBUS_TX_BUF_SIZE})
+        endif()
+        add_executable(slave_${name} ${source} ${HUBUS_DEVICE_LIB_SOURCES})
+        target_include_directories(slave_${name} PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/slave)
+        target_compile_definitions(slave_${name} PRIVATE
+            HUBUS_CLK_PORT=${clk_port} HUBUS_CLK_PIN=${clk_pin}
+            HUBUS_DATA_PORT=${data_port} HUBUS_DATA_PIN=${data_pin}
+            HUBUS_TX_BUF_SIZE=${dev_TX_BUF} HUBUS_RX_BUF_SIZE=${HUBUS_RX_BUF_SIZE}
+            HUBUS_ENABLE_EVENTS=${events} HUBUS_ENABLE_STATE=${state} ${dev_UNPARSED_ARGUMENTS})
+        target_compile_options(slave_${name} PRIVATE -Wall -Wextra)
+        set_target_properties(slave_${name} PROPERTIES SUFFIX ".elf")
+        add_custom_command(TARGET slave_${name} POST_BUILD
+            COMMAND ${AVR_OBJCOPY} -O ihex -R .eeprom $<TARGET_FILE:slave_${name}> $<TARGET_FILE_DIR:slave_${name}>/slave_${name}.hex
+            COMMAND ${AVR_SIZE} $<TARGET_FILE:slave_${name}>)
+    endfunction()
+
+    #            name              source                          events state
+    hubus_device(relay             relay/relay.c                   1      1)
+    hubus_device(switch            switch/switch.c                 1      1)
+    hubus_device(sensor            sensor/sensor.c                 1      0)
+    hubus_device(sensor_passive    sensor-passive/sensor_passive.c 0      1)
+    hubus_device(relay_simple      relay-simple/relay_simple.c     0      0)
+    # The MCID from two jumpers instead of the EEPROM: the source of the MCID is up to the application.
+    hubus_device(relay_simple_pins relay-simple/relay_simple.c     0      0 MCID_FROM_PINS=1)
+
+    # The switch with firmware update: installed together with the updater, and loadable through it. It must end
+    # before the info page, the last page in front of the updater.
+    hubus_device(switch_update     switch/switch.c                 1      1
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    math(EXPR app_space "${HUBUS_UPDATER_ADDR} - 64")
+    add_custom_target(slave_switch_update_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:slave_switch_update>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS slave_switch_update
+        COMMENT "Checking that the application fits below the updater")
+
+    # The motion sensor, always with firmware update; PIR on PB0.
+    hubus_device(motion            motion/motion.c                 1      0
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(slave_motion_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:slave_motion>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS slave_motion
+        COMMENT "Checking that the motion sensor fits below the updater")
+
+    # The DHT11 sensor, always with firmware update; data pin on PB0.
+    hubus_device(dht11             dht11/dht11.c                   0      1
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(slave_dht11_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:slave_dht11>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS slave_dht11
+        COMMENT "Checking that the DHT11 sensor fits below the updater")
+
+    # The distance sensor, always with firmware update; TRIG on PB0, ECHO on PB1.
+    hubus_device(distance          distance/distance.c             1      1
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(slave_distance_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:slave_distance>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=400
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS slave_distance
+        COMMENT "Checking that the distance sensor fits below the updater")
+
+    # 3-byte event buffer: the RAM goes to the LED frame buffer and the animation program
+    hubus_device(ledstrip          "ledstrip/ledstrip.c;ledstrip/ledvm.c" 1 1 TX_BUF 3)
+    add_custom_target(slave_ledstrip_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:slave_ledstrip>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=8192 -DMAX_RAM=384
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS slave_ledstrip
+        COMMENT "Checking that the LED strip leaves room for the stack")
+    # The LED strip with firmware update (HWID variant 2): it must end before the info page, with only 4 bytes to spare.
+    hubus_device(ledstrip_update   "ledstrip/ledstrip.c;ledstrip/ledvm.c" 1 1 TX_BUF 3
+                 HUBUS_ENABLE_UPDATE=1 HUBUS_UPDATER_ADDR=${HUBUS_UPDATER_ADDR})
+    add_custom_target(slave_ledstrip_update_size ALL
+        COMMAND ${CMAKE_COMMAND} -DSIZE_TOOL=${AVR_SIZE} -DELF=$<TARGET_FILE:slave_ledstrip_update>
+                -DMCU=${HUBUS_AVR_MCU} -DMAX_FLASH=${app_space} -DMAX_RAM=384
+                -P ${PROJECT_SOURCE_DIR}/cmake/check-size.cmake
+        DEPENDS slave_ledstrip_update
+        COMMENT "Checking that the LED strip with update fits below the updater")
+endif()

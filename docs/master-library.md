@@ -1,6 +1,6 @@
 # Master Library
 
-The HUBUS master in `master/` (logic, `hubus_master.h`) and `master/hubus_master_gpiod.h` (the Raspberry Pi hardware layer). It implements the master side of [§2](spec/02-line-conditions.md) to [§6](spec/06-operation.md) on top of a small hardware abstraction layer (HAL). [hubusd](daemon.md) is built on it; the command line example `examples/master/master_example.c` shows every call.
+The HUBUS master in `master/` (logic, `hubus_master.h`) and `master/hubus_master_gpiod.h` (the Raspberry Pi hardware layer). It implements the master side of [§2](spec/02-line-conditions.md) to [§6](spec/06-operation.md) on top of a small hardware abstraction layer (HAL). [hubusd](daemon.md) is built on it; the command line tool `hubus-cli` (`master/hubus_cli.c`) uses every call.
 
 The master owns every timeout, retry, and recovery decision ([§7.6](spec/07-slave.md#76-no-timeouts)). All functions are blocking and not thread-safe: use one master from one thread.
 
@@ -72,7 +72,7 @@ The master notes the speed class of every valid `SLAVE_INFO` it receives, in `RE
 | `hubus_master_speed_limit(m)` | The MCID whose class raised the timing (the lowest one among equally slow slaves), 0 if the configuration applies. `m->speed_class[mcid]` holds the class. |
 | `hubus_master_note_speed_class(m, mcid, k)` | Notes a class and recomputes the timing; the master calls it itself. |
 
-The master example (`examples/master`) warns after a `scan` when a slave slows down the bus.
+`hubus-cli` warns after a `scan` when a slave slows down the bus.
 
 ## Hardware Abstraction
 
@@ -165,7 +165,7 @@ The master example (`examples/master`) warns after a `scan` when a slave slows d
 | `HUBUS_UPD_REASON_MCID_NOT_SET` | `set_mcid`: the updater did not answer to the new MCID within the attempts. |
 | `HUBUS_UPD_REASON_MCID_NOT_KEPT` | `set_mcid`: the application answered under the old MCID, it takes its MCID from elsewhere (pins, a constant). The master undid the change with `UPDATE_ENTER` and `UPDATE_LEAVE`, so that the updater keeps the MCID of the application. |
 
-These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are; `set_mcid` returns `HUBUS_ERR_ARG` for an MCID outside `1..63` or a new MCID equal to the old. The command line example has `hubus_master_example update <mcid> <file.hex>` (which checks the start of the file against the application area) and `hubus_master_example mcid <mcid> <new>`; with `--modules <dir>` it loads the plugins of that directory, prints the module of a slave for `scan` and `info`, and hands the modules to the update and the change of the MCID.
+These failures return `HUBUS_ERR_UPDATE`; bus errors such as `HUBUS_ERR_LINE_FAULT` are returned as they are; `set_mcid` returns `HUBUS_ERR_ARG` for an MCID outside `1..63` or a new MCID equal to the old. The command line tool has `hubus-cli update <mcid> <file.hex>` (which checks the start of the file against the application area) and `hubus-cli mcid <mcid> <new>`; with `--modules <dir>` it loads the plugins of that directory, prints the module of a slave for `scan` and `info`, and hands the modules to the update and the change of the MCID.
 
 ## Master Modules
 

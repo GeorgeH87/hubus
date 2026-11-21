@@ -1,5 +1,5 @@
 /*
- * The animation bytecode of the LED strip example (examples/slave-ledstrip/ledvm.h): the program check, the
+ * The animation bytecode of the LED strip (devices/ledstrip/ledvm.h): the program check, the
  * instructions and their 16-bit semantics, the outputs and layouts, and robustness against arbitrary code.
  */
 #include <stdlib.h>
@@ -308,7 +308,7 @@ static void test_hsv(void)
     TEST_ASSERT_EQUAL_UINT8(0, led[3]); /* W */
 }
 
-/* The programs in docs/example-ledstrip.md: valid, and the CRC given there. */
+/* The programs in docs/devices/ledstrip.md: valid, and the CRC given there. */
 static void test_documented_programs(void)
 {
     static const uint8_t rainbow[] = {0x02, 0x00, 0x04, 0x22, 0x04, 0x00, 0x03, 0x29, 0x20, 0x00, 0xFF,

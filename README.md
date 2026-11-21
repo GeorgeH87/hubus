@@ -22,7 +22,8 @@ The protocol is specified in [`docs/`](docs/README.md) and implemented in C: a h
 | `master/` | Master logic on a HAL, and the libgpiod HAL for the Raspberry Pi |
 | `daemon/` | `hubusd`, the master as an MQTT service |
 | `test/` | Unit tests, bus simulation, fault injection, slave firmware on simulated AVR devices |
-| `examples/` | Slave firmware examples and a master command line tool |
+| `devices/` | Slave firmware of the devices, whose modules are built into `hubusd` |
+| `examples/` | A module plugin as a template |
 | `docs/` | Specification and documentation |
 
 ## License

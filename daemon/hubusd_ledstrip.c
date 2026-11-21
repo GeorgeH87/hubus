@@ -1,5 +1,5 @@
 /*
- * The module of the LED strip (examples/slave-ledstrip, docs/example-ledstrip.md): a lamp in one colour, animations from
+ * The module of the LED strip (devices/ledstrip, docs/devices/ledstrip.md): a lamp in one colour, animations from
  * formulas, and the push button of the device. The firmware shows bytes or runs bytecode; everything else is here.
  */
 #include <stdlib.h>
@@ -200,7 +200,7 @@ static void strip_on_frame(hubus_module_instance_t *self, const hubus_module_hos
 }
 
 /* Only SHOW makes the strip blind: 180 bytes of 12.5 us, the reset time of the strip, and the wait for the slave to be free
- * (docs/example-ledstrip.md). */
+ * (docs/devices/ledstrip.md). */
 static const hubus_module_rule_t strip_rules[] = {{.pattern = {0x84, 0x01}, .mask = {0xFF, 0xFF}, .len = 2}};
 static const hubus_module_rule_t strip_update_rules[] = {{.pattern = {0x84, 0x02}, .mask = {0xFF, 0xFF}, .len = 2}};
 static const hubus_module_blind_t strip_blind[] = {{.opcode = OP_SHOW, .ms = 4}};

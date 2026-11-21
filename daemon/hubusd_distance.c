@@ -1,5 +1,5 @@
 /*
- * The module of the distance sensor (examples/slave-distance, docs/example-distance.md): the distance, whether an object is
+ * The module of the distance sensor (devices/distance, docs/devices/distance.md): the distance, whether an object is
  * nearer than the trigger distance, and the trigger distance itself, which the user sets here and the master sends to the slave.
  */
 #include <stdio.h>

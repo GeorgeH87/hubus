@@ -16,7 +16,7 @@
  *
  * Commands: opcode 0x40, two bytes: the threshold in mm (0 to 4000, 0 switches the events off). The threshold lives
  * in RAM only: after a power-up it is 0, and the slave announces that in an event, so the master sends it again. The
- * master keeps the value, and a default (docs/example-distance.md).
+ * master keeps the value, and a default (docs/devices/distance.md).
  *
  * An object counts as near after two measurements in a row below the threshold, and as gone after two in a row above
  * the threshold plus 20 mm (or without an echo), so a single wrong echo or a distance on the edge does not make events.

@@ -4,18 +4,18 @@ The central table of the types in the hardware identifier ([§4.7](spec/04-frame
 
 | Type | Variant | Device | Firmware | Module |
 |---|---|---|---|---|
-| `0x81` | `1` | Relay with readback | `examples/slave-relay` | `relay` |
-| `0x81` | `2` | Relay without feedback | `examples/slave-relay-simple` | `relay-simple` |
-| `0x82` | `1` | Switch or push button | `examples/slave-switch` | `switch` |
-| `0x82` | `2` | The same with firmware update | `example_switch_update` | `switch-update` |
-| `0x83` | `1` | Temperature sensor that reports changes | `examples/slave-sensor` | `temperature` |
-| `0x83` | `2` | Temperature sensor that is only read | `examples/slave-sensor-passive` | `temperature-passive` |
-| `0x84` | `1` | LED strip and push button | `examples/slave-ledstrip` | `ledstrip` |
-| `0x84` | `2` | The same with firmware update | `example_ledstrip_update` | `ledstrip-update` |
+| `0x81` | `1` | Relay with readback | `devices/relay` | `relay` |
+| `0x81` | `2` | Relay without feedback | `devices/relay-simple` | `relay-simple` |
+| `0x82` | `1` | Switch or push button | `devices/switch` | `switch` |
+| `0x82` | `2` | The same with firmware update | `slave_switch_update` | `switch-update` |
+| `0x83` | `1` | Temperature sensor that reports changes | `devices/sensor` | `temperature` |
+| `0x83` | `2` | Temperature sensor that is only read | `devices/sensor-passive` | `temperature-passive` |
+| `0x84` | `1` | LED strip and push button | `devices/ledstrip` | `ledstrip` |
+| `0x84` | `2` | The same with firmware update | `slave_ledstrip_update` | `ledstrip-update` |
 | `0x85` | `1` | Dimmer: only the [example of a plugin](master-library.md#loading-plugins), no firmware in this repository | – | `dimmer` |
-| `0x86` | `1` | Temperature and humidity sensor (DHT11), read only, with firmware update | `examples/slave-dht11` | `dht11` |
-| `0x87` | `1` | Distance sensor (HC-SR04) with a trigger distance, with firmware update | `examples/slave-distance` | `distance` |
-| `0x88` | `1` | Motion sensor (HC-SR501), event only, with firmware update | `examples/slave-motion` | `motion` |
+| `0x86` | `1` | Temperature and humidity sensor (DHT11), read only, with firmware update | `devices/dht11` | `dht11` |
+| `0x87` | `1` | Distance sensor (HC-SR04) with a trigger distance, with firmware update | `devices/distance` | `distance` |
+| `0x88` | `1` | Motion sensor (HC-SR501), event only, with firmware update | `devices/motion` | `motion` |
 | `0xFF` | – | Updater, on every device | `updater/` | `updater` |
 
 | Range | Use |

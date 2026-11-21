@@ -1,5 +1,5 @@
 /*
- * A compiler from formulas to the bytecode of LED animations (examples/slave-ledstrip/ledvm.h, docs/example-ledstrip.md).
+ * A compiler from formulas to the bytecode of LED animations (devices/ledstrip/ledvm.h, docs/devices/ledstrip.md).
  *
  *   v0 = v0 + 1;                     optional assignments to the variables v0..v3, each ending with ';'
  *   hsv(i * 4 + (t >> 3), 255, v0)   the colour: rgb(r, g, b), rgbw(r, g, b, w), or hsv(h, s, v)

@@ -84,7 +84,7 @@ The decisions below shape the protocol; [project/decisions.md](project/decisions
 - A command to a group is one-way; a request to a group is answered by the winner of the arbitration in the same transaction ([§4.5](spec/04-frames.md#45-addressing)).
 - Each slave has at most one event buffer, which may be overwritten, and optionally a live state ([§4.8](spec/04-frames.md#48-event-buffer), [§4.10](spec/04-frames.md#410-state)).
 
-## Example Devices
+## Device Classes
 
 The protocol is generic; these device classes show the intended use:
 
@@ -92,7 +92,7 @@ The protocol is generic; these device classes show the intended use:
 - **Switch or button:** writes changes into its event buffer and announces them; the master collects them in a burst. The level of all inputs is also exposed as its state.
 - **Temperature sensor:** exposes its value as its state. A sensor that is only read needs no event buffer, and the master polls it.
 
-Which parts each device needs is described in [§7.4](spec/07-slave.md#74-optional-parts); the [slave library](slave-library.md#examples) has firmware for each of them.
+Which parts each device needs is described in [§7.4](spec/07-slave.md#74-optional-parts); the [slave library](slave-library.md#devices) has firmware for each of them.
 
 ## Implementation
 

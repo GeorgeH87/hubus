@@ -67,9 +67,9 @@ foreach(plugin ${HUBUS_TEST_PLUGINS})
 endforeach()
 hubus_test(test_slave_lib hubus_slave_host)
 
-# The animation bytecode of the LED strip example.
-add_executable(test_ledvm test_ledvm.c ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip/ledvm.c)
-target_include_directories(test_ledvm PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+# The animation bytecode of the LED strip.
+add_executable(test_ledvm test_ledvm.c ${PROJECT_SOURCE_DIR}/devices/ledstrip/ledvm.c)
+target_include_directories(test_ledvm PRIVATE ${PROJECT_SOURCE_DIR}/devices/ledstrip)
 target_link_libraries(test_ledvm PRIVATE unity hubus_core)
 target_compile_options(test_ledvm PRIVATE ${HUBUS_TEST_WARNINGS})
 add_test(NAME test_ledvm COMMAND test_ledvm)
@@ -153,8 +153,8 @@ if(HUBUSD_LIB_AVAILABLE)
     add_dependencies(test_daemon_core plugin_a_good)
     hubus_test(test_module_worker hubusd_lib)
     hubus_test(test_ledc hubusd_lib)
-    target_include_directories(test_ledc PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
-    target_include_directories(test_daemon_core PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+    target_include_directories(test_ledc PRIVATE ${PROJECT_SOURCE_DIR}/devices/ledstrip)
+    target_include_directories(test_daemon_core PRIVATE ${PROJECT_SOURCE_DIR}/devices/ledstrip)
 endif()
 
 # Manual end-to-end tool: hubusd on a simulated bus with a relay, a button, and a temperature sensor.

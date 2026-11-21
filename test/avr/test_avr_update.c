@@ -1,14 +1,14 @@
 /*
  * Firmware update on a simulated ATtiny85 (docs/spec/06-operation.md section 6.8): the updater as it is built for the
  * device (updater/hubus_updater_avr.c), with self-programming (SPM), EEPROM, and the watchdog reset, against
- * hubus_master_update(). The application is the switch example with update support (ex_switch_update), loaded from
- * its HEX file as the master example does.
+ * hubus_master_update(). The application is the switch with update support (dev_switch_update), loaded from
+ * its HEX file as hubus-cli does.
  *
  * Covers what test_update cannot: the reset vector rule and the jump to the updater in the generated code, the page
  * writes with SPM, the CRC check of the info page at boot, the hand-over from the application (UPDATE_ENTER inside its
  * interrupt handler), the MCID in EEPROM, and UPDATE_LEAVE by the watchdog. The MCID in the last EEPROM byte as
  * the programmer writes it, and its change over the bus (UPDATE_SET_MCID), with the switch taking it from there.
- * The LED strip with update support (ex_ledstrip_update) as well: nearly the whole application area, replaced while
+ * The LED strip with update support (dev_ledstrip_update) as well: nearly the whole application area, replaced while
  * its animation runs in an interruptible section.
  */
 #include <stdio.h>
@@ -52,7 +52,7 @@ void setUp(void)
     fx_init(&fx);
     avr_bus_init(&bus, &fx.sim);
     memset(app, 0xFF, sizeof app);
-    app_len = avr_read_hex(HEX("ex_switch_update"), app, sizeof app);
+    app_len = avr_read_hex(HEX("dev_switch_update"), app, sizeof app);
 }
 
 void tearDown(void)
@@ -353,7 +353,7 @@ static void test_led_strip_is_replaced_while_it_animates(void)
     avr_slave_t *d = add_fresh(HEX("fw_updater"));
 
     memset(strip_app, 0xFF, sizeof strip_app);
-    len = avr_read_hex(HEX("ex_ledstrip_update"), strip_app, sizeof strip_app);
+    len = avr_read_hex(HEX("dev_ledstrip_update"), strip_app, sizeof strip_app);
     TEST_ASSERT_TRUE(len > 0u && len <= INFO_ADDR);
     avr_slave_eeprom_write(d, -1, STRIP);
     boot();

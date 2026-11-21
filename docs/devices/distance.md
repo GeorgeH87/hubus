@@ -1,19 +1,19 @@
-# Example: Distance Sensor (HC-SR04)
+# Device: Distance Sensor (HC-SR04)
 
-One ATtiny85 with an HC-SR04 ultrasonic module. The master can read the distance at any time, and the slave announces an event when an object comes closer than a **trigger distance** that the master has set, and again when it leaves. The firmware is `examples/slave-distance/distance_example.c`, the HWID type `0x87` variant `1` ([types](hwid-types.md)), the master module `distance` (`daemon/hubusd_distance.c`). It is built with the firmware update.
+One ATtiny85 with an HC-SR04 ultrasonic module. The master can read the distance at any time, and the slave announces an event when an object comes closer than a **trigger distance** that the master has set, and again when it leaves. The firmware is `devices/distance/distance.c`, the HWID type `0x87` variant `1` ([types](../hwid-types.md)), the master module `distance` (`daemon/hubusd_distance.c`). It is built with the firmware update.
 
 ## Hardware
 
 | ATtiny85 pin | Function |
 |---|---|
 | PB2 | `CLK` |
-| PB3 | `DATA` (external pull-up to 3.3 V, [§1.1](spec/01-physical-layer.md#11-bus-lines)) |
+| PB3 | `DATA` (external pull-up to 3.3 V, [§1.1](../spec/01-physical-layer.md#11-bus-lines)) |
 | PB0 | `TRIG` of the HC-SR04 |
 | PB1 | `ECHO` of the HC-SR04, through a divider |
 
-- **Level:** the HC-SR04 needs 5 V and answers with a 5 V echo, while the slave runs at 3.3 V ([§1.2](spec/01-physical-layer.md#12-logic-levels-and-voltage)). Put a divider in the echo line, for example 1.8 kOhm in series and 3.3 kOhm to ground, or use a module for 3.3 V (HC-SR04P, RCWL-1601). The 3.3 V trigger input of the HC-SR04 is accepted by most modules.
+- **Level:** the HC-SR04 needs 5 V and answers with a 5 V echo, while the slave runs at 3.3 V ([§1.2](../spec/01-physical-layer.md#12-logic-levels-and-voltage)). Put a divider in the echo line, for example 1.8 kOhm in series and 3.3 kOhm to ground, or use a module for 3.3 V (HC-SR04P, RCWL-1601). The 3.3 V trigger input of the HC-SR04 is accepted by most modules.
 - **Power:** the module draws about 15 mA from 5 V; its ground is common with the slave.
-- **Clock:** 8 MHz from the internal oscillator, as for the other examples (clear the `CKDIV8` fuse).
+- **Clock:** 8 MHz from the internal oscillator, as for the other devices (clear the `CKDIV8` fuse).
 
 ## State and Events
 
@@ -54,12 +54,12 @@ The module `distance` has three entities:
 | `near` | binary sensor | byte 0 |
 | `threshold` | number, 0 to 400 cm, step 1 | the trigger distance; `0` switches the events off |
 
-The module sends the trigger distance to the slave. The **default is 30 cm**, until the user sets another value (Home Assistant, or `hubus/slave/<n>/threshold/set`). Every frame of the slave carries its trigger distance; whenever it differs from the value of the module, the module sends it again. After a power-up of the slave it is `0`, so the slave gets its value back with the first event, and a slave that missed a command gets it with the next frame. The module saves the user's value as a setting of the slave (`threshold`), which hubusd keeps in its [runtime file](daemon.md#configuration-over-mqtt): after a restart of hubusd the slave gets it again, not the default.
+The module sends the trigger distance to the slave. The **default is 30 cm**, until the user sets another value (Home Assistant, or `hubus/slave/<n>/threshold/set`). Every frame of the slave carries its trigger distance; whenever it differs from the value of the module, the module sends it again. After a power-up of the slave it is `0`, so the slave gets its value back with the first event, and a slave that missed a command gets it with the next frame. The module saves the user's value as a setting of the slave (`threshold`), which hubusd keeps in its [runtime file](../daemon.md#configuration-over-mqtt): after a restart of hubusd the slave gets it again, not the default.
 
 ## Firmware update
 
-The application ends below the info page in front of the updater, checked by the build (`example_distance_size`); it takes about 2.6 KB of flash and 111 bytes of RAM. Installing and updating work as for the switch ([slave library](slave-library.md#firmware-update)).
+The application ends below the info page in front of the updater, checked by the build (`slave_distance_size`); it takes about 2.6 KB of flash and 111 bytes of RAM. Installing and updating work as for the switch ([slave library](../slave-library.md#firmware-update)).
 
 ## Tests
 
-`test_avr_examples` runs the firmware on a simulated ATtiny85 with a model of the module on PB0 and PB1 (a trigger pulse of at least 8 us, the echo 0.4 ms later for 5.83 us per mm, a module without echo, and one that never ends its echo): the reading, the power-up event, the near and gone events with hysteresis, a single wrong echo, the commands (`0`, a value above 4000 mm, a new value while an object is near), and 400 transactions of the master while the distance is measured. `test_daemon_core` runs the module on the simulated bus: discovery, the default, the value after a power-up, and the range of the number.
+`test_avr_devices` runs the firmware on a simulated ATtiny85 with a model of the module on PB0 and PB1 (a trigger pulse of at least 8 us, the echo 0.4 ms later for 5.83 us per mm, a module without echo, and one that never ends its echo): the reading, the power-up event, the near and gone events with hysteresis, a single wrong echo, the commands (`0`, a value above 4000 mm, a new value while an object is near), and 400 transactions of the master while the distance is measured. `test_daemon_core` runs the module on the simulated bus: discovery, the default, the value after a power-up, and the range of the number.

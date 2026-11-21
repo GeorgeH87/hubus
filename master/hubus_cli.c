@@ -1,7 +1,7 @@
 /*
- * HUBUS master example for the Raspberry Pi.
+ * hubus-cli: the HUBUS master on the command line, for the Raspberry Pi.
  *
- *   hubus_master_example [options] <command> [args]
+ *   hubus-cli [options] <command> [args]
  *
  * Options:
  *   --chip LABEL   GPIO chip label (default: auto-detect Raspberry Pi chip)

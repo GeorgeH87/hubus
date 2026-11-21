@@ -1,5 +1,5 @@
 /*
- * Bytecode for LED animations (docs/example-ledstrip.md, "Animations").
+ * Bytecode for LED animations (docs/devices/ledstrip.md, "Animations").
  *
  * The master sends a short program; the slave runs it once per LED and frame and writes the colour it computes into
  * the frame buffer. A program is one expression in postfix order, ending with exactly one output instruction (RGB,

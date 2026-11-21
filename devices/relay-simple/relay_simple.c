@@ -16,12 +16,12 @@
  * cache: hubusd knows from its module that the slave has neither a state nor
  * STATUS_CAPTURE and publishes the commanded state (readback `cache`). A
  * command that did not arrive stays unnoticed; that is the price of this build.
- * Use slave-relay (state readable with REQUEST_STATE) where it matters.
+ * Use the relay (devices/relay, state readable with REQUEST_STATE) where it matters.
  *
  * Everything runs in the ISR; the main loop sleeps.
  *
  * MCID: the last EEPROM byte, written when flashing (tools/flash-avr.sh), or 4. Built with MCID_FROM_PINS=1
- * (example_relay_simple_pins) it comes from two jumpers instead, to show that the source is up to the application:
+ * (slave_relay_simple_pins) it comes from two jumpers instead, to show that the source is up to the application:
  *
  *   PB1, PB4 = jumpers to ground (internal pull-ups), read once at reset: MCID 0x20 + 0..3
  *

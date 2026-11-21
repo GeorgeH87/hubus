@@ -68,7 +68,7 @@ Everything in the runtime file can be read and changed over MQTT. Nothing else c
 | `hubus/master/config` | published, retained | The runtime part as JSON, in the form `master/config/set` takes, so that a client can change it and send it back. No password, nothing of the main file. |
 | `hubus/master/config/result` | published | After each change: `topic`, `result` (`ok` or `error`), `error` with the reason, `saved` (`false`: no runtime file, or it could not be written, see the log), `ts`. A refused change is also logged and counted in `commands_rejected`. |
 
-The **settings** of a slave belong to its module (`host->save()`, [master library](master-library.md#functions-and-host)), such as the trigger distance of the [distance sensor](example-distance.md): the module sets them over its own topics, and `hubus/master/config` shows them under `settings`, with the name of the module. They are read only here: `master/config/set` keeps them as they are, whatever the message has. They go with the slave when it is removed, and a new module of the slave does not get them.
+The **settings** of a slave belong to its module (`host->save()`, [master library](master-library.md#functions-and-host)), such as the trigger distance of the [distance sensor](devices/distance.md): the module sets them over its own topics, and `hubus/master/config` shows them under `settings`, with the name of the module. They are read only here: `master/config/set` keeps them as they are, whatever the message has. They go with the slave when it is removed, and a new module of the slave does not get them.
 
 Whoever can publish on the broker can change the configuration, as they can switch the slaves and start updates; restrict the topics `hubus/slave/+/config/#` and `hubus/master/config/set` with the access control of the broker where that matters.
 
@@ -110,7 +110,7 @@ Every slave states in its `SLAVE_INFO` how fast it reacts to the bus, as a speed
 
 The `gpio` section selects the chip by label (`chip`, preferred) or device path (`path`), the offsets of `clk` and `data` (different lines), `realtime` (`SCHED_FIFO` priority 1 to 99, 0 = off, needs `CAP_SYS_NICE`), and `internal_pullup` (the SoC pull-up on `DATA`, for bench tests only; use an external pull-up).
 
-A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [examples](slave-library.md#examples) are built in, others come as plugins ([`modules.dir`](#configuration)). A slave whose HWID has no module or is invalid is reported and gets no commands. Its module also lists its [entities](#entities), which become its topics and Home Assistant entities. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
+A slave is recognised by the hardware identifier in its `SLAVE_INFO` ([§4.7](spec/04-frames.md#hardware-identifier-hwid), [types](hwid-types.md)). It selects the slave's module, which states its command size, state, event buffer, blind times, and update support ([§6.10](spec/06-operation.md#610-master-modules)); the modules of the [devices](slave-library.md#devices) are built in, others come as plugins ([`modules.dir`](#configuration)). A slave whose HWID has no module or is invalid is reported and gets no commands. Its module also lists its [entities](#entities), which become its topics and Home Assistant entities. Slaves on the bus that are not configured are ignored: they are logged and listed in `hubus/master/state`, but get no topics and no discovery entries.
 
 ## MQTT Topics
 
@@ -222,16 +222,16 @@ Removing a slave from the configuration (`hubus/slave/<n>/config/remove`, or the
 
 The protocol does not define what payload bytes mean. The module of a slave does ([§6.10](spec/06-operation.md#610-master-modules)): its instance takes topics below the slave and publishes there ([master library](master-library.md#functions-and-host)). Most modules describe their slave by a table of **entities** and leave the rest to `hubus_module_ha.h` ([master library](master-library.md#entities-of-home-assistant)): each entity has a key, a name, a kind of Home Assistant entity (`switch`, `binary_sensor`, `sensor`, `light`, `text`, `number`), a unit and device class, where its value lies in a frame (offset, 1 or 2 bytes, byte order, sign, `value = raw * scale + add`, decimals), for a number its range, and for a switch the commands for `ON` and `OFF`. It becomes the topics `hubus/slave/<n>/<key>/state` and, if it takes values, `.../<key>/set`, and with discovery an entity of Home Assistant. Nothing is configured for it: a new device brings a module with its entities, as a [plugin](master-library.md#loading-plugins).
 
-The modules of the examples are built in:
+The modules of the [devices](slave-library.md#devices) are built in:
 
 | Module | Entities |
 |---|---|
 | `relay`, `relay-simple` | `relay`, a switch (opcode `0x10`, argument `1` or `0`); `relay-simple` has no state to read, so its value comes from the cache ([readback](#state-after-a-command-readback)) |
 | `switch`, `switch-update` | `button`, a binary sensor (the first byte of the state) |
-| `ledstrip`, `ledstrip-update` | `button` as above, `lamp`, a light, and `animation`, a text entity for a formula ([LED strip](example-ledstrip.md#master-side)) |
-| `dht11` | `temperature` (°C) and `humidity` (%), sensors read from the state, and `fault`, a binary sensor (`1`: no good reading yet or the last readings failed; [DHT11](example-dht11.md)) |
-| `distance` | `distance` (cm, device class `distance`), `near`, a binary sensor, and `threshold`, a number from 0 to 400 cm (default 30) that the module sends to the slave and keeps as a [setting](#configuration-over-mqtt) across restarts of hubusd ([distance sensor](example-distance.md)) |
-| `motion` | `motion`, a binary sensor with device class `motion` (one byte per event: `1` motion, `0` none; [motion sensor](example-motion.md)) |
+| `ledstrip`, `ledstrip-update` | `button` as above, `lamp`, a light, and `animation`, a text entity for a formula ([LED strip](devices/ledstrip.md#master-side)) |
+| `dht11` | `temperature` (°C) and `humidity` (%), sensors read from the state, and `fault`, a binary sensor (`1`: no good reading yet or the last readings failed; [DHT11](devices/dht11.md)) |
+| `distance` | `distance` (cm, device class `distance`), `near`, a binary sensor, and `threshold`, a number from 0 to 400 cm (default 30) that the module sends to the slave and keeps as a [setting](#configuration-over-mqtt) across restarts of hubusd ([distance sensor](devices/distance.md)) |
+| `motion` | `motion`, a binary sensor with device class `motion` (one byte per event: `1` motion, `0` none; [motion sensor](devices/motion.md)) |
 | `temperature`, `temperature-passive` | `temperature`, a sensor in °C with device class `temperature`: the raw ADC value of the ATtiny85 internal sensor as `raw - 273`; accurate values need a calibration per device |
 
 A slave without entities stays usable through the raw topics (`data`, `cmd`, `capture`, `read`). The entities of earlier versions had the topics `hubus/slave/<n>/state` and `hubus/slave/<n>/set`; the discovery entries they left are removed by `mqtt.discovery_cleanup: true` at the next connection to the broker.
@@ -252,7 +252,7 @@ Every module has the functions `create`, `destroy`, `on_frame`, and `on_message`
 
 ## Firmware Updates
 
-The firmware of a slave comes with its module: a plugin holds the application image ([master library](master-library.md#firmware-image-in-a-module)), so that module and firmware always fit, and MQTT only triggers the update. Whoever can reach the broker can start an update, but cannot bring in other firmware. Nothing happens by itself. The built-in modules have no image; a slave without one stays with `hubus_master_example update` ([master library](master-library.md#firmware-update)).
+The firmware of a slave comes with its module: a plugin holds the application image ([master library](master-library.md#firmware-image-in-a-module)), so that module and firmware always fit, and MQTT only triggers the update. Whoever can reach the broker can start an update, but cannot bring in other firmware. Nothing happens by itself. The built-in modules have no image; a slave without one stays with `hubus-cli update` ([master library](master-library.md#firmware-update)).
 
 - **Trigger:** `hubus/slave/<n>/update`, or the install button in Home Assistant, which sends the name of the module. An empty payload means the module of the slave. A slave that runs an application takes only the image of its own module, and an image of the version it already runs is rejected; another version, also an older one, is loaded. Home Assistant offers an update only if the image is newer.
 - **The bus stands still** during an update, about 10 s for 6 KB with the default timing ([§6.8](spec/06-operation.md#68-firmware-update)). Other slaves wait, and their events stay in their buffers until the next burst. Requests that need the bus or a module (commands, `set` topics of entities, `read`, `capture`, scan, probe, another update or change of the MCID) are refused at once, with the reason on `hubus/master/log`, and counted in `commands_rejected`, so that nothing runs seconds late; statistics are still published, and changes of the configuration wait. `hubus/master/state` shows the update as `update` (`mcid`, `module`, `percent`), and the progress also appears on `hubus/slave/<n>/firmware`. Do not update while time-critical slaves are needed ([decisions](project/decisions.md#master-modules)).
@@ -316,5 +316,5 @@ flowchart LR
 - The daemon reports only what the protocol carries: `SLAVE_INFO`, states, and event data. Counters inside a slave appear only if its firmware writes them into its event buffer or state.
 - The timing defaults are conservative placeholders until measured on hardware ([open issues](project/open-issues.md)).
 - Only the libgpiod v2 API is supported.
-- Firmware updates ([§6.8](spec/06-operation.md#68-firmware-update)) run only from a [module with an image](#firmware-updates), and the bus stands still meanwhile. For a module without one: stop the service and run `hubus_master_example update <mcid> <file.hex>` ([master library](master-library.md#firmware-update)). The raw `cmd` topic refuses the update opcodes.
+- Firmware updates ([§6.8](spec/06-operation.md#68-firmware-update)) run only from a [module with an image](#firmware-updates), and the bus stands still meanwhile. For a module without one: stop the service and run `hubus-cli update <mcid> <file.hex>` ([master library](master-library.md#firmware-update)). The raw `cmd` topic refuses the update opcodes.
 - Not yet run on a Raspberry Pi with real slaves; tested against the bus simulation, with a fake MQTT client and end to end with a real broker ([development](development.md#daemon-tests)).

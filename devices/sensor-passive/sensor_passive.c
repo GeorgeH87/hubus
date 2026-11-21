@@ -11,7 +11,7 @@
  * with REQUEST_STATE: hubusd does so every `poll_interval_s` seconds. A group
  * REQUEST_STATE reads several such sensors, one transaction each.
  *
- * Compared with the event-based sensor (slave-sensor) the library needs about
+ * Compared with the event-based sensor (devices/sensor) the library needs about
  * 500 bytes less flash and 39 bytes less RAM.
  *
  * The library reads the state while it transmits, without a copy. If a new

@@ -84,4 +84,4 @@ Why HUBUS is the way it is. Each entry states the decision, the reason, rejected
 
 ### Implementation Status
 
-Slaves, the updater, the master, and hubusd use the new `SLAVE_INFO`, and hubusd takes the properties of a slave from its module. Plugins are loaded from `modules.dir` at the start and on `SIGHUP`; the modules of the example firmwares stay linked into hubusd (`daemon/hubusd_modules.c`). hubusd passes messages, frames, and commands between the instance of a module, the broker, and the bus; the entities come from `hubus_module_ha.h`. The [roadmap](../../TODO.md#12-master-modules-and-hardware-identifier) lists them.
+Slaves, the updater, the master, and hubusd use the new `SLAVE_INFO`, and hubusd takes the properties of a slave from its module. Plugins are loaded from `modules.dir` at the start and on `SIGHUP`; the modules of the devices stay linked into hubusd (`daemon/hubusd_modules.c`). hubusd passes messages, frames, and commands between the instance of a module, the broker, and the bus; the entities come from `hubus_module_ha.h`. The [roadmap](../../TODO.md#12-master-modules-and-hardware-identifier) lists them.

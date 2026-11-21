@@ -27,10 +27,10 @@ slaves:
     name: Cellar temperature
     readback: cache       # per-slave override of bus.readback (slave | cache | none | default)
   - mcid: 4
-    name: Pump relay      # examples/slave-relay-simple: no state to read back, so its state comes from the cache
+    name: Pump relay      # devices/relay-simple: no state to read back, so its state comes from the cache
   - mcid: 8
     name: Attic temperature
-    poll_interval_s: 60   # examples/slave-sensor-passive never announces changes: read its state every minute, 0 = off
+    poll_interval_s: 60   # devices/sensor-passive never announces changes: read its state every minute, 0 = off
   - mcid: 10
     name: Garage distance
     settings:             # written by the module of the slave (here: the trigger distance the user chose);

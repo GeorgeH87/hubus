@@ -41,7 +41,7 @@ set_tests_properties(test_avr_slave PROPERTIES TIMEOUT 300 LABELS avr
 
 add_executable(test_avr_ledstrip test_avr_ledstrip.c)
 target_link_libraries(test_avr_ledstrip PRIVATE hubus_avr_sim)
-target_include_directories(test_avr_ledstrip PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+target_include_directories(test_avr_ledstrip PRIVATE ${PROJECT_SOURCE_DIR}/devices/ledstrip)
 target_compile_definitions(test_avr_ledstrip PRIVATE HUBUS_AVR_FW_DIR="${HUBUS_AVR_FW_DIR}")
 target_compile_options(test_avr_ledstrip PRIVATE ${HUBUS_TEST_WARNINGS})
 add_dependencies(test_avr_ledstrip hubus_avr_test_firmware)
@@ -49,8 +49,8 @@ add_test(NAME test_avr_ledstrip COMMAND test_avr_ledstrip)
 set_tests_properties(test_avr_ledstrip PROPERTIES TIMEOUT 300 LABELS avr
     ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=0")
 
-# The slave examples and the updater as they are shipped.
-foreach(name test_avr_examples test_avr_update)
+# The devices and the updater as they are shipped.
+foreach(name test_avr_devices test_avr_update)
     add_executable(${name} ${name}.c)
     target_link_libraries(${name} PRIVATE hubus_avr_sim)
     target_compile_definitions(${name} PRIVATE HUBUS_AVR_FW_DIR="${HUBUS_AVR_FW_DIR}")
@@ -60,4 +60,4 @@ foreach(name test_avr_examples test_avr_update)
     set_tests_properties(${name} PROPERTIES TIMEOUT 300 LABELS avr
         ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=0")
 endforeach()
-target_include_directories(test_avr_update PRIVATE ${PROJECT_SOURCE_DIR}/examples/slave-ledstrip)
+target_include_directories(test_avr_update PRIVATE ${PROJECT_SOURCE_DIR}/devices/ledstrip)

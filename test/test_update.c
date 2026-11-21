@@ -5,7 +5,7 @@
  * updater, UPDATE_LEAVE resets, and the reset starts the application if its info page checks out.
  *
  * The change of the MCID (UPDATE_SET_MCID) as well: built twice, with and without HUBUS_UPD_SET_MCID. The
- * application of the model takes its MCID from the EEPROM byte of the updater, as the examples do, or a fixed one.
+ * application of the model takes its MCID from the EEPROM byte of the updater, as the devices do, or a fixed one.
  *
  * Built a third time with the layout of the tinyAVR 0/1/2-series (ATtiny1614): the updater in the boot section at 0,
  * the application area behind it, no reset vector rule.
